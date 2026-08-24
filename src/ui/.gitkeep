@@ -1,0 +1,3 @@
+Reserved for the DOM chrome named in DESIGN section 1: HUD, turn indicator, panels, overlays, breakpoint
+wiring and the accessible mirror of play state. Real elements only, so focus, naming and hit testing come
+from the platform rather than from hand-rolled rectangles.

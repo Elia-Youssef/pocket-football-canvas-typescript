@@ -1,0 +1,3 @@
+Reserved for the framework-free simulation named in DESIGN section 1. Nothing here imports render, ui, the
+shared engine renderer, or any DOM or canvas type, and nothing here calls Math.random: item M3 lints all of
+it, from this part onward, on any file this directory gains.

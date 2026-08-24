@@ -1,0 +1,103 @@
+# The merge gate. GITHUB sections 6 and 9.
+#
+# Two jobs, and the names below are load-bearing: `.github/rulesets/
+# protect-main.json` lists them as required status check contexts character for
+# character, so renaming a job here without renaming it there leaves `main`
+# protected by a context GitHub will never see reported, which reads as a
+# permanently pending check rather than as a failure.
+#
+# The policy job has no dependencies and finishes in seconds, so the gates job
+# waits on it: a banned name in the record fails before anything is installed
+# rather than after a five minute install.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The build is static, takes no secret and reads none. GITHUB section 10.
+permissions:
+  contents: read
+
+# A superseded run on the same ref is wasted compute and a confusing status.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-policy:
+    name: Repository policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # fetch-depth 0 because the record check walks every commit in the
+      # history, not the diff. A shallow clone would pass by seeing nothing.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      # No cache and no install: the check runs on node builtins alone, which
+      # is what lets it be the job everything else depends on.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+
+      - name: Branches, commits, identities and file content
+        run: node scripts/check-repository-record.mjs
+        env:
+          REPOSITORY_BRANCH: ${{ github.head_ref || github.ref_name }}
+          PULL_REQUEST_TITLE: ${{ github.event.pull_request.title }}
+          PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+
+  pocket-football:
+    name: Pocket Football gates
+    needs: repository-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      # npm ci and nothing else: it fails outright if package.json and the
+      # lockfile disagree, which is why it is the documented command.
+      - name: Install from the lockfile
+        run: npm ci
+
+      # The browser gate needs its engines present. Playwright's webkit is a
+      # WebKit build and not Safari: QUALITY-BAR section 2 keeps real Safari,
+      # iOS and Android on the release gate, and nothing here claims otherwise.
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint, including the core boundary
+        run: npm run lint
+
+      - name: Unit and headless tests
+        run: npm run test
+
+      - name: Browser tests
+        run: npm run test:browser
+
+      - name: Deterministic build
+        run: npm run verify:build
+
+      - name: Upload the browser report on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

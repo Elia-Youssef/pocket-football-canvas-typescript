@@ -1,0 +1,37 @@
+export interface RecordHit {
+  line?: number;
+  text: string;
+  reason: string;
+}
+
+export interface CommitRecord {
+  author: string;
+  committer: string;
+  message: string;
+}
+
+export declare const BRANCH_PATTERN: RegExp;
+export declare const SUBJECT_PATTERN: RegExp;
+export declare const CLOSES_PATTERN: RegExp;
+
+export declare function isGameContextLine(line: string): boolean;
+export declare function isGameContextPath(relative: string): boolean;
+
+/** Tracked file text. The contextual carve-out applies. */
+export declare function scanContent(text: string): RecordHit[];
+
+/** Commit, identity, branch and pull request text. No carve-out applies. */
+export declare function scanRecord(text: string): RecordHit[];
+
+export declare function scanPath(relative: string): RecordHit[];
+export declare function isReservedBasename(name: string): boolean;
+export declare function isTextPath(relative: string): boolean;
+export declare function isAscii(value: string): boolean;
+export declare function checkSubject(subject: string): string[];
+export declare function requiresCloses(subject: string): boolean;
+export declare function checkBody(
+  lines: string[],
+  options: { requireCloses: boolean },
+): string[];
+export declare function checkCommitRecord(commit: CommitRecord): string[];
+export declare function main(): number;

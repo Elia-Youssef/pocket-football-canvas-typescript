@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover, or every env(safe-area-inset-*) resolves to 0px and
+         the QUALITY-BAR section 5 inset rule is inert. No user-scalable=no and
+         no maximum-scale: magnification is never denied. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Pocket Football</title>
+  </head>
+  <body>
+    <!-- The chrome mounts here as real DOM. The canvas play surface arrives
+         with the renderer; QUALITY-BAR section 1 keeps every button, readout
+         and label out of it permanently. -->
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

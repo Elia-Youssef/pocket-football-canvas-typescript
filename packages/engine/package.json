@@ -1,0 +1,11 @@
+{
+  "name": "@js-games/engine",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Placeholder for the shared engine package. See README.md.",
+  "exports": {
+    "./render": "./src/render/index.ts"
+  }
+}

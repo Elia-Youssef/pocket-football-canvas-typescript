@@ -1,0 +1,2 @@
+Reserved for the canvas play surface named in DESIGN section 1: pitch, entities, aim arrow and effects. It
+draws the scene and nothing else. Every button, readout, panel and label is DOM, per QUALITY-BAR section 1.

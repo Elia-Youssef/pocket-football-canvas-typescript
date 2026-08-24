@@ -1,0 +1,37 @@
+{
+  "name": "pocket-football-canvas-engine",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Turn-based arcade football on a Canvas 2D play surface with DOM chrome.",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --ignore-pattern tests/lint/fixtures/",
+    "test": "vitest run",
+    "test:browser": "vite build && playwright test",
+    "verify:build": "node scripts/check-determinism.mjs",
+    "verify:mutations": "node scripts/mutation-check.mjs",
+    "verify:policy": "node scripts/check-repository-record.mjs",
+    "verify": "npm run verify:policy && npm run typecheck && npm run lint && npm run test && npm run test:browser && npm run verify:build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
+    "@types/node": "20.19.43",
+    "eslint": "10.9.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.68.0",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

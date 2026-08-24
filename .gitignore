@@ -1,0 +1,44 @@
+# Build output and dependency trees only. GITHUB section 8: personal editor and
+# tool state belongs in a global ignore file or in .git/info/exclude, which is
+# per clone and never committed. Naming those paths here would put them in the
+# repository record, which is the one thing section 7 exists to prevent.
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test and measurement output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# The deterministic-build check builds twice into here and removes it again.
+# Ignored so a crashed run leaves nothing to commit. Item A6.
+.determinism/
+
+# Measurement output, written by CI and by npm run verify:build.
+artifacts/reports/
+
+# Tool caches
+.vite/
+.cache/
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment values. The build takes none and reads none; the entries
+# exist so that a file created by habit cannot be committed by accident.
+.env
+.env.*
+
+# Editor and operating system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

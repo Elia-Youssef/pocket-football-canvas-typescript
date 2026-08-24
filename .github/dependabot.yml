@@ -1,0 +1,47 @@
+# Weekly dependency and workflow updates. GITHUB section 12: a dependency pull
+# request is an ordinary pull request. It merges when the gate is green, and
+# never because it is only a version bump.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps
+    groups:
+      # One pull request for the toolchain rather than eight. The gate runs the
+      # whole pipeline either way, so a grouped bump is cheaper to review and no
+      # less safe.
+      #
+      # The name is short on purpose. Dependabot writes it into the commit
+      # subject, the record check holds subjects to 72 ASCII characters, and a
+      # descriptive group name is how that ceiling gets breached by a commit
+      # nobody here wrote.
+      toolchain:
+        patterns:
+          - '*'
+    ignore:
+      # A compiler major is a migration, not a bump: it changes what the type
+      # checker accepts and it moves the floor typescript-eslint supports. It
+      # is taken deliberately, in its own pull request, never grouped.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    commit-message:
+      # deps and not ci, because an action bump IS a dependency update and the
+      # record check waives the Closes: line per COMMIT rather than per branch.
+      # Under a ci: prefix the same commit would pass while its dependabot
+      # branch existed and then fail the whole-history walk forever once it was
+      # squash-merged onto main, which is a gate that expires. A human ci:
+      # commit still owes its Closes: line.
+      prefix: deps

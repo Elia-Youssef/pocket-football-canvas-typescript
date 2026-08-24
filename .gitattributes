@@ -1,0 +1,32 @@
+# GITHUB section 13. The documentation gate fails on a CRLF byte and git on
+# Windows hands you one by default, so normalisation is settled here rather than
+# left to each machine's core.autocrlf. Nothing about this is cosmetic: without
+# it the byte-level house style check fails on a clean clone, on a machine that
+# has changed nothing.
+* text=auto eol=lf
+
+# Types that must never be line-ending normalised or diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.mp4 binary
+*.webm binary
+
+# Generated, and enormous. Collapsed in review by default; still diffable on
+# request, and still fully scanned by every gate.
+package-lock.json linguist-generated=true
