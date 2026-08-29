@@ -433,6 +433,1246 @@ export const EDITS = [
     replace: '  return false;',
     detectedBy: 'unit',
   },
+
+  // The token layer, item E1. Three sources have to agree, every quoted ratio
+  // has to re-derive from the hexes, and the literal sweep has to be able to
+  // see a literal. The last four attack the machinery the sweep is built from
+  // rather than an assertion: gutting an assertion makes a suite PASS, so an
+  // entry that did that would be reported as undetected and would be right.
+  {
+    item: 'E1',
+    name: 'a stylesheet value must match the design contract',
+    file: 'src/ui/tokens.css',
+    find: '  --space-5: 24px;',
+    replace: '  --space-5: 25px;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the renderer record must match the design contract',
+    file: 'src/render/tokens.ts',
+    find: "    rail: '#C8CFCB',",
+    replace: "    rail: '#C8CFCC',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a quoted ratio is re-derived and not trusted',
+    file: 'tests/reference/design-contract.md',
+    find: '| 16.43 |',
+    replace: '| 16.53 |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a measured pair is checked against its own threshold',
+    file: 'tests/reference/design-contract.md',
+    find: '| Entity ring on player fill | `--pf-line` | `--team-player` | 3.09 | 3.09 | 3 |',
+    replace: '| Entity ring on player fill | `--pf-line` | `--team-player` | 3.09 | 3.09 | 5 |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the first disclosed defect cannot widen',
+    file: 'tests/reference/design-contract.md',
+    find: '| Rail on ground | Daylight | 8.59 | 1.15 | 3 |',
+    replace: '| Rail on ground | Daylight | 8.59 | 1.16 | 3 |',
+    detectedBy: 'unit',
+  },
+
+  // The second disclosed defect, which is a different shape: the source quotes
+  // nothing, so there is no number to disagree with and the pins are on the
+  // derived value, on the verdict, and on the row being there at all.
+  {
+    item: 'E1',
+    name: 'the second disclosed defect derives its own numbers',
+    file: 'tests/reference/design-contract.md',
+    find: '| 3.71 | 3 | yes |',
+    replace: '| 3.81 | 3 | yes |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a shortfall cannot be talked out of being one',
+    file: 'tests/reference/design-contract.md',
+    find: '| 1.59 | 3 | no |',
+    replace: '| 1.59 | 3 | yes |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a disclosed reading cannot be deleted',
+    file: 'tests/reference/design-contract.md',
+    find:
+      '| Aim arrow strong end on pitch | Daylight | the arrow keeps the floodlit accent | ' +
+      '`--pf-accent` | Floodlit | `--pitch-stripe-a` | 2.48 | 3 | no |',
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a stated threshold cannot be quietly lowered',
+    file: 'tests/reference/design-contract.md',
+    find: '| Rail on pitch | `--pf-rail` | `--pitch-stripe-a` | 3.67 | 3.09 | 3 |',
+    replace: '| Rail on pitch | `--pf-rail` | `--pitch-stripe-a` | 3.67 | 3.09 | 1 |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the pitch is redefined per theme',
+    file: 'src/ui/tokens.css',
+    find: `  --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
+  --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
+  --pf-rail: var(--pf-rail-floodlit);
+}`,
+    replace: `  --pitch-stripe-a: var(--pitch-stripe-a-daylight);
+  --pitch-stripe-b: var(--pitch-stripe-b-daylight);
+  --pf-rail: var(--pf-rail-daylight);
+}`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'reduced motion resolves every duration to zero',
+    file: 'src/ui/tokens.css',
+    find: '    --dur-2: var(--dur-0);',
+    replace: '    --dur-2: 140ms;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the sweep matches a colour literal',
+    file: 'tests/unit/tokens.test.ts',
+    find: String.raw`  /#[0-9A-Fa-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix)\s*\(|(?<![\w-])color\s*\(/gi;`,
+    replace: String.raw`  /#never[0-9A-Fa-f]{3,8}\b/gi;`,
+    detectedBy: 'unit',
+  },
+  {
+    // A CSS function name is case-insensitive. Without the flag, RGB() is a
+    // colour to every browser and not a colour to the sweep.
+    item: 'E1',
+    name: 'the colour sweep is case-insensitive, as CSS is',
+    file: 'tests/unit/tokens.test.ts',
+    find: String.raw`color\s*\(/gi;`,
+    replace: String.raw`color\s*\(/g;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the bare colour function form is matched too',
+    file: 'tests/unit/tokens.test.ts',
+    find: String.raw`|(?<![\w-])color\s*\(/gi;`,
+    replace: String.raw`/gi;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the sweep reads stylesheets as well as modules',
+    file: 'tests/unit/tokens.test.ts',
+    find: "  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css',",
+    replace: "  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the sweep matches a stylesheet dimension literal',
+    file: 'tests/unit/tokens.test.ts',
+    find: String.raw`const DIMENSION_LITERAL = /(?<![\w#-])\d*\.?\d+(?:px|rem|em|ms|s)\b/g;`,
+    replace: String.raw`const DIMENSION_LITERAL = /(?<![\w#-])\d*\.?\d+(?:never)\b/g;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the sweep descends into every directory under src',
+    file: 'tests/unit/tokens.test.ts',
+    find: `      if (entry.isDirectory()) {
+        stack.push(absolute);
+        continue;
+      }`,
+    replace: `      if (entry.isDirectory()) {
+        continue;
+      }`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the token layer is the only thing the sweep excludes',
+    file: 'tests/unit/tokens.test.ts',
+    find: "const TOKEN_LAYER = ['src/ui/tokens.css', 'src/render/tokens.ts'];",
+    replace: "const TOKEN_LAYER = ['src/ui/tokens.css', 'src/render/tokens.ts', 'src/main.ts'];",
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-2. The three time layers, damping, the stop threshold, containment,
+  // the speed cap, the finiteness guard and the seeded stream.
+  //
+  // Every entry here attacks the property rather than the assertion. The
+  // three time layers get one entry per layer plus one per constant,
+  // because a layer that has been deleted and a layer whose constant has
+  // drifted fail in different places and one of them is silent.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'B1',
+    name: 'a frame delta past the ceiling is clamped and the rest discarded',
+    file: 'src/core/physics.ts',
+    find: '        applied = DELTA_CEILING;',
+    replace: '        applied = delta;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'a negative delta is no time at all',
+    file: 'src/core/physics.ts',
+    find: '      if (!Number.isFinite(delta) || delta <= 0) {',
+    replace: '      if (!Number.isFinite(delta)) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'a delta that is not a number is no time at all',
+    file: 'src/core/physics.ts',
+    find: '      if (!Number.isFinite(delta) || delta <= 0) {',
+    replace: '      if (delta <= 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'a gap past the resume threshold is dropped and never simulated',
+    file: 'src/core/physics.ts',
+    find: `        leftover = 0;
+        resumed = true;`,
+    replace: `        applied = delta;
+        resumed = true;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'time is consumed in slices no larger than the catch-up ceiling',
+    file: 'src/core/physics.ts',
+    find: '        let take = Math.min(pending, CATCH_UP_SLICE);',
+    replace: '        let take = pending;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the accumulator carries its remainder into the next frame',
+    file: 'src/core/physics.ts',
+    find: '        leftover += take;',
+    replace: '        leftover = take;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the fixed step is the one the whole time model is derived from',
+    file: 'src/core/config.ts',
+    find: 'export const FIXED_STEP = 1 / 120;',
+    replace: 'export const FIXED_STEP = 1 / 90;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the delta ceiling is the value the standard states',
+    file: 'src/core/config.ts',
+    find: 'export const DELTA_CEILING = 0.25;',
+    replace: 'export const DELTA_CEILING = 0.5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the catch-up slice is the value the standard states',
+    file: 'src/core/config.ts',
+    find: 'export const CATCH_UP_SLICE = 1 / 60;',
+    replace: 'export const CATCH_UP_SLICE = 1 / 30;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the resume threshold is the value the standard states',
+    file: 'src/core/config.ts',
+    find: 'export const RESUME_GAP = 5;',
+    replace: 'export const RESUME_GAP = 50;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B2',
+    name: 'damping is per second rather than once per step',
+    file: 'src/core/physics.ts',
+    find: '  const perStepDecay = decayFactor(FIXED_STEP);',
+    replace: '  const perStepDecay = DAMPING;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B2',
+    name: 'a step damps at all',
+    file: 'src/core/physics.ts',
+    find: '      scale(body.velocity, perStepDecay);',
+    replace: '      scale(body.velocity, 1);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B2',
+    name: 'the damping constant is the one SPEC section 6.1 states',
+    file: 'src/core/config.ts',
+    find: 'export const DAMPING = 0.32;',
+    replace: 'export const DAMPING = 0.33;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B3',
+    name: 'a body at or below the stop threshold is zeroed',
+    file: 'src/core/physics.ts',
+    find: `      if (atRest(body.velocity)) {
+        zero(body.velocity);
+      }`,
+    replace: '      void atRest;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B3',
+    name: 'the threshold reads at or below rather than below',
+    file: 'src/core/physics.ts',
+    find: '  return Math.hypot(velocity.x, velocity.y) <= STOP_SPEED;',
+    replace: '  return Math.hypot(velocity.x, velocity.y) < STOP_SPEED;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B3',
+    name: 'the stop threshold is the value SPEC section 6.2 states',
+    file: 'src/core/config.ts',
+    find: 'export const STOP_SPEED = 6;',
+    replace: 'export const STOP_SPEED = 7;',
+    detectedBy: 'unit',
+  },
+
+  {
+    // RE-POINTED AT PF-3. The statement grew a second call, because item B6's
+    // reflection reads the mask `contain` returns rather than reading the four
+    // bounds a second time. The property this entry attacks is unchanged:
+    // remove the statement and no body is contained by anything.
+    item: 'B9',
+    name: 'every body is contained by the field bound, every step',
+    file: 'src/core/physics.ts',
+    find: `    for (const body of bodies) {
+      reflect(body, contain(body));
+    }`,
+    replace: '    void contain;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B9',
+    name: 'containment is measured at the body edge and not at its centre',
+    file: 'src/core/physics.ts',
+    find: '    at.x = FIELD_LEFT + body.radius;',
+    replace: '    at.x = FIELD_LEFT;',
+    detectedBy: 'unit',
+  },
+  {
+    // RE-POINTED AT PF-4. The statement grew the goal-opening exemption in
+    // front of it, item B7, and the property this entry attacks is unchanged:
+    // read the bound against the centre rather than against the edge and every
+    // body is half of itself outside the field.
+    item: 'B9',
+    name: 'the containment test reads the body edge against the bound',
+    file: 'src/core/physics.ts',
+    find: '  if (!throughTheOpening && at.x - body.radius < FIELD_LEFT) {',
+    replace: '  if (!throughTheOpening && at.x < FIELD_LEFT) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B9',
+    name: 'the field bound is where SPEC section 3 puts it',
+    file: 'src/core/config.ts',
+    find: 'export const FIELD_RIGHT = 1190;',
+    replace: 'export const FIELD_RIGHT = 1195;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B9',
+    name: 'the contact disc is measured from both radii',
+    file: 'src/core/config.ts',
+    find: 'export const CIRCLE_RADIUS = 34;',
+    replace: 'export const CIRCLE_RADIUS = 35;',
+    detectedBy: 'unit',
+  },
+
+  {
+    // The SECOND application of the cap, at DESIGN section 3's position 5, has
+    // its own entry in the PF-3 block below. PF-2 recorded a deliberate absence
+    // here, because nothing between the two applications could raise a speed
+    // until item B4's elastic transfer existed; PF-3 built the transfer and the
+    // absence became a live entry.
+    item: 'B10',
+    name: 'nothing is integrated over the global speed cap',
+    file: 'src/core/physics.ts',
+    find: `    for (const body of bodies) {
+      limit(body.velocity, SPEED_CAP);
+    }`,
+    replace: '    void limit;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B10',
+    name: 'the speed cap is the value SPEC section 6.1 states',
+    file: 'src/core/config.ts',
+    find: 'export const SPEED_CAP = 1200;',
+    replace: 'export const SPEED_CAP = 2400;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B10',
+    name: 'a velocity set from outside is capped on the way in',
+    file: 'src/core/bodies.ts',
+    find: `  set(body.velocity, x, y);
+  limit(body.velocity, SPEED_CAP);`,
+    replace: '  set(body.velocity, x, y);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B10',
+    name: 'a launch is capped on the way in',
+    file: 'src/core/bodies.ts',
+    find: `  fromAngle(body.velocity, radians, speed);
+  limit(body.velocity, SPEED_CAP);`,
+    replace: '  fromAngle(body.velocity, radians, speed);',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B11',
+    name: 'a non-finite position is repaired rather than propagated',
+    file: 'src/core/physics.ts',
+    find: `    if (!isFiniteVec2(body.position)) {
+      copy(body.position, safe);
+      record(body.kind, 'position');
+    }`,
+    replace: '    void safe;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'a non-finite velocity is repaired rather than propagated',
+    file: 'src/core/physics.ts',
+    find: `    if (!isFiniteVec2(body.velocity)) {
+      zero(body.velocity);
+      record(body.kind, 'velocity');
+    }`,
+    replace: '    void body;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'the repair source is only ever a position that was finite',
+    file: 'src/core/physics.ts',
+    find: '      if (body !== undefined && safe !== undefined && isFiniteVec2(body.position)) {',
+    replace: '      if (body !== undefined && safe !== undefined) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'the development policy raises after the repair',
+    file: 'src/core/physics.ts',
+    find: "    if (policy === 'throw') {",
+    replace: "    if (policy === 'repair') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'containment leaves a non-finite position for the guard to catch',
+    file: 'src/core/physics.ts',
+    find: `  if (!isFiniteVec2(at)) {
+    return 0;
+  }
+`,
+    replace: '',
+    detectedBy: 'unit',
+  },
+
+  {
+    // There is deliberately no entry attacking the generator's warm-up draws.
+    // Nothing pins an absolute value out of the stream, on purpose: a test
+    // that did would be a test of this generator rather than of the property
+    // item B12 states, and it would have to be rewritten the day the
+    // generator is replaced. Removing the warm-up changes every sequence and
+    // no assertion, which is the correct outcome for a detail nobody depends
+    // on rather than a gap.
+    item: 'B12',
+    name: 'a stream is derived from the seed and not from its path alone',
+    file: 'src/core/rng.ts',
+    find: 'const words = expand(`${seed}#${path}`);',
+    replace: 'const words = expand(path);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'a split stream is a new stream and not the one it came from',
+    file: 'src/core/rng.ts',
+    find: "    split: (name) => createStream(seed, path === '' ? name : `${path}/${name}`),",
+    replace: '    split: () => stream,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'a split stream is named by its whole path from the root',
+    file: 'src/core/rng.ts',
+    find: "path === '' ? name : `${path}/${name}`",
+    replace: 'name',
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-2, second pass. Gates the part added without an entry behind them,
+  // and the exported surfaces PF-3 will build on before it can.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'B3',
+    name: 'a zeroed vector is positive zero in both components',
+    file: 'src/core/vec2.ts',
+    find: `  out.x = 0;
+  out.y = 0;
+  return out;`,
+    replace: `  out.x = out.x * 0;
+  out.y = out.y * 0;
+  return out;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B3',
+    name: 'a stopped body is an equality and not an epsilon',
+    file: 'src/core/bodies.ts',
+    find: '  return body.velocity.x === 0 && body.velocity.y === 0;',
+    replace: '  return Math.hypot(body.velocity.x, body.velocity.y) < 1e-9;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B3',
+    name: 'a kickoff clears every velocity',
+    file: 'src/core/bodies.ts',
+    find: '    zero(body.velocity);',
+    replace: '    void body;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B9',
+    name: 'the wall mask sets a bit for every wall that clamped',
+    file: 'src/core/physics.ts',
+    find: '    walls |= WALL_TOP;',
+    replace: '    walls |= 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B9',
+    name: 'no two walls share a bit in the mask',
+    file: 'src/core/physics.ts',
+    find: 'export const WALL_RIGHT = 2;',
+    replace: 'export const WALL_RIGHT = 1;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B1',
+    name: 'a reset drops the accumulator',
+    file: 'src/core/physics.ts',
+    find: `      leftover = 0;
+    },`,
+    replace: '    },',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B1',
+    name: 'the readout counts what it says it counts',
+    file: 'src/core/physics.ts',
+    find: '      return { steps, frames, leftover, repairs: repaired, clamps, resumes };',
+    replace: '      return { steps, frames, leftover, repairs: repaired, clamps: 0, resumes: 0 };',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B11',
+    name: 'the repair list handed out is a copy of the one kept',
+    file: 'src/core/physics.ts',
+    find: '    const reported = found.slice();',
+    replace: '    const reported = found;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'a reset re-arms the repair source',
+    file: 'src/core/physics.ts',
+    find: '          set(safe, body.position.x, body.position.y);',
+    replace: '          void safe;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B12',
+    name: 'splitting a stream does not advance the stream it came from',
+    file: 'src/core/rng.ts',
+    find: "    split: (name) => createStream(seed, path === '' ? name : `${path}/${name}`),",
+    replace: `    split: (name) => {
+      nextUint32();
+      return createStream(seed, path === '' ? name : \`\${path}/\${name}\`);
+    },`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'an integer draw rejects the biased tail rather than folding it',
+    file: 'src/core/rng.ts',
+    find: `      const ceiling = WORD - (WORD % span);
+      for (let attempt = 0; attempt < DRAW_ATTEMPTS; attempt += 1) {
+        const drawn = nextUint32();
+        if (drawn < ceiling) {
+          return low + (drawn % span);
+        }
+      }`,
+    replace: '      return low + (nextUint32() % span);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'a span wider than one draw is refused',
+    file: 'src/core/rng.ts',
+    find: '        span > WORD',
+    replace: '        span > WORD * 2',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'a float draw is divided by the whole draw space',
+    file: 'src/core/rng.ts',
+    find: '    nextFloat: () => nextUint32() / WORD,',
+    replace: '    nextFloat: () => nextUint32() / (WORD - 1),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B12',
+    name: 'the seed expansion reads every character it is given',
+    file: 'src/core/rng.ts',
+    find: '  for (let at = 0; at < seed.length; at += 1) {',
+    replace: '  for (let at = 0; at < seed.length - 1; at += 1) {',
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-3. Elastic collisions, positional separation and wall reflection.
+  //
+  // SPEC section 6.3 is three rules that have to be applied in one order
+  // and one number of times, so the entries below attack each rule, the
+  // order and the count separately: a resolver missing its gate and a
+  // resolver running one pass instead of four are different defects and
+  // they fail in different places.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'B4',
+    name: 'a step resolves body pairs at all',
+    file: 'src/core/physics.ts',
+    find: '    resolveContacts(world);',
+    replace: '    void resolveContacts;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the impulse is gated on the pair actually approaching',
+    file: 'src/core/collisions.ts',
+    find: `  if (!(approach < 0)) {
+    return true;
+  }`,
+    replace: '  void approach;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the restitution in the impulse is the one SPEC section 6.1 states',
+    file: 'src/core/collisions.ts',
+    find: '  const impulse = (-(1 + CIRCLE_RESTITUTION) * approach) / (1 / a.mass + 1 / b.mass);',
+    replace: '  const impulse = -approach / (1 / a.mass + 1 / b.mass);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the circle restitution is the value SPEC section 6.1 states',
+    file: 'src/core/config.ts',
+    find: 'export const CIRCLE_RESTITUTION = 1;',
+    replace: 'export const CIRCLE_RESTITUTION = 0.5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the impulse is divided by the reduced mass and not by two',
+    file: 'src/core/collisions.ts',
+    find: '(1 / a.mass + 1 / b.mass);',
+    replace: '2;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the impulse is applied along the contact normal alone',
+    file: 'src/core/collisions.ts',
+    find: '  addScaled(a.velocity, contactNormal, -(impulse / a.mass));',
+    replace: '  addScaled(a.velocity, closingVelocity, -(impulse / a.mass));',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the two bodies are pushed in opposite directions',
+    file: 'src/core/collisions.ts',
+    find: '  addScaled(b.velocity, contactNormal, impulse / b.mass);',
+    replace: '  addScaled(b.velocity, contactNormal, -(impulse / b.mass));',
+    detectedBy: 'unit',
+  },
+  {
+    // The two totality guards, which are the reason both readings in
+    // `resolvePair` are written as refusals of a proven fact rather than as the
+    // comparison SPEC section 6.3 states. Flipped to the plain form, a body
+    // whose position is not a number reads as a contact against a healthy one
+    // and four passes shove the healthy body 104 px, which the sanitiser does
+    // not undo because it repairs only the body that was poisoned. That is item
+    // B11's "caught rather than propagated" clause, so both entries live under
+    // B11 rather than under the collision items.
+    item: 'B11',
+    name: 'a position that is not a number is not a contact',
+    file: 'src/core/collisions.ts',
+    find: '  if (!(distanceSquared(a.position, b.position) <= reach * reach)) {',
+    replace: '  if (distanceSquared(a.position, b.position) > reach * reach) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B11',
+    name: 'a relative velocity that is not a number is not an approach',
+    file: 'src/core/collisions.ts',
+    find: '  if (!(approach < 0)) {',
+    replace: '  if (approach >= 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'a pair that is not touching answers that it is not',
+    file: 'src/core/collisions.ts',
+    find: '    return false;',
+    replace: '    return true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the touching test measures both radii',
+    file: 'src/core/collisions.ts',
+    find: '  const reach = a.radius + b.radius;',
+    replace: '  const reach = a.radius;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the touching test measures both axes',
+    file: 'src/core/vec2.ts',
+    find: '  return dx * dx + dy * dy;',
+    replace: '  return dx * dx;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'a difference of two vectors is a difference',
+    file: 'src/core/vec2.ts',
+    find: `  out.x -= other.x;
+  out.y -= other.y;`,
+    replace: `  out.x += other.x;
+  out.y += other.y;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B4',
+    name: 'the approach reading projects both components',
+    file: 'src/core/vec2.ts',
+    find: '  return one.x * other.x + one.y * other.y;',
+    replace: '  return one.x * other.x;',
+    detectedBy: 'unit',
+  },
+  {
+    // The site item B10's criterion names, "a ball accelerated by an elastic
+    // transfer", and the entry PF-2 recorded as a deliberate absence because
+    // nothing could yet raise a speed between the two applications of the cap.
+    item: 'B10',
+    name: 'the cap is applied again after the elastic transfer',
+    file: 'src/core/physics.ts',
+    find: `      scale(body.velocity, perStepDecay);
+      limit(body.velocity, SPEED_CAP);`,
+    replace: '      scale(body.velocity, perStepDecay);',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B5',
+    name: 'an overlapping pair is separated positionally',
+    file: 'src/core/collisions.ts',
+    find: `  if (penetration > 0) {
+    const half = penetration / 2;
+    addScaled(a.position, contactNormal, -half);
+    addScaled(b.position, contactNormal, half);
+  }`,
+    replace: '  void penetration;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'each body moves half the penetration and not all of it',
+    file: 'src/core/collisions.ts',
+    find: '    const half = penetration / 2;',
+    replace: '    const half = penetration;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the two bodies are separated in opposite directions',
+    file: 'src/core/collisions.ts',
+    find: '    addScaled(a.position, contactNormal, -half);',
+    replace: '    addScaled(a.position, contactNormal, half);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the penetration is measured from the reach and the distance',
+    file: 'src/core/collisions.ts',
+    find: '  const penetration = reach - between;',
+    replace: '  const penetration = reach;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'coincident centres take the fixed normal SPEC section 6.3 names',
+    file: 'src/core/collisions.ts',
+    find: '  const between = normalise(contactNormal, 1, 0);',
+    replace: '  const between = normalise(contactNormal, 0, 1);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the fallback normal is the one the caller asked for',
+    file: 'src/core/vec2.ts',
+    find: `    out.x = fallbackX;
+    out.y = fallbackY;`,
+    replace: `    out.x = fallbackY;
+    out.y = fallbackX;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'a distance under the coincidence epsilon takes the fallback',
+    file: 'src/core/vec2.ts',
+    find: 'measured < COINCIDENT_EPSILON',
+    replace: 'measured < 0',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the pairs are resolved four times per step',
+    file: 'src/core/collisions.ts',
+    find: '  for (let pass = 0; pass < SOLVER_ITERATIONS; pass += 1) {',
+    replace: '  for (let pass = 0; pass < 1; pass += 1) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the pass count is the one SPEC section 6.3 states',
+    file: 'src/core/config.ts',
+    find: 'export const SOLVER_ITERATIONS = 4;',
+    replace: 'export const SOLVER_ITERATIONS = 6;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B5',
+    name: 'the pairs are resolved in the fixed order the section states',
+    file: 'src/core/collisions.ts',
+    find: `    resolvePair(world.player, world.opponent);
+    resolvePair(world.player, world.ball);`,
+    replace: `    resolvePair(world.player, world.ball);
+    resolvePair(world.player, world.opponent);`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B6',
+    name: 'a clamped body has its velocity reflected at all',
+    file: 'src/core/physics.ts',
+    find: '      reflect(body, contain(body));',
+    replace: '      contain(body);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the left wall reflects',
+    file: 'src/core/physics.ts',
+    find: `  if ((walls & WALL_LEFT) !== 0 && moving.x < 0) {
+    moving.x = -moving.x * WALL_RESTITUTION;
+  }`,
+    replace: '  void WALL_LEFT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the right wall reflects',
+    file: 'src/core/physics.ts',
+    find: `  if ((walls & WALL_RIGHT) !== 0 && moving.x > 0) {
+    moving.x = -moving.x * WALL_RESTITUTION;
+  }`,
+    replace: '  void WALL_RIGHT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the bottom wall reflects',
+    file: 'src/core/physics.ts',
+    find: `  if ((walls & WALL_BOTTOM) !== 0 && moving.y < 0) {
+    moving.y = -moving.y * WALL_RESTITUTION;
+  }`,
+    replace: '  void WALL_BOTTOM;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the top wall reflects',
+    file: 'src/core/physics.ts',
+    find: `  if ((walls & WALL_TOP) !== 0 && moving.y > 0) {
+    moving.y = -moving.y * WALL_RESTITUTION;
+  }`,
+    replace: '  void WALL_TOP;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the reflection reads the mask rather than the velocity alone',
+    file: 'src/core/physics.ts',
+    find: '  if ((walls & WALL_LEFT) !== 0 && moving.x < 0) {',
+    replace: '  if (walls >= 0 && moving.x < 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'a body already leaving a wall is not turned back into it',
+    file: 'src/core/physics.ts',
+    find: '  if ((walls & WALL_RIGHT) !== 0 && moving.x > 0) {',
+    replace: '  if ((walls & WALL_RIGHT) !== 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the reflection is scaled by the restitution',
+    file: 'src/core/physics.ts',
+    find: `  if ((walls & WALL_BOTTOM) !== 0 && moving.y < 0) {
+    moving.y = -moving.y * WALL_RESTITUTION;`,
+    replace: `  if ((walls & WALL_BOTTOM) !== 0 && moving.y < 0) {
+    moving.y = -moving.y;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B6',
+    name: 'the wall restitution is the value SPEC section 6.1 states',
+    file: 'src/core/config.ts',
+    find: 'export const WALL_RESTITUTION = 0.92;',
+    replace: 'export const WALL_RESTITUTION = 0.9;',
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-4. The goal opening, the goal test and the GOAL state.
+  //
+  // SPEC section 6.4 is one predicate doing two jobs and a two-part goal
+  // condition on top of it, so the entries below attack each job, each
+  // condition and each bound separately: a transparency that stopped
+  // exempting the ball and a detection that started scoring half-in balls
+  // are different defects, and only one of them is visible on the pitch.
+  //
+  // The GOAL state entries carry item B8's label because PF-4 is where the
+  // machinery was built. The criteria that grade it are item D7 and item D6
+  // at PF-7 and item J2 at PF-9, and the suites named there will inherit
+  // these entries rather than write them again.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'B7',
+    name: 'the goal opening is a rule about which body it is',
+    file: 'src/core/goals.ts',
+    find: `  if (body.kind !== 'ball') {
+    return false;
+  }`,
+    replace: '  void body;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the opening test measures the whole ball at the low post',
+    file: 'src/core/goals.ts',
+    find: '    at.y - body.radius >= GOAL_OPENING_LOW - slack &&',
+    replace: '    at.y >= GOAL_OPENING_LOW - slack &&',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the opening test measures the whole ball at the high post',
+    file: 'src/core/goals.ts',
+    find: '    at.y + body.radius <= GOAL_OPENING_HIGH + slack',
+    replace: '    at.y <= GOAL_OPENING_HIGH + slack',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the opening is where SPEC section 3 puts it',
+    file: 'src/core/config.ts',
+    find: 'export const GOAL_OPENING_LOW = 265;',
+    replace: 'export const GOAL_OPENING_LOW = 255;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the hysteresis is applied to a ball that is already through',
+    file: 'src/core/goals.ts',
+    find: '  const slack = centrePastAGoalLine(body) ? GOAL_OPENING_HYSTERESIS : 0;',
+    replace: '  const slack = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the hysteresis widens the opening rather than narrowing it',
+    file: 'src/core/goals.ts',
+    find: '  const slack = centrePastAGoalLine(body) ? GOAL_OPENING_HYSTERESIS : 0;',
+    replace: '  const slack = centrePastAGoalLine(body) ? -GOAL_OPENING_HYSTERESIS : 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the hysteresis is the value SPEC section 6.4 states',
+    file: 'src/core/config.ts',
+    find: 'export const GOAL_OPENING_HYSTERESIS = 0.5;',
+    replace: 'export const GOAL_OPENING_HYSTERESIS = 5;',
+    detectedBy: 'unit',
+  },
+  {
+    // The documented reading in `centrePastAGoalLine`. Read as the leading
+    // edge touching the line, the widened bound applies on the way in too and
+    // SPEC section 6.4's condition 2 stops being the binding one.
+    item: 'B7',
+    name: 'a ball on its way in is judged at the exact bound',
+    file: 'src/core/goals.ts',
+    find: '  return body.position.x < LEFT_GOAL_LINE || body.position.x > RIGHT_GOAL_LINE;',
+    replace: `  return (
+    body.position.x - body.radius < LEFT_GOAL_LINE ||
+    body.position.x + body.radius > RIGHT_GOAL_LINE
+  );`,
+    detectedBy: 'unit',
+  },
+  {
+    // The comparison the documented reading of "already through" turns on. At
+    // or past the line rather than past it, and the slack meant for a ball that
+    // has gone through arrives at the position where it is deciding whether to.
+    item: 'B7',
+    name: 'a centre exactly on the goal line is not through yet',
+    file: 'src/core/goals.ts',
+    find: '  return body.position.x < LEFT_GOAL_LINE || body.position.x > RIGHT_GOAL_LINE;',
+    replace: '  return body.position.x <= LEFT_GOAL_LINE || body.position.x >= RIGHT_GOAL_LINE;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the left goal end is transparent to a ball that fits',
+    file: 'src/core/physics.ts',
+    find: '  if (!throughTheOpening && at.x - body.radius < FIELD_LEFT) {',
+    replace: '  if (at.x - body.radius < FIELD_LEFT) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B7',
+    name: 'the right goal end is transparent to a ball that fits',
+    file: 'src/core/physics.ts',
+    find: '  if (!throughTheOpening && at.x + body.radius > FIELD_RIGHT) {',
+    replace: '  if (at.x + body.radius > FIELD_RIGHT) {',
+    detectedBy: 'unit',
+  },
+  {
+    // The other half of transparency, which is the half that comes free: no
+    // clamp means no wall bit means no reflection. This entry puts the bit
+    // back while leaving the position alone, which is a ball that passes
+    // through the mouth and is turned around inside the goal.
+    item: 'B7',
+    name: 'a ball passing through a goal end is not turned by it',
+    file: 'src/core/physics.ts',
+    find: `  if (!throughTheOpening && at.x + body.radius > FIELD_RIGHT) {
+    at.x = FIELD_RIGHT - body.radius;
+    walls |= WALL_RIGHT;
+  }`,
+    replace: `  if (at.x + body.radius > FIELD_RIGHT) {
+    if (!throughTheOpening) {
+      at.x = FIELD_RIGHT - body.radius;
+    }
+    walls |= WALL_RIGHT;
+  }`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'B8',
+    name: 'the right goal is measured at the trailing edge, not the centre',
+    file: 'src/core/goals.ts',
+    find: '  if (at.x - body.radius >= RIGHT_GOAL_LINE) {',
+    replace: '  if (at.x >= RIGHT_GOAL_LINE) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the left goal is measured at the trailing edge, not the centre',
+    file: 'src/core/goals.ts',
+    find: '  if (at.x + body.radius <= LEFT_GOAL_LINE) {',
+    replace: '  if (at.x <= LEFT_GOAL_LINE) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a goal needs the opening test as well as the line',
+    file: 'src/core/goals.ts',
+    find: `  if (!ballFitsOpening(body)) {
+    return undefined;
+  }
+  return trailingEdgePast(body);`,
+    replace: '  return trailingEdgePast(body);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the step tests for a goal at all',
+    file: 'src/core/physics.ts',
+    find: '    scoring.observe(world, steps);',
+    replace: '    void steps;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a goal awards exactly one point',
+    file: 'src/core/goals.ts',
+    find: '      scores[scorer] += 1;',
+    replace: '      scores[scorer] += 2;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the mouth the ball entered names the side that attacks it',
+    file: 'src/core/goals.ts',
+    find: "const SCORER: Readonly<Record<GoalMouth, Side>> = { left: 'opponent', right: 'player' };",
+    replace: "const SCORER: Readonly<Record<GoalMouth, Side>> = { left: 'player', right: 'opponent' };",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a goal freezes the simulation where the ball lies',
+    file: 'src/core/physics.ts',
+    find: `    if (scoring.frozen()) {
+      scoring.holdOneStep(world);
+      steps += 1;
+      return;
+    }`,
+    replace: '    void scoring;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a goal starts the hold, which is what keeps the award to one',
+    file: 'src/core/goals.ts',
+    find: '      hold = GOAL_HOLD_STEPS;',
+    replace: '      hold = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the hold counts down rather than running forever',
+    file: 'src/core/goals.ts',
+    find: '      hold -= 1;',
+    replace: '      hold -= 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the celebration hold is the duration SPEC section 6.4 states',
+    file: 'src/core/config.ts',
+    find: 'export const GOAL_HOLD = 1.2;',
+    replace: 'export const GOAL_HOLD = 1.5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the hold is that duration counted in fixed steps',
+    file: 'src/core/goals.ts',
+    find: 'export const GOAL_HOLD_STEPS = Math.round(GOAL_HOLD / FIXED_STEP);',
+    replace: 'export const GOAL_HOLD_STEPS = Math.round(GOAL_HOLD);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the hold ends by putting the world back to kickoff',
+    file: 'src/core/goals.ts',
+    find: '      kickoff(world);',
+    replace: '      void world;',
+    detectedBy: 'unit',
+  },
+  {
+    // The reset's other half, every velocity cleared, is attacked by the entry
+    // above under item B3, "a kickoff clears every velocity": PF-2 built that
+    // reading and PF-4 gave it a second detector in unit/goal-detection.
+    item: 'B8',
+    name: 'the reset puts every body back where it starts',
+    file: 'src/core/bodies.ts',
+    find: '    set(body.position, start.x, start.y);',
+    replace: '    void start;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the goal test answers with the goal it awarded',
+    file: 'src/core/goals.ts',
+    find: '      return goal;',
+    replace: '      return undefined;',
+    detectedBy: 'unit',
+  },
+  {
+    // The two ways a caller ends a celebration early, which PF-7 and PF-9 both
+    // need: putting the world back, and starting a new match. A hold that
+    // outlived either would freeze the state that replaced it.
+    item: 'B8',
+    name: 'putting the world back to kickoff drops a running celebration',
+    file: 'src/core/physics.ts',
+    find: '      scoring.clearHold();',
+    replace: '      void 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a new match drops a running celebration with the scores',
+    file: 'src/core/goals.ts',
+    find: `      goals = 0;
+      hold = 0;`,
+    replace: '      goals = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'the next turn belongs to the side that conceded',
+    file: 'src/core/goals.ts',
+    find: '      nextTurn = last === undefined ? nextTurn : last.conceded;',
+    replace: '      nextTurn = last === undefined ? nextTurn : last.scorer;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'B8',
+    name: 'a target reached ends the match instead of kicking off',
+    file: 'src/core/goals.ts',
+    find: `      if (target !== undefined && scores[scorer] >= target) {
+        over = true;
+      }`,
+    replace: '      void target;',
+    detectedBy: 'unit',
+  },
 ];
 
 /**
@@ -487,6 +1727,42 @@ export const ADDITIONS = [
     content: 'export const roll = Math.random();\n',
     detectedBy: 'lint',
   },
+
+  // Item E1. Fresh literals dropped into the real src/, one per shape the
+  // sweep is claimed to catch, and the last of them into a directory that has
+  // no code in it at all. That is the claim that matters most: every part
+  // after this one is written under the rule rather than audited against it
+  // afterwards. The recursion the sweep needs to reach them is pinned by its
+  // own entry above, because an addition alone cannot tell a walk that stopped
+  // at the top level from one that found nothing to complain about.
+  {
+    item: 'E1',
+    name: 'a stray colour literal in the chrome is rejected',
+    file: 'src/ui/mutation-colour-literal.css',
+    content: '.mutation {\n  color: #FF0000;\n}\n',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a stray dimension literal in the chrome is rejected',
+    file: 'src/ui/mutation-dimension-literal.css',
+    content: '.mutation {\n  padding: 12px;\n}\n',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a stray colour function in the renderer is rejected',
+    file: 'src/render/mutation-colour-function.ts',
+    content: "export const shadow = 'rgba(0, 0, 0, 0.5)';\n",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a literal in a directory with no code yet is rejected',
+    file: 'src/core/mutation-inherited-sweep.ts',
+    content: "export const marker = '#123456';\n",
+    detectedBy: 'unit',
+  },
 ];
 
 function occurrences(haystack, needle) {
@@ -502,6 +1778,18 @@ function occurrences(haystack, needle) {
   }
 }
 
+/**
+ * Ten minutes against a suite that takes seconds, and it is a fourth safety
+ * property rather than a tuning number. A mutation can leave the code in a
+ * state where a test loops forever rather than failing, and a synchronous loop
+ * is not something a test runner's own timeout can interrupt. Without a
+ * deadline here the whole gate hangs and reports nothing; with one, the
+ * detector is killed, the run is not a pass, and the entry is correctly
+ * reported as detected. Every loop in the suite carries its own budget for the
+ * same reason; this is the backstop for the one that does not.
+ */
+const DETECTOR_TIMEOUT = 10 * 60 * 1000;
+
 function detectorPasses(name) {
   const detector = DETECTORS[name];
   try {
@@ -510,6 +1798,7 @@ function detectorPasses(name) {
       stdio: 'pipe',
       env: { ...process.env, CI: '1' },
       maxBuffer: 64 * 1024 * 1024,
+      timeout: DETECTOR_TIMEOUT,
     });
     return { passed: true, output: '' };
   } catch (error) {

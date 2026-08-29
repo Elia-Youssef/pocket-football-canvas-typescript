@@ -1,0 +1,235 @@
+/*
+ * Design tokens, item E1.
+ *
+ * Two sources, and neither of them is this file. The numeric scales are
+ * QUALITY-BAR section 15 and are shared with the other game; the palette is
+ * SPEC section 18 and is this game's alone. Every value here is copied from one
+ * of them, tests/reference/design-contract.md holds the copy a test can read,
+ * and tests/unit/tokens.test.ts fails if this file, the renderer record in
+ * src/render/tokens.ts and that contract disagree about anything.
+ *
+ * QUALITY-BAR section 15: no literal colour, size, spacing, radius or duration
+ * may appear in component code. This file and the renderer record are the only
+ * two places in the project where a literal value is permitted, and the sweep
+ * in that test enforces the rule over every other file under src/, including
+ * the ones later parts have not written yet.
+ *
+ * SHAPE, AND WHY IT IS THIS SHAPE. Each token's value is written exactly once,
+ * under a name that says which theme or which brightness variant it belongs to.
+ * The set in force is then chosen by aliasing, so a theme change is a handful
+ * of alias declarations that either all apply or none do. Writing the palette
+ * out once per selector is the arrangement in which a change of theme
+ * half-applies, and it is the one this file exists to avoid.
+ *
+ * The blocks below are the whole file, in this order: the base, the system
+ * preference, the two stored-setting overrides, and reduced motion. The test
+ * pins that list, because a parser that has quietly stopped finding a block
+ * reports agreement it never checked.
+ */
+
+:root {
+  /*
+   * Type scale. Base 1rem, ratio 1.200, rem throughout so the browser font
+   * setting applies. Chrome text only: the play surface has no text scale of
+   * its own, because anything a player needs in order to decide is real DOM
+   * text (QUALITY-BAR section 4).
+   */
+  --type-xs: 0.694rem;
+  --type-sm: 0.833rem;
+  --type-base: 1rem;
+  --type-md: 1.2rem;
+  --type-lg: 1.44rem;
+  --type-xl: 1.728rem;
+  --type-2xl: 2.074rem;
+
+  /* Section 15 states these as prose, so they are tokenised here and no
+     component writes the number: 1.5 for body, 1.25 at --type-lg and above. */
+  --leading-body: 1.5;
+  --leading-tight: 1.25;
+
+  /* Spacing. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Radius. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Border. */
+  --border-hair: 1px;
+  --border-thin: 2px;
+  --border-thick: 3px;
+
+  /*
+   * Focus ring. Section 15 states it as one token, "2px solid, 2px offset",
+   * which is three declarations plus a colour; section 3 requires it visible at
+   * 3:1 and never removed. The width is NOT aliased to --border-thin even
+   * though both are 2px: they are two decisions that agree, and a later change
+   * to the border scale must not silently move the focus ring. The colour is
+   * SPEC section 18, which makes the accent the ring, and it therefore flips
+   * with the theme and carries 11.56 dark and 5.63 light.
+   */
+  --focus-ring-width: 2px;
+  --focus-ring-style: solid;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--pf-accent);
+
+  /*
+   * Touch target: 44 by 44 CSS px minimum with 8 px clearance, which section 15
+   * says IS --space-2 and is therefore aliased rather than restated. A control
+   * smaller than the minimum carries its hit area through padding, never
+   * through a transparent overlay.
+   */
+  --target-min: 44px;
+  --target-clearance: var(--space-2);
+
+  /*
+   * Motion. These are chrome durations. The gameplay pacing constants live in
+   * SPEC and are a separate set, because removing them would change the
+   * sequence of states rather than the presentation of it.
+   */
+  --dur-0: 0ms;
+  --dur-1: 80ms;
+  --dur-2: 140ms;
+  --dur-3: 220ms;
+  --dur-4: 320ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /*
+   * Chrome palette, SPEC section 18, both themes under their own names. Every
+   * ratio the section quotes is measured against that theme's ground, and the
+   * test re-derives all six from these eight hexes rather than trusting them.
+   */
+  --pf-ground-dark: #0A1410;
+  --pf-text-dark: #EAF2EC;
+  --pf-text-muted-dark: #9FB0A6;
+  --pf-accent-dark: #F5C542;
+
+  --pf-ground-light: #EDF2EE;
+  --pf-text-light: #16211B;
+  --pf-text-muted-light: #4A5A50;
+  --pf-accent-light: #7A5A06;
+
+  /*
+   * Play surface, SPEC section 18. Three tokens are brightness variants of each
+   * other: the dark theme is a floodlit night pitch, the light theme is
+   * daylight, and the luminance ORDER of everything on the pitch is identical
+   * in both, which is what every contrast guarantee in that section is built
+   * on. The test asserts the order rather than assuming it.
+   */
+  --pitch-stripe-a-floodlit: #2A7336;
+  --pitch-stripe-b-floodlit: #2F7D3C;
+  --pf-rail-floodlit: #C8CFCB;
+
+  --pitch-stripe-a-daylight: #359045;
+  --pitch-stripe-b-daylight: #3C9A4D;
+  --pf-rail-daylight: #DDE3DF;
+
+  /*
+   * The other seven are one colour in both variants, so they carry no variant
+   * name. --glyph-on-opponent holds the same colour as --pf-line and is still
+   * written out: section 18 states the two independently, and an alias would
+   * turn two decisions that agree today into one decision used twice.
+   *
+   * The boundary rule, section 18 and QUALITY-BAR section 15: --pf-line is the
+   * outline every meaningful object on the pitch carries, and it is what clears
+   * 3:1 against the pitch. The two team fills carry IDENTITY, separated in
+   * relative luminance at 0.26 against 0.04, and they do not clear 3:1 against
+   * the pitch. That is retracted, measured and deliberate; pushing either fill
+   * to clear it drags it toward the other team and breaks the 3.49 between them.
+   */
+  --pf-line: #F2F7F3;
+  --team-player: #5590CE;
+  --team-opponent: #6E1712;
+  --glyph-on-player: #0A1A2B;
+  --glyph-on-opponent: #F2F7F3;
+  --ball-body: #FAFAF8;
+  --ball-panel: #1A1A1A;
+
+  /*
+   * The set in force. Light is the base, so a browser that reports no colour
+   * preference gets daylight; the two blocks below select the other set.
+   */
+  --pf-ground: var(--pf-ground-light);
+  --pf-text: var(--pf-text-light);
+  --pf-text-muted: var(--pf-text-muted-light);
+  --pf-accent: var(--pf-accent-light);
+  --pitch-stripe-a: var(--pitch-stripe-a-daylight);
+  --pitch-stripe-b: var(--pitch-stripe-b-daylight);
+  --pf-rail: var(--pf-rail-daylight);
+}
+
+/*
+ * The system preference, per SPEC section 18 and SPEC section 17: the theme
+ * follows prefers-color-scheme and a stored setting overrides it. The guard is
+ * what makes the override win in BOTH directions. Without it a stored light
+ * setting would be undone here on a machine set to dark, and the setting would
+ * only appear to work one way round.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --pf-ground: var(--pf-ground-dark);
+    --pf-text: var(--pf-text-dark);
+    --pf-text-muted: var(--pf-text-muted-dark);
+    --pf-accent: var(--pf-accent-dark);
+    --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
+    --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
+    --pf-rail: var(--pf-rail-floodlit);
+  }
+}
+
+/* A stored setting, which wins over the system preference either way round. */
+:root[data-theme='dark'] {
+  --pf-ground: var(--pf-ground-dark);
+  --pf-text: var(--pf-text-dark);
+  --pf-text-muted: var(--pf-text-muted-dark);
+  --pf-accent: var(--pf-accent-dark);
+  --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
+  --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
+  --pf-rail: var(--pf-rail-floodlit);
+}
+
+/*
+ * Redundant while light is the base, and deliberate: it states the override
+ * instead of leaving it as a consequence of which theme happens to be the base.
+ * A later change to that choice cannot silently break one direction.
+ */
+:root[data-theme='light'] {
+  --pf-ground: var(--pf-ground-light);
+  --pf-text: var(--pf-text-light);
+  --pf-text-muted: var(--pf-text-muted-light);
+  --pf-accent: var(--pf-accent-light);
+  --pitch-stripe-a: var(--pitch-stripe-a-daylight);
+  --pitch-stripe-b: var(--pitch-stripe-b-daylight);
+  --pf-rail: var(--pf-rail-daylight);
+}
+
+/*
+ * Reduced motion, QUALITY-BAR sections 4 and 15: every --dur-* resolves to
+ * --dur-0, and the sequence of states and the outcome are untouched. Only the
+ * presentation pacing may differ.
+ *
+ * It is done by redefining the tokens and by nothing else. The obvious
+ * implementation, a blanket animation and transition cancel, also stops
+ * transitionend and animationend from ever arriving, so anything sequenced on
+ * them stops arriving too and the order of states DOES change. There is
+ * therefore no animation, no transition and no !important in this block, and
+ * the test asserts their absence.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: var(--dur-0);
+    --dur-2: var(--dur-0);
+    --dur-3: var(--dur-0);
+    --dur-4: var(--dur-0);
+  }
+}

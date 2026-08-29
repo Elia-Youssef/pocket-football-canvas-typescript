@@ -9,9 +9,19 @@ game framework and no physics engine. No images, no audio files, no webfonts: ev
 primitive and every sound is synthesised at runtime. The whole thing ships as a static bundle and stores
 everything in the browser.
 
-**Nothing is playable yet.** This is `PF-0`, the scaffold: the toolchain, the gates and the `core/` boundary
-that makes the rest of the build testable. `src/core/`, `src/render/` and `src/ui/` are empty directories
-with a note in each, and `src/main.ts` is a boot marker. The simulation starts at `PF-2`.
+**Nothing is playable yet.** `PF-0` was the scaffold: the toolchain, the gates and the `core/` boundary that
+makes the rest of the build testable. `PF-1` added the design tokens, so `src/ui/` and `src/render/` hold
+the two forms of the token layer and nothing else, and `src/main.ts` is a boot marker plus the one
+stylesheet import. `PF-2` added the simulation: the three time layers, integration, per-second damping, the
+stop threshold, the global speed cap, wall containment, the finiteness guard and the seeded stream. `PF-3`
+added the collisions: elastic circle-against-circle response with positional separation and an approach
+gate, the three pairs resolved in a fixed order four times per step, and wall reflection at the stated
+restitution. `PF-4` added the goals: one predicate decides both whether the whole ball is inside an
+opening and whether the side walls are transparent to it, so the ball passes through and the circles,
+which fit the opening geometrically, never do; a goal needs the trailing edge past the line as well, so a
+half-in ball does not score; and it holds the pitch for 1.2 s before the reset gives the next turn to the
+side that conceded. It runs headlessly and nothing draws it yet, and it takes its time as a parameter, so
+the frame driver is a later part. Aiming arrives at `PF-5`, and the turn flow around a goal at `PF-7`.
 
 ## Prerequisites
 
@@ -52,7 +62,7 @@ Those two commands are the only ones that touch the network. Everything below wo
 | `npm run preview` | Serves the built `dist/` on port 4273, strict about the port |
 | `npm run typecheck` | `tsc --noEmit` in strict mode against the project `tsconfig.json` |
 | `npm run lint` | ESLint over the tree, including the `core/` boundary rules. Excludes the lint fixtures, which exist to be linted by a test |
-| `npm run test` | The Vitest suite: the boundary rules against their fixtures, the build fingerprint, and the repository record checks |
+| `npm run test` | The Vitest suite: the boundary rules against their fixtures, the build fingerprint, the repository record checks, the design tokens against the values the documents committed, and the simulation, which is frame independence, damping, the stop threshold, tunneling, the speed cap, finiteness, a seeded transcript, the collisions, and the goals: the openings a ball passes and the circles never do, and goal detection with its hold and reset |
 | `npm run test:browser` | Builds, then drives the built bundle in Chromium, Firefox and WebKit |
 | `npm run verify:build` | Builds twice under deliberately different conditions and compares every emitted byte. Writes `artifacts/reports/build.md` |
 | `npm run verify:policy` | Checks the branch name, every commit in the history, and every tracked file against the repository record rules. Needs a git repository rooted at this project, and refuses by name to judge any other |
@@ -83,14 +93,33 @@ ruleset is empty on purpose.
 index.html                     entry document
 src/
   core/                        the simulation. Zero DOM, zero canvas, zero renderer imports, zero
-                               Math.random. Lint-enforced, not documented
+                               Math.random, and no clock: time arrives as a parameter.
+                               Lint-enforced, not documented
+    config.ts                  every geometry and tuning constant, one place
+    vec2.ts                    vector maths that mutates what it is given, for a step that allocates
+                               nothing
+    bodies.ts                  the three bodies, the world, and kickoff placement
+    rng.ts                     the seeded stream, one split per consumer
+    collisions.ts              body against body: separation, the approach gate and the elastic
+                               impulse, and the three pairs in their fixed order
+    goals.ts                   the one predicate the goal openings and the goal test share, and the
+                               GOAL state: one point, the celebration hold, the reset, the next turn
+    physics.ts                 the three time layers, integration, damping, the stop threshold, the
+                               speed cap, wall containment and reflection, and the finiteness guard
   render/                      the canvas play surface, and nothing else
+    tokens.ts                  the play-surface palette and the numeric scales as data, because a
+                               canvas context cannot take a var()
   ui/                          the DOM chrome: every button, readout, panel and label
-  main.ts                      composition root, currently a boot marker
+    tokens.css                 every design token as a custom property, both themes and both
+                               brightness variants. The only stylesheet, imported once by main.ts
+  main.ts                      composition root, currently a boot marker and that import
+  stylesheets.d.ts             says a stylesheet import resolves, so the type checker agrees with the
+                               bundler. Narrow on purpose; see the note in it
 packages/engine/               a placeholder, so the forbidden engine specifier resolves. See its README
 tools/eslint-plugin-core-boundary/
                                the three rules behind the core boundary, and their README
-tests/unit/                    Vitest
+tests/unit/                    Vitest, with the driver the simulation tests share in support/
+tests/reference/               values copied from the documents that own them, for a test to read
 tests/browser/                 Playwright, against the built bundle
 tests/lint/fixtures/           a deliberately violating core module, its near-miss control, and the same
                                offences outside core. Excluded from tsc and from the shipping lint
