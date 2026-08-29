@@ -1716,6 +1716,115 @@ export const EDITS = [
     replace: '      void target;',
     detectedBy: 'unit',
   },
+
+  // ---------------------------------------------------------------------
+  // PF-7. The match around the simulation: the turn-end conjunction, the
+  // opponent's pre-launch wait, the goal hold routing and the restart.
+  //
+  // The conjunction gets one entry per half, because the halves prevent
+  // different defects: a turn handed back while a body still moves, and a
+  // turn handed back while the celebration is still running. The restart
+  // order gets one entry for the protection the order provides rather than
+  // for the textual order itself: within one synchronous restart, swapping
+  // the two calls is state-identical and would be an undetectable entry, so
+  // the entry drops the world reset entirely, which is the defect the order
+  // exists to prevent and which tests/unit/goal-reset.test.ts watches for.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'D1',
+    name: 'a turn ends only when every body has stopped',
+    file: 'src/core/match.ts',
+    find: '      const turnOver = everyBodyStopped(sim.world) && !scoringNow.frozen;',
+    replace: '      const turnOver = !scoringNow.frozen;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D1',
+    name: 'a turn at rest still waits for a running celebration to lift',
+    file: 'src/core/match.ts',
+    find: '      const turnOver = everyBodyStopped(sim.world) && !scoringNow.frozen;',
+    replace: '      const turnOver = everyBodyStopped(sim.world);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D1',
+    name: 'a launch routes through MOVING with no special case',
+    file: 'src/core/match.ts',
+    find: "        state = { kind: 'MOVING', launchedBy: 'player' };",
+    replace: "        state = { kind: 'PLAYER_TURN' };",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D2',
+    name: 'the seam reads the whole delay from the config',
+    file: 'src/core/match.ts',
+    find: '      if (!opponentReady && opponentDelay >= OPPONENT_PRELAUNCH_DELAY) {',
+    replace: '      if (!opponentReady && opponentDelay >= OPPONENT_PRELAUNCH_DELAY / 2) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D2',
+    name: 'the wait accumulates the deltas it is driven with',
+    file: 'src/core/match.ts',
+    find: '      opponentDelay += elapsedOf(dt);',
+    replace: '      opponentDelay = elapsedOf(dt);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D6',
+    name: 'the kickoff after a goal belongs to the side that conceded',
+    file: 'src/core/match.ts',
+    find: '        enterKickoff(state.goal.conceded);',
+    replace: '        enterKickoff(state.goal.scorer);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D7',
+    name: 'the match leaves GOAL when the freeze lifts, not while it runs',
+    file: 'src/core/match.ts',
+    find: '      } else if (!scoringNow.frozen) {',
+    replace: '      } else {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D7',
+    name: 'the goal reset preserves both scores',
+    file: 'src/core/goals.ts',
+    find: `      nextTurn = last === undefined ? nextTurn : last.conceded;
+      kickoff(world);`,
+    replace: `      nextTurn = last === undefined ? nextTurn : last.conceded;
+      kickoff(world);
+      scores.player = 0;
+      scores.opponent = 0;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D7',
+    name: 'a goal does not restore the match clock',
+    file: 'src/core/match.ts',
+    find: '        enterKickoff(state.goal.conceded);',
+    replace: '        remaining = options.duration;\n        enterKickoff(state.goal.conceded);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D7',
+    name: 'the clock ticks through the celebration as well',
+    file: 'src/core/match.ts',
+    find:
+      "    kind === 'PLAYER_TURN' || kind === 'OPPONENT_TURN' || kind === 'MOVING' || kind === 'GOAL'",
+    replace: "    kind === 'PLAYER_TURN' || kind === 'OPPONENT_TURN' || kind === 'MOVING'",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D7',
+    name: 'a new match puts the world back before the scoreboard is cleared',
+    file: 'src/core/match.ts',
+    find: `    sim.reset();
+    scoring.reset();`,
+    replace: '    scoring.reset();',
+    detectedBy: 'unit',
+  },
 ];
 
 /**
