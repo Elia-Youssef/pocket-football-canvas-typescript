@@ -473,39 +473,42 @@ export const EDITS = [
   },
   {
     item: 'E1',
-    name: 'the first disclosed defect cannot widen',
+    name: 'the corrected rail cell is re-derived and not trusted',
     file: 'tests/reference/design-contract.md',
-    find: '| Rail on ground | Daylight | 8.59 | 1.15 | 3 |',
-    replace: '| Rail on ground | Daylight | 8.59 | 1.16 | 3 |',
+    find: '| Rail on ground | Daylight | 1.15 | 3 | Rail on pitch, both variants |',
+    replace: '| Rail on ground | Daylight | 1.16 | 3 | Rail on pitch, both variants |',
     detectedBy: 'unit',
   },
 
-  // The second disclosed defect, which is a different shape: the source quotes
-  // nothing, so there is no number to disagree with and the pins are on the
-  // derived value, on the verdict, and on the row being there at all.
+  // The two scoped cells, corrected 2026-08-29 from the two disclosures this
+  // harness protected since PF-1: measured, quoted in section 5, and
+  // deliberately below the threshold their named carrier meets. The pins are
+  // on the derived value, on the ceiling, and on the rows being there at all.
   {
     item: 'E1',
-    name: 'the second disclosed defect derives its own numbers',
+    name: 'a filled arrow cell is re-derived and not trusted',
     file: 'tests/reference/design-contract.md',
-    find: '| 3.71 | 3 | yes |',
-    replace: '| 3.81 | 3 | yes |',
+    find: '| Aim arrow weak end on pitch | `--pf-line` | `--pitch-stripe-a` | 5.38 | 3.71 | 3 |',
+    replace: '| Aim arrow weak end on pitch | `--pf-line` | `--pitch-stripe-a` | 5.38 | 3.81 | 3 |',
     detectedBy: 'unit',
   },
   {
     item: 'E1',
-    name: 'a shortfall cannot be talked out of being one',
-    file: 'tests/reference/design-contract.md',
-    find: '| 1.59 | 3 | no |',
-    replace: '| 1.59 | 3 | yes |',
-    detectedBy: 'unit',
-  },
-  {
-    item: 'E1',
-    name: 'a disclosed reading cannot be deleted',
+    name: 'a quiet cell is measured against the real ceiling',
     file: 'tests/reference/design-contract.md',
     find:
-      '| Aim arrow strong end on pitch | Daylight | the arrow keeps the floodlit accent | ' +
-      '`--pf-accent` | Floodlit | `--pitch-stripe-a` | 2.48 | 3 | no |',
+      "| Aim arrow strong end on pitch | Daylight | 1.59 | 3 | The arrow's own `--pf-line` " +
+      'outline, both variants |',
+    replace:
+      "| Aim arrow strong end on pitch | Daylight | 1.59 | 1.5 | The arrow's own `--pf-line` " +
+      'outline, both variants |',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'a scoped cell cannot be deleted',
+    file: 'tests/reference/design-contract.md',
+    find: '| Rail on ground | Daylight | 1.15 | 3 | Rail on pitch, both variants |\n',
     replace: '',
     detectedBy: 'unit',
   },

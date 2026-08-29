@@ -172,10 +172,7 @@ const ARROW_ACCENT = tableUnder('4. The eleventh colour the play surface uses');
 const PAIRS = tableUnder('5. Measured pairs');
 const IDENTITY = tableUnder('6. Identity separation, in relative luminance');
 const RETRACTED = tableUnder('7. The retracted claim');
-const DISAGREEMENT = tableUnder('8.1 A quoted ratio that does not re-derive');
-const UNMEASURED = tableUnder(
-  '8.2 The unmeasured cells, and the guarantee one of them cannot meet',
-);
+const SCOPED = tableUnder('8. Cells the threshold does not govern');
 
 /** A play-surface token's value per variant, including the arrow's accent. */
 const SURFACE_BY_VARIANT: Record<Brightness, Map<string, string>> = {
@@ -621,12 +618,10 @@ describe('PF-1 design tokens', () => {
       expect(PAIRS.rows).toHaveLength(14);
       expect(IDENTITY.rows).toHaveLength(2);
       expect(RETRACTED.rows).toHaveLength(2);
-      // Section 8 carries two disclosures, not one: a quoted ratio that does
-      // not re-derive, and two unmeasured cells one of which misses the
-      // guarantee stated beside it. Three rows because one of those cells has
-      // two readings and both fall short.
-      expect(DISAGREEMENT.rows).toHaveLength(1);
-      expect(UNMEASURED.rows).toHaveLength(3);
+      // Section 8 lists the two cells whose threshold the source scopes to a
+      // named carrier, corrected 2026-08-29 from the two disclosures this
+      // file recorded at PF-1.
+      expect(SCOPED.rows).toHaveLength(2);
       // Section 1 carries a second table, the prose derivations. Reading it by
       // accident would compare the wrong column.
       expect(tablesUnder('1. Numeric scales')).toHaveLength(2);
@@ -850,27 +845,19 @@ describe('PF-1 design tokens', () => {
         ['3', 12],
         ['4.5', 2],
       ]);
-      for (const row of UNMEASURED.rows) {
-        expect(field(UNMEASURED, row, 'Needs'), field(UNMEASURED, row, 'Pair')).toBe('3');
+      for (const row of SCOPED.rows) {
+        expect(field(SCOPED, row, 'Stays below'), field(SCOPED, row, 'Pair')).toBe('3');
       }
     });
 
     it('re-derives every measured pair the spec quotes, in both variants', () => {
-      const disputed = new Set(
-        DISAGREEMENT.rows.map((row) =>
-          cellKey(
-            field(DISAGREEMENT, row, 'Pair'),
-            variantOf(field(DISAGREEMENT, row, 'Variant')),
-          ),
-        ),
-      );
-      const unmeasured = new Set(
-        UNMEASURED.rows.map((row) =>
-          cellKey(field(UNMEASURED, row, 'Pair'), variantOf(field(UNMEASURED, row, 'Variant'))),
+      const scoped = new Set(
+        SCOPED.rows.map((row) =>
+          cellKey(field(SCOPED, row, 'Pair'), variantOf(field(SCOPED, row, 'Variant'))),
         ),
       );
       let checked = 0;
-      let dashes = 0;
+      let quiet = 0;
       for (const row of PAIRS.rows) {
         const pair = field(PAIRS, row, 'Pair');
         const foreground = field(PAIRS, row, 'Foreground');
@@ -879,110 +866,109 @@ describe('PF-1 design tokens', () => {
         for (const variant of VARIANTS) {
           const quoted = field(PAIRS, row, columnFor(variant));
           const key = cellKey(pair, variant);
-          if (quoted === '-') {
-            // The skip is section 8.2's doing, not an accident: a cell the
-            // source leaves unmeasured is checked there or it is checked
-            // nowhere, and this is what makes the difference visible.
-            dashes += 1;
-            expect(unmeasured.has(key), `${key} is unmeasured with no entry in section 8.2`).toBe(
-              true,
-            );
-            continue;
-          }
-          if (disputed.has(key)) {
-            continue;
-          }
           const derived = contrast(resolve(foreground, variant), resolve(background, variant));
+          // Every cell re-derives from the hexes, the two quiet ones included.
           expect(round2(derived), key).toBe(Number(quoted));
+          if (scoped.has(key)) {
+            // The threshold is scoped to another carrier; the section 8 tests
+            // assert the quiet cell stays quiet and the carrier clears.
+            quiet += 1;
+            continue;
+          }
           expect(derived, `${key}, needs ${String(needs)}`).toBeGreaterThanOrEqual(needs);
           checked += 1;
         }
       }
-      // Fourteen rows, two variants, two cells the spec leaves unmeasured and
-      // one recorded disagreement. Three of the 28 are checked in section 8.
-      expect(checked).toBe(14 * 2 - 2 - 1);
-      expect(dashes).toBe(2);
-      expect(disputed.size + dashes).toBe(3);
+      // Fourteen rows, two variants, and the two cells section 8 scopes away.
+      expect(checked).toBe(14 * 2 - 2);
+      expect(quiet).toBe(2);
+      expect(scoped.size).toBe(2);
     });
 
-    it('pins the quoted ratio that does not re-derive, the first of the two', () => {
-      expect(DISAGREEMENT.rows).toHaveLength(1);
-      const row = DISAGREEMENT.rows[0];
+    it('holds the corrected rail cell: re-derives, stays quiet, and the pitch row carries it', () => {
+      const row = SCOPED.rows.find((entry) => field(SCOPED, entry, 'Pair') === 'Rail on ground');
       if (row === undefined) {
-        throw new Error('the contract records no disagreement');
+        throw new Error('the contract scopes no rail cell');
       }
-      const pair = field(DISAGREEMENT, row, 'Pair');
-      const source = PAIRS.rows.find((entry) => field(PAIRS, entry, 'Pair') === pair);
+      expect(variantOf(field(SCOPED, row, 'Variant'))).toBe('daylight');
+      const source = PAIRS.rows.find((entry) => field(PAIRS, entry, 'Pair') === 'Rail on ground');
       if (source === undefined) {
-        throw new Error(`the measured pairs carry no row named ${JSON.stringify(pair)}`);
+        throw new Error('the measured pairs carry no rail row');
       }
-      const measured = (of: Brightness): number =>
-        round2(
-          contrast(
-            resolve(field(PAIRS, source, 'Foreground'), of),
-            resolve(field(PAIRS, source, 'Background'), of),
-          ),
-        );
-
-      const disputed = variantOf(field(DISAGREEMENT, row, 'Variant'));
-      const other: Brightness = disputed === 'floodlit' ? 'daylight' : 'floodlit';
-
-      // Both numbers pinned: the quoted one, so the copy cannot be edited to
-      // agree, and the derived one, so a hex cannot be edited to agree either.
-      expect(field(PAIRS, source, columnFor(disputed))).toBe(field(DISAGREEMENT, row, 'Quoted'));
-      expect(measured(disputed)).toBe(Number(field(DISAGREEMENT, row, 'Re-derives to')));
-      expect(measured(disputed)).not.toBe(Number(field(DISAGREEMENT, row, 'Quoted')));
-      // The other variant of the same row re-derives exactly, which is what
-      // says the pairing is read correctly and this defect is one cell.
-      expect(measured(other)).toBe(Number(field(PAIRS, source, columnFor(other))));
+      const derived = contrast(resolve('--pf-rail', 'daylight'), resolve('--pf-ground', 'daylight'));
+      // Derived, quoted in section 5, and pinned here, so a hex nudged back
+      // toward the retired 8.59 quote fails in three places at once.
+      expect(round2(derived)).toBe(Number(field(SCOPED, row, 'Measured')));
+      expect(field(PAIRS, source, columnFor('daylight'))).toBe(field(SCOPED, row, 'Measured'));
+      // Deliberately quiet: the source scopes the 3:1 to the floodlit variant,
+      // so the cell is asserted BELOW the ceiling, and a rail recoloured until
+      // it clears fails as loudly as one that stopped clearing floodlit. The
+      // recolour is also what would invert the cross-variant luminance order.
+      expect(derived).toBeLessThan(Number(field(SCOPED, row, 'Stays below')));
+      // The carrier the source names: rail on pitch, both variants, and the
+      // floodlit half of the same row still re-derives and clears on its own.
+      for (const variant of VARIANTS) {
+        expect(
+          contrast(resolve('--pf-rail', variant), resolve('--pitch-stripe-a', variant)),
+          `rail on pitch, ${variant}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      expect(
+        round2(contrast(resolve('--pf-rail', 'floodlit'), resolve('--pf-ground', 'floodlit'))),
+      ).toBe(11.82);
     });
 
-    it('pins the unmeasured cells and the guarantee one of them misses, the second', () => {
-      // The other class of defect, and a different shape: nothing here is
-      // arithmetically wrong in the source, the numbers were never taken, and
-      // the prose guarantee beside them is unreachable with these colours.
-      expect(UNMEASURED.rows).toHaveLength(3);
-      const short: string[] = [];
-      const readings: string[] = [];
-      for (const row of UNMEASURED.rows) {
-        const pair = field(UNMEASURED, row, 'Pair');
-        const variant = variantOf(field(UNMEASURED, row, 'Variant'));
-        const readIn = variantOf(field(UNMEASURED, row, 'Foreground read in'));
-        const needs = Number(field(UNMEASURED, row, 'Needs'));
-        const clears = field(UNMEASURED, row, 'Clears');
-        const label = `${pair}, ${field(UNMEASURED, row, 'Reading')}`;
-
-        const derived = contrast(
-          resolve(field(UNMEASURED, row, 'Foreground'), readIn),
-          resolve(field(UNMEASURED, row, 'Background'), variant),
-        );
-        // The number is derived, not quoted, so it moves the moment a hex does.
-        expect(round2(derived), label).toBe(Number(field(UNMEASURED, row, 'Measured')));
-        // And the verdict is pinned in BOTH directions: a colour nudged until
-        // the strong end clears fails as loudly as one nudged until the weak
-        // end stops clearing.
-        expect(clears === 'yes' || clears === 'no', label).toBe(true);
-        expect(derived >= needs, `${label}, needs ${String(needs)}`).toBe(clears === 'yes');
-
-        // The source still says nothing here. A number written quietly into
-        // the measured-pairs table would make this read as audited.
-        const source = PAIRS.rows.find((entry) => field(PAIRS, entry, 'Pair') === pair);
-        if (source === undefined) {
-          throw new Error(`the measured pairs carry no row named ${JSON.stringify(pair)}`);
-        }
-        expect(field(PAIRS, source, columnFor(variant)), label).toBe('-');
-
-        if (pair.includes('strong end')) {
-          readings.push(readIn);
-          if (clears === 'no') {
-            short.push(label);
-          }
-        }
+    it('holds the corrected arrow cells: the fills re-derive and the outline carries the guarantee', () => {
+      const row = SCOPED.rows.find(
+        (entry) => field(SCOPED, entry, 'Pair') === 'Aim arrow strong end on pitch',
+      );
+      if (row === undefined) {
+        throw new Error('the contract scopes no arrow cell');
       }
-      // Two readings of which accent the arrow ramps to, both short of 3, and
-      // there is no third: the accent is a chrome token with two values.
-      expect(readings.sort()).toEqual(['daylight', 'floodlit']);
-      expect(short).toHaveLength(2);
+      expect(variantOf(field(SCOPED, row, 'Variant'))).toBe('daylight');
+      // The strong end's daylight fill is the accent in force for the light
+      // theme, on the pitch. Derived, quoted in section 5, pinned here, and
+      // deliberately quiet: the guarantee moved to the outline, so a fill
+      // nudged until it clears 3 reads as the retired both-ends claim coming
+      // quietly back.
+      const strong = contrast(
+        resolve('--pf-accent', 'daylight'),
+        resolve('--pitch-stripe-a', 'daylight'),
+      );
+      expect(round2(strong)).toBe(Number(field(SCOPED, row, 'Measured')));
+      expect(strong).toBeLessThan(Number(field(SCOPED, row, 'Stays below')));
+      // The weak end fills its cell the ordinary way and clears, and the
+      // floodlit strong end still clears on its own, as section 5 quotes.
+      expect(
+        round2(contrast(resolve('--pf-line', 'daylight'), resolve('--pitch-stripe-a', 'daylight'))),
+      ).toBe(3.71);
+      expect(
+        round2(
+          contrast(resolve('--pf-accent', 'floodlit'), resolve('--pitch-stripe-a', 'floodlit')),
+        ),
+      ).toBe(3.59);
+      // The carrier the source names: the arrow's own `--pf-line` outline,
+      // clearing against both stripes in both variants, which is the same
+      // boundary rule every other object on the pitch already follows.
+      for (const variant of VARIANTS) {
+        expect(
+          contrast(resolve('--pf-line', variant), resolve('--pitch-stripe-a', variant)),
+          `outline on stripe A, ${variant}`,
+        ).toBeGreaterThanOrEqual(3);
+        expect(
+          contrast(resolve('--pf-line', variant), resolve('--pitch-stripe-b', variant)),
+          `outline on stripe B, ${variant}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      // Exactly two cells are scoped, and these are they: a third quiet cell
+      // cannot arrive unannounced.
+      expect(
+        SCOPED.rows
+          .map((entry) =>
+            cellKey(field(SCOPED, entry, 'Pair'), variantOf(field(SCOPED, entry, 'Variant'))),
+          )
+          .sort(),
+      ).toEqual(['Aim arrow strong end on pitch  daylight', 'Rail on ground  daylight']);
     });
 
     it('re-derives both identity luminances to two decimal places', () => {

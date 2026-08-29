@@ -23,7 +23,10 @@ line with a slash, the markings pair and the aim-arrow pair, are written as one 
 and `Background` columns are added: the source names each pair in prose, and a test needs the two token
 names to re-derive the ratio from the hexes. The chrome table's two ratio columns share one header in the
 source and are named for their theme here, because a column is looked up by its header. Every hex, every
-number and every threshold is character for character what the source states.
+number and every threshold is character for character what the source states, with one scoping
+transformation: the source binds two cells' thresholds to another carrier (the rail row's daylight cell
+to the floodlit variant, the arrow's strong end to its outline). The Needs column here stays numeric so a
+test can read it, and section 8 lists the two scoped cells by name.
 
 **How a token resolves.** A play-surface token resolves by brightness variant, a chrome token by theme, and
 the two are tied: the dark theme is the floodlit pitch and the light theme is daylight. So a measured pair
@@ -134,9 +137,9 @@ draws. It is a cross-reference and not a new colour: the two hexes below are the
 
 ## 5. Measured pairs
 
-Every ratio the source measured on the play surface, with the two tokens each one is between. A dash is a
-cell the source leaves unmeasured, and no test invents a number for it. Section 8 accounts for all three
-cells that are not compared here the ordinary way, the two dashes included.
+Every ratio the source measured on the play surface, with the two tokens each one is between. Section 8
+lists the two cells whose stated threshold the source scopes to another carrier; both are re-derived like
+every other cell and are asserted quiet there rather than against this table's threshold.
 
 | Pair | Foreground | Background | Floodlit | Daylight | Needs |
 |---|---|---|---|---|---|
@@ -151,9 +154,9 @@ cells that are not compared here the ordinary way, the two dashes included.
 | Ball on pitch | `--ball-body` | `--pitch-stripe-a` | 5.58 | 3.84 | 3 |
 | Ball on player fill | `--ball-body` | `--team-player` | 3.21 | 3.21 | 3 |
 | Rail on pitch | `--pf-rail` | `--pitch-stripe-a` | 3.67 | 3.09 | 3 |
-| Rail on ground | `--pf-rail` | `--pf-ground` | 11.82 | 8.59 | 3 |
-| Aim arrow weak end on pitch | `--pf-line` | `--pitch-stripe-a` | 5.38 | - | 3 |
-| Aim arrow strong end on pitch | `--pf-accent` | `--pitch-stripe-a` | 3.59 | - | 3 |
+| Rail on ground | `--pf-rail` | `--pf-ground` | 11.82 | 1.15 | 3 |
+| Aim arrow weak end on pitch | `--pf-line` | `--pitch-stripe-a` | 5.38 | 3.71 | 3 |
+| Aim arrow strong end on pitch | `--pf-accent` | `--pitch-stripe-a` | 3.59 | 1.59 | 3 |
 
 ## 6. Identity separation, in relative luminance
 
@@ -181,66 +184,24 @@ which is the 3.49 in section 5.
 The same paragraph records that the reference image's two team colours measure 1.09 against each other.
 That image is not a source of colour here and none of its values are copied.
 
-## 8. The cells section 5 does not check the ordinary way
+## 8. Cells the threshold does not govern
 
-Section 5 holds 28 cells. **Twenty-five are compared against the hexes and clear the threshold their row
-states. Three are not, and they are two separate defects in the source, in two different classes.** Both
-are recorded here rather than quietly corrected, dropped or skipped: correcting either would mean editing
-a source document, or a measured colour, to fit an implementation, and this part may do neither.
+Section 5 holds 28 cells. Twenty-six clear the threshold their row states. The two below are re-derived
+the same way and are deliberately quiet: for each, the source scopes the 3:1 guarantee to a named carrier
+instead. The test pins the measured value exactly, asserts it stays below 3 so the stronger claim cannot
+be quietly reinstated by nudging a colour, and asserts the carrier clears.
 
-The two classes are not the same kind of problem and the tests below keep them apart:
+Both entered this file at PF-1 as recorded defects in the source: the rail row's daylight cell quoted
+8.59, a number the hexes never produced, and the arrow bullet promised both ends 3:1 on the pitch, which
+no reading of the accent reaches in daylight. The specification owner corrected both on 2026-08-29
+without changing any colour: the rail's daylight requirement was scoped to floodlit only, and the arrow's
+contrast guarantee moved to its `--pf-line` outline, the same boundary rule every other object on the
+pitch already follows.
 
-| Class | What is wrong | Where |
-|---|---|---|
-| A quoted ratio that does not re-derive | The source states a number the two hexes do not produce | 8.1 |
-| An unmeasured cell whose stated guarantee is not met | The source states a dash and a prose guarantee, and the colours miss it | 8.2 |
-
-Neither is resolvable here and they are **one parked decision**, not two independent ones: both live in the
-same section of the same document and any answer to either is a change only the specification's owner may
-make.
-
-### 8.1 A quoted ratio that does not re-derive
-
-| Pair | Variant | Quoted | Re-derives to | Needs |
+| Pair | Variant | Measured | Stays below | Carried by |
 |---|---|---|---|---|
-| Rail on ground | Daylight | 8.59 | 1.15 | 3 |
+| Rail on ground | Daylight | 1.15 | 3 | Rail on pitch, both variants |
+| Aim arrow strong end on pitch | Daylight | 1.59 | 3 | The arrow's own `--pf-line` outline, both variants |
 
-Both numbers are pinned by the test, so the disagreement cannot widen, cannot be resolved by editing a hex
-without the test saying so, and cannot gain a second row unnoticed. This one cell is skipped by the loop
-over section 5 and asserted here instead.
-
-Two things about it are worth a reviewer's attention. The floodlit half of the same row re-derives exactly,
-at 11.82, which is what confirms the pairing is read correctly: a light rail on the near-black dark ground
-clears easily. The daylight half puts a near-white rail on a near-white ground, where no value near either
-one can reach 3, so this is a question about the palette or about whether the pair belongs in the table at
-all, and both answers are the user's to give. Nothing on the play surface depends on it yet: what carries
-the rail's legibility is the row above, rail on pitch, which clears its threshold in both variants.
-
-### 8.2 The unmeasured cells, and the guarantee one of them cannot meet
-
-The source leaves both daylight cells of the aim-arrow rows as a dash, and states in prose that the arrow
-"ramps from `--pf-line` at the weak end to `--pf-accent` at the clamp, so both ends clear 3:1 against the
-pitch". On the daylight pitch the weak end does. **The strong end does not, under either reading of which
-accent the arrow ramps to, and there is no third reading**: the accent is a chrome token with exactly two
-values, and the arrow either takes the one in force for the theme or keeps the floodlit one.
-
-| Pair | Variant | Reading | Foreground | Foreground read in | Background | Measured | Needs | Clears |
-|---|---|---|---|---|---|---|---|---|
-| Aim arrow weak end on pitch | Daylight | the outline, which does not flip | `--pf-line` | Daylight | `--pitch-stripe-a` | 3.71 | 3 | yes |
-| Aim arrow strong end on pitch | Daylight | the accent flips with the theme | `--pf-accent` | Daylight | `--pitch-stripe-a` | 1.59 | 3 | no |
-| Aim arrow strong end on pitch | Daylight | the arrow keeps the floodlit accent | `--pf-accent` | Floodlit | `--pitch-stripe-a` | 2.48 | 3 | no |
-
-Every number here is derived by the test from the hexes, and each row's `Clears` verdict is asserted in
-both directions, so a colour nudged until the strong end clears 3 fails just as loudly as one nudged until
-the weak end stops clearing. The dash in section 5 for each of these two cells is asserted to still be a
-dash: the loop's skip is this disclosure's doing and not an accident, and a number quietly written into
-either cell fails.
-
-**How this one differs from 8.1.** Nothing in the source is arithmetically wrong here; the numbers were
-simply never taken, and the prose guarantee beside them turns out to be unreachable with the committed
-colours, the same way the fill-on-pitch requirement in section 7 was. The choices are the specification
-owner's: move the accent for the daylight variant, let the arrow keep the floodlit accent and accept
-2.48, carry the arrow's contrast on its `--pf-line` outline the way every other object on the pitch does,
-or withdraw the clause the way the fill-on-pitch one was withdrawn. **No colour was changed and no hex was
-invented to close it.** Nothing draws an arrow yet: it arrives with the aiming part, and `G2` and `E4`
-re-measure it over rendered pixels at `PF-19`.
+Nothing draws an arrow yet: it arrives with the aiming part, and `G2` and `E4` re-measure everything over
+rendered pixels at `PF-19`, outline included.

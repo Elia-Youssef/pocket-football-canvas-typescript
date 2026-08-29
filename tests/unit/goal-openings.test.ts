@@ -324,9 +324,11 @@ describe('PF-4 the opening test carries 0.5 px of hysteresis, item B7', () => {
 
   it('judges a ball that is already through at the widened bound', () => {
     // The other half of the same sentence: a ball currently outside the field
-    // passes at `y - r >= 264.5 && y + r <= 455.5`. Read here, as in the code,
-    // as the ball's centre being past the line, which is the reading that
-    // leaves condition 2's exact bound binding on the way in.
+    // passes at `y - r >= 264.5 && y + r <= 455.5`, and the section states the
+    // consequence outright: the widened bound is the one in force at the
+    // moment a goal is awarded, and condition 2's exact bound is what a ball
+    // must meet to pass through the mouth in the first place. Outside the
+    // field is read, as in the code, as the ball's centre being past the line.
     let checked = 0;
     for (const mouth of MOUTHS) {
       const ball = createWorld().ball;
@@ -435,12 +437,12 @@ describe('PF-4 the opening test carries 0.5 px of hysteresis, item B7', () => {
 
 describe('PF-4 the clamp back, item B7', () => {
   it('pulls a ball that no longer fits back inside by the ball diameter', () => {
-    // SPEC section 6.4: "a ball whose trailing edge is past the goal line but
-    // which no longer fits the opening is clamped back inside the field by the
-    // wall rule, a discontinuity of at most 36 px. Accepted rather than
-    // smoothed." At the position the section describes it is exactly 36, which
-    // is the ball's diameter and not a coincidence: the clamp seats the ball's
-    // near edge on the line it had just cleared with its far edge.
+    // SPEC section 6.4: the clamp-back discontinuity is at most the ball's
+    // diameter plus one step of travel at the speed cap, 46 px at the shipped
+    // constants and 36 px in the stationary case the sentence's geometry
+    // describes. This is that stationary case, and the 36 is the diameter and
+    // not a coincidence: the clamp seats the ball's near edge on the line it
+    // had just cleared with its far edge.
     let checked = 0;
     for (const mouth of MOUTHS) {
       const ball = createWorld().ball;
@@ -459,15 +461,14 @@ describe('PF-4 the clamp back, item B7', () => {
   });
 
   it('measures the worst a whole step can make of it, which is a step longer', () => {
-    // A DISCLOSED READING, and a finding rather than a defect. The section's
-    // 36 px is the discontinuity measured at the position it names, the
-    // trailing edge exactly on the line. The wall rule is asked once per step,
-    // at DESIGN section 3's position 3, so a ball that was legally through at
-    // the start of a step and no longer fits at the end of it is clamped from
-    // wherever that step's integration left it, which is up to one step of
-    // travel at the cap further out. The bound is the diameter plus 10 px, and
-    // the case is reachable: the ball below is on the widened bound and half a
-    // pixel of drift takes it off.
+    // THE STATED SUPREMUM, asserted at its own edge. The wall rule is asked
+    // once per step, at DESIGN section 3's position 3, so a ball that was
+    // legally through at the start of a step and no longer fits at the end of
+    // it is clamped from wherever that step's integration left it, up to one
+    // step of travel at the cap further out. SPEC section 6.4 states the
+    // bound as the diameter plus that step, 46 px at the shipped constants,
+    // and the case is reachable: the ball below is on the widened bound and
+    // half a pixel of drift takes it off.
     const sim = createSimulation({ onNonFinite: 'throw' });
     const ball = sim.world.ball;
     parkTheRest(sim.world, ball);
