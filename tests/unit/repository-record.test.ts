@@ -13,6 +13,7 @@ import {
   isGameContextLine,
   isReservedBasename,
   isTextPath,
+  parseCommitLog,
   requiresCloses,
   scanContent,
   scanPath,
@@ -209,8 +210,12 @@ describe('PF-0 repository record gate', () => {
     const DEPENDENCY_COMMIT = {
       author: 'dependabot[bot] <support@github.com>',
       committer: 'GitHub <noreply@github.com>',
+      // The real message shape, sign-off included: dependabot appends it to
+      // every commit it creates, so a model without it tests a commit that
+      // will never exist.
       message:
-        'deps: bump actions/checkout from 7.0.1 to 7.0.2\n\nBumps actions/checkout.',
+        'deps: bump actions/checkout from 7.0.1 to 7.0.2\n\nBumps actions/checkout.\n\n' +
+        'Signed-off-by: dependabot[bot] <support@github.com>',
     };
     const HUMAN_CI_COMMIT = {
       author: 'Someone <someone@example.com>',
@@ -225,8 +230,20 @@ describe('PF-0 repository record gate', () => {
       expect(requiresCloses('docs: record the reorder')).toBe(true);
     });
 
-    it('passes a dependency commit with no Closes line', () => {
+    it('passes the commit exactly as dependabot writes it, sign-off and all', () => {
       expect(checkCommitRecord(DEPENDENCY_COMMIT)).toEqual([]);
+    });
+
+    it('refuses the dependency sign-off on anything that is not a dependency update', () => {
+      expect(
+        checkCommitRecord({
+          author: 'Someone <someone@example.com>',
+          committer: 'Someone <someone@example.com>',
+          message:
+            'PF-2: integrate at a fixed step\n\nWhy.\n\n' +
+            'Signed-off-by: dependabot[bot] <support@github.com>\n\nCloses: B1',
+        }).length,
+      ).toBe(1);
     });
 
     it('fails a human ci commit with no Closes line', () => {
@@ -245,6 +262,93 @@ describe('PF-0 repository record gate', () => {
       }
       delete process.env['REPOSITORY_BRANCH'];
       expect(checkCommitRecord.length).toBe(1);
+    });
+  });
+
+  describe('control bytes cannot hide record text from the walk', () => {
+    const FIELD = String.fromCharCode(0x1e);
+    const RECORD = String.fromCharCode(0x1d);
+
+    it('flags the log separators and NUL inside a message', () => {
+      for (const byte of [FIELD, RECORD, String.fromCharCode(0)]) {
+        const problems = checkCommitRecord({
+          author: 'Someone <someone@example.com>',
+          committer: 'Someone <someone@example.com>',
+          message: `PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1${byte}hidden text`,
+        });
+        expect(
+          problems.some((problem) => problem.includes('control byte')),
+          `0x${(byte.codePointAt(0) ?? 0).toString(16)}`,
+        ).toBe(true);
+      }
+    });
+
+    it('flags a control byte in an identity as well', () => {
+      expect(
+        checkCommitRecord({
+          author: `Someone${FIELD} <someone@example.com>`,
+          committer: 'Someone <someone@example.com>',
+          message: 'PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1',
+        }).some((problem) => problem.includes('control byte')),
+      ).toBe(true);
+    });
+
+    it('leaves tab, LF and CR alone, which real messages carry', () => {
+      expect(
+        checkCommitRecord({
+          author: 'Someone <someone@example.com>',
+          committer: 'Someone <someone@example.com>',
+          message: 'PF-2: integrate at a fixed step\n\nWhy:\n\tindented.\r\n\nCloses: B1',
+        }),
+      ).toEqual([]);
+    });
+  });
+
+  describe('the commit walk parses its own format defensively', () => {
+    const FIELD = String.fromCharCode(0x1e);
+    const RECORD = String.fromCharCode(0x1d);
+    const record = (message: string): string =>
+      [
+        'abcdef1234567890',
+        'Someone',
+        'someone@example.com',
+        'Someone',
+        'someone@example.com',
+        message,
+      ].join(FIELD) + RECORD;
+
+    it('parses an ordinary record whole', () => {
+      const { records, fragments } = parseCommitLog(
+        record('PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1'),
+      );
+      expect(fragments).toEqual([]);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.sha).toBe('abcdef12');
+      expect(records[0]?.message).toBe('PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1');
+    });
+
+    it('keeps text after an embedded field separator instead of dropping it', () => {
+      const { records } = parseCommitLog(
+        record(`PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1${FIELD}hidden`),
+      );
+      expect(records[0]?.message).toContain('hidden');
+      // And the record check then flags the byte the message carries.
+      expect(
+        checkCommitRecord({
+          author: records[0]?.author ?? '',
+          committer: records[0]?.committer ?? '',
+          message: records[0]?.message ?? '',
+        }).some((problem) => problem.includes('control byte')),
+      ).toBe(true);
+    });
+
+    it('reports an embedded record separator as a fragment, never a silent skip', () => {
+      const { records, fragments } = parseCommitLog(
+        record(`PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1${RECORD}hidden after the split`),
+      );
+      expect(records).toHaveLength(1);
+      expect(fragments).toHaveLength(1);
+      expect(fragments[0]).toContain('hidden after the split');
     });
   });
 
@@ -347,9 +451,27 @@ describe('PF-0 repository record gate', () => {
       expect(checkBody(['Closes: A1,A2'], { requireCloses: true }).length).toBe(1);
     });
 
-    it('never waives the trailer ban', () => {
+    it('waives exactly the dependency sign-off, and only on a dependency update', () => {
+      const SIGNOFF = 'Signed-off-by: dependabot[bot] <support@github.com>';
+      // The one narrow waiver: the bot's own sign-off, on a dependency body.
+      expect(
+        checkBody(['bumps vite.', '', SIGNOFF], { requireCloses: false, dependencyUpdate: true }),
+      ).toEqual([]);
+      // The same line outside a dependency update is a trailer like any other.
+      expect(checkBody(['bumps vite.', '', SIGNOFF], { requireCloses: false }).length).toBe(1);
+      // A dependency update waives no other trailer.
+      expect(
+        checkBody(['bumps vite.', '', TRAILER], { requireCloses: false, dependencyUpdate: true })
+          .length,
+      ).toBe(1);
+      // Nor a sign-off by anyone who is not the dependency bot.
+      expect(
+        checkBody(['bumps vite.', '', 'Signed-off-by: Someone <someone@example.com>'], {
+          requireCloses: false,
+          dependencyUpdate: true,
+        }).length,
+      ).toBe(1);
       expect(checkBody(['bumps vite.'], { requireCloses: false })).toEqual([]);
-      expect(checkBody(['bumps vite.', '', TRAILER], { requireCloses: false }).length).toBe(1);
     });
 
     it('pins the Closes pattern itself', () => {

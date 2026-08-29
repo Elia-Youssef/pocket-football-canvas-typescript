@@ -433,6 +433,46 @@ export const EDITS = [
     replace: '  return false;',
     detectedBy: 'unit',
   },
+  {
+    item: 'GH7',
+    name: 'the dependency trailer waiver names the bot, not anybody signing off',
+    file: 'scripts/check-repository-record.mjs',
+    find: String.raw`const DEPENDENCY_TRAILER = /^Signed-off-by: dependabot\[bot\] <support@github\.com>$/;`,
+    replace: String.raw`const DEPENDENCY_TRAILER = /^Signed-off-by: /;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'the dependency trailer waiver belongs to dependency updates only',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    if (dependencyUpdate && DEPENDENCY_TRAILER.test(line)) {',
+    replace: '    if (DEPENDENCY_TRAILER.test(line)) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a control byte in a record value is flagged, not passed as ASCII',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)) {',
+    replace: '    if (code === 0x7f) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a message keeps its text after an embedded field separator',
+    file: 'scripts/check-repository-record.mjs',
+    find: '      message: parts.slice(5).join(UNIT_SEPARATOR),',
+    replace: '      message: parts[5],',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'an unparseable record fragment is reported, never skipped',
+    file: 'scripts/check-repository-record.mjs',
+    find: '      fragments.push(commit);',
+    replace: '      void commit;',
+    detectedBy: 'unit',
+  },
 
   // The token layer, item E1. Three sources have to agree, every quoted ratio
   // has to re-derive from the hexes, and the literal sweep has to be able to

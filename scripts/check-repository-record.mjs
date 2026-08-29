@@ -161,9 +161,16 @@ export const SUBJECT_PATTERN = /^(?:PF-[0-9]+|ENG-[0-9]+|fix|docs|ci|deps): [a-z
 export const CLOSES_PATTERN =
   /^Closes: (?:None|[A-Z][A-Z0-9-]*[a-z]?(?:, [A-Z][A-Z0-9-]*[a-z]?)*)$/;
 
-// Any `<word>-by:` line is a trailer, and this repository takes none of them.
-// GITHUB section 4 allows exactly one structured line in a body, `Closes:`.
+// Any `<word>-by:` line is a trailer, and this repository takes none of them,
+// with exactly one waiver: dependabot appends its own sign-off to every commit
+// it creates, and that message is generated outside this repository the same
+// way its missing `Closes:` line is. The waiver is as narrow as the collision:
+// a dependency update only, this exact line only, so a person cannot ride it
+// by writing a sign-off into a dependency subject, and every other trailer
+// stays banned everywhere. GITHUB section 4 allows exactly one structured
+// line in a body, `Closes:`.
 const TRAILER_PATTERN = /^[A-Za-z][A-Za-z-]*-by:\s/i;
+const DEPENDENCY_TRAILER = /^Signed-off-by: dependabot\[bot\] <support@github\.com>$/;
 
 const TEXT_EXTENSIONS = new Set([
   '.md', '.csv', '.py', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts',
@@ -303,6 +310,25 @@ export function isAscii(value) {
   return true;
 }
 
+/**
+ * The first control character a record value carries, beyond tab, LF and CR.
+ *
+ * `isAscii` cannot see these: every one sits below 0x7f. They matter because
+ * the commit walk parses `git log` output on two separator bytes, so a message
+ * carrying either would split or truncate its own record, and DEL and the rest
+ * of C0 have no business in a delivery record either. By code point rather
+ * than a character class, for the same lint reason as `isAscii`.
+ */
+export function findControlByte(value) {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)) {
+      return code;
+    }
+  }
+  return null;
+}
+
 /** GITHUB section 4, applied to a commit subject or a pull request title. */
 export function checkSubject(subject) {
   const problems = [];
@@ -342,7 +368,7 @@ export function requiresCloses(subject) {
 }
 
 /** GITHUB section 4, applied to a whole message or a pull request body. */
-export function checkBody(lines, { requireCloses }) {
+export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
   const problems = [];
   const closes = lines.filter((line) => line.startsWith('Closes:'));
   if (closes.length === 0 && requireCloses) {
@@ -353,9 +379,13 @@ export function checkBody(lines, { requireCloses }) {
     problems.push(`has an invalid Closes: line: ${JSON.stringify(closes[0])}`);
   }
   for (const line of lines) {
-    if (TRAILER_PATTERN.test(line)) {
-      problems.push(`carries a trailer, which this repository takes none of: ${JSON.stringify(line)}`);
+    if (!TRAILER_PATTERN.test(line)) {
+      continue;
     }
+    if (dependencyUpdate && DEPENDENCY_TRAILER.test(line)) {
+      continue;
+    }
+    problems.push(`carries a trailer, which this repository takes none of: ${JSON.stringify(line)}`);
   }
   return problems;
 }
@@ -381,6 +411,13 @@ export function checkCommitRecord({ author, committer, message }) {
     for (const hit of scanRecord(value)) {
       problems.push(`${label} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
     }
+    const control = findControlByte(value);
+    if (control !== null) {
+      problems.push(
+        `${label} carries control byte 0x${control.toString(16).padStart(2, '0')}, ` +
+          'which can split or truncate a record scan',
+      );
+    }
   }
 
   const lines = message.replace(/\n+$/, '').split('\n');
@@ -391,8 +428,10 @@ export function checkCommitRecord({ author, committer, message }) {
   if (lines.length > 1 && lines[1] !== '') {
     problems.push('needs a blank line after its subject');
   }
+  const dependency = !requiresCloses(subject);
   for (const problem of checkBody(lines.slice(2), {
-    requireCloses: requiresCloses(subject),
+    requireCloses: !dependency,
+    dependencyUpdate: dependency,
   })) {
     problems.push(`message ${problem}`);
   }
@@ -484,41 +523,71 @@ function checkTracked() {
   return tracked.length;
 }
 
+const UNIT_SEPARATOR = '\x1e';
+const RECORD_SEPARATOR = '\x1d';
+
+/**
+ * The `git log` walk output, parsed into records and orphan fragments.
+ *
+ * Exported for the suite: the parsing itself is load-bearing. A message
+ * carrying one of the separator bytes would split or truncate its own record,
+ * and a parser that dropped the tail or skipped the fragment silently is
+ * exactly where hidden record text would escape the walk. So the message is
+ * rejoined rather than destructured, and anything that does not parse is
+ * returned for the caller to fail on, never swallowed.
+ */
+export function parseCommitLog(log) {
+  const records = [];
+  const fragments = [];
+  for (const commit of log.split(RECORD_SEPARATOR).filter((entry) => entry.trim() !== '')) {
+    const parts = commit.replace(/^\n/, '').split(UNIT_SEPARATOR);
+    if (parts.length < 6) {
+      fragments.push(commit);
+      continue;
+    }
+    const [full, authorName, authorEmail, committerName, committerEmail] = parts;
+    records.push({
+      sha: full.slice(0, 8),
+      author: `${authorName} <${authorEmail}>`,
+      committer: `${committerName} <${committerEmail}>`,
+      // Rejoined, not destructured: a unit byte inside the message splits it
+      // into extra fields, and taking only the sixth would silently drop
+      // everything after the byte from every scan downstream.
+      message: parts.slice(5).join(UNIT_SEPARATOR),
+    });
+  }
+  return { records, fragments };
+}
+
 function checkCommits() {
   console.log('== 3. every commit in the history ==');
-  const unit = '\x1e';
-  const record = '\x1d';
   let log;
   try {
     log = git(
       'log',
       '--all',
       '--no-merges',
-      `--format=${['%H', '%an', '%ae', '%cn', '%ce', '%B'].join(unit)}${record}`,
+      `--format=${['%H', '%an', '%ae', '%cn', '%ce', '%B'].join(UNIT_SEPARATOR)}${RECORD_SEPARATOR}`,
     );
   } catch (error) {
     ok(`no commits to read yet (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`);
     return 0;
   }
 
-  const commits = log.split(record).filter((entry) => entry.trim() !== '');
-  for (const commit of commits) {
-    const parts = commit.replace(/^\n/, '').split(unit);
-    if (parts.length < 6) {
-      continue;
-    }
-    const [full, authorName, authorEmail, committerName, committerEmail, message] = parts;
-    const sha = full.slice(0, 8);
-    for (const problem of checkCommitRecord({
-      author: `${authorName} <${authorEmail}>`,
-      committer: `${committerName} <${committerEmail}>`,
-      message,
-    })) {
+  const { records, fragments } = parseCommitLog(log);
+  for (const fragment of fragments) {
+    fail(
+      `commit record fragment ${JSON.stringify(fragment.slice(0, 40))} does not parse; ` +
+        'a separator control byte inside a commit message is the only source of one',
+    );
+  }
+  for (const { sha, author, committer, message } of records) {
+    for (const problem of checkCommitRecord({ author, committer, message })) {
       fail(`commit ${sha} ${problem}`);
     }
   }
-  ok(`${String(commits.length)} commits checked across every ref`);
-  return commits.length;
+  ok(`${String(records.length)} commits checked across every ref`);
+  return records.length;
 }
 
 function checkPullRequest(branch) {
@@ -535,6 +604,10 @@ function checkPullRequest(branch) {
     for (const problem of checkSubject(title)) {
       fail(`pull request title ${problem}`);
     }
+    const titleControl = findControlByte(title);
+    if (titleControl !== null) {
+      fail(`pull request title carries control byte 0x${titleControl.toString(16).padStart(2, '0')}`);
+    }
   }
   if (body !== '') {
     checked += 1;
@@ -544,12 +617,17 @@ function checkPullRequest(branch) {
     if (!isAscii(body)) {
       fail('pull request body is not ASCII');
     }
+    const bodyControl = findControlByte(body);
+    if (bodyControl !== null) {
+      fail(`pull request body carries control byte 0x${bodyControl.toString(16).padStart(2, '0')}`);
+    }
     // A pull request body IS branch-scoped, unlike a commit: it is generated
     // by whoever opened the branch, it is read once while that branch is open,
     // and it is never re-judged afterwards. So the waiver here cannot expire
     // the way the commit waiver could.
     for (const problem of checkBody(body.split(/\r?\n/), {
       requireCloses: !branch.startsWith('dependabot/'),
+      dependencyUpdate: branch.startsWith('dependabot/'),
     })) {
       fail(`pull request body ${problem}`);
     }
