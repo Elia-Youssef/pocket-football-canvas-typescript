@@ -1825,6 +1825,152 @@ export const EDITS = [
     replace: '    scoring.reset();',
     detectedBy: 'unit',
   },
+
+  // ---------------------------------------------------------------------
+  // PF-8. The opponent routine: the reachable cone, the difficulty
+  // parameters and the power band, and the seam that answers them.
+  //
+  // The clamp gets one entry per stated property - the cone itself, the
+  // solidity floor, the exact contact point - because a clamp that reads
+  // the whole plane, a clamp without its floor and an aim with a safety
+  // margin are three different defects that fail in different places. The
+  // backwards discipline gets the entry that separates a bounded own-goal
+  // soak from an unbounded one, and the difficulty entries attack the
+  // draws the table states rather than the profile constants anybody can
+  // check by eye.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'D3',
+    name: 'the clamp reads the reachable cone and not the whole plane',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  if (along >= floor) {',
+    replace: '  if (true) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the floor holds the clamped side above a graze',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const floor = Math.max(TOUCHING / gap, MIN_STRIKE_SOLIDITY);',
+    replace: '  const floor = TOUCHING / gap;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the launch aims at the contact point and not past it',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  return { x: ball.x + side.x * BALL_RADIUS, y: ball.y + side.y * BALL_RADIUS };',
+    replace:
+      '  return { x: ball.x + side.x * (BALL_RADIUS + 2), y: ball.y + side.y * (BALL_RADIUS + 2) };',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the routine declines the strike that drives the ball backwards',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const backwards = towardX * targetX + towardY * targetY < 0;',
+    replace: '  const backwards = false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the seam answers with the planned strength and not a stub',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: "  match.dispatch({ kind: 'launch', angle: plan.angle, power: plan.power });",
+    replace: "  match.dispatch({ kind: 'launch', angle: plan.angle, power: 0 });",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'the angular error spans the range the table states',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const errorRad = (2 * rng.nextFloat() - 1) * spanRad;',
+    replace: '  const errorRad = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'the whiff roll is a real possibility and not a vestige',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const whiffed = rng.nextFloat() < profile.whiffChance;',
+    replace: '  const whiffed = false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'a whiff lays the aim off the ball by the stated offset',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '    const offset = WHIFF_OFFSET * TOUCHING;',
+    replace: '    const offset = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D5',
+    name: 'the power draw follows the stated aggression transform',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const drawnPower = low + (high - low) * rng.nextFloat() ** (1 - profile.aggression);',
+    replace: '  const drawnPower = low + (high - low) * rng.nextFloat();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D5',
+    name: 'a derived shot asks for the trip margin the routine promises',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: 'const POWER_MARGIN = 1.4;',
+    replace: 'const POWER_MARGIN = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D5',
+    name: 'the band of the profile bounds the drawn power',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  const [low, high] = profile.powerBand;',
+    replace: '  const [low, high] = [0, 1];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D8',
+    name: 'the ladder rung that always overhits keeps doing so',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: "  { name: 'Sparks', profile: { ...CASUAL, aggression: 1 } },",
+    replace: "  { name: 'Sparks', profile: { ...CASUAL, aggression: 0.2 } },",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D8',
+    name: 'the wild rung stays wilder than its base difficulty',
+    file: 'src/core/ai.ts', // the opponent routine
+    find:
+      "  { name: 'Bolt', profile: { ...CASUAL, angularErrorDeg: 16, aggression: 0.75 } },",
+    replace:
+      "  { name: 'Bolt', profile: { ...CASUAL, angularErrorDeg: 12, aggression: 0.75 } },",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D8',
+    name: 'the blocking rung actually aims to block',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: "  { name: 'Anchor', profile: { ...PRO, defensiveBias: 0.85 } },",
+    replace: "  { name: 'Anchor', profile: { ...PRO, defensiveBias: 0 } },",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D8',
+    name: 'wall candidates reach the routine that scores them',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  if (profile.useWallShots) {',
+    replace: '  if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D8',
+    name: 'the best candidate is the one the physics favours',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '      if (score > bestScore) {',
+    replace: '      if (false) {',
+    detectedBy: 'unit',
+  },
 ];
 
 /**
