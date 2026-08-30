@@ -1971,6 +1971,232 @@ export const EDITS = [
     replace: '      if (false) {',
     detectedBy: 'unit',
   },
+
+  // PF-11, pitch and entity rendering. The armour behind these entries is
+  // tests/unit/render-*.test.ts: a recorder context censuses the draw calls,
+  // so every entry here either changes what is drawn, what it is drawn with,
+  // or how often it is drawn, and the census pins all three.
+
+  {
+    item: 'E3',
+    name: 'the one transform maps design space y up, flipped',
+    file: 'src/render/surface.ts',
+    find: 'context.setTransform(scale, 0, 0, -scale, 0, LOGICAL_HEIGHT * scale);',
+    replace: 'context.setTransform(scale, 0, 0, scale, 0, LOGICAL_HEIGHT * scale);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'a collapsed host still gets a one-pixel backing store',
+    file: 'src/render/surface.ts',
+    find: 'const width = Math.max(1, Math.round(cssWidth * deviceRatio));',
+    replace: 'const width = Math.round(cssWidth * deviceRatio);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the surface is hidden from the accessibility tree',
+    file: 'src/render/surface.ts',
+    find: "canvas.setAttribute('aria-hidden', 'true');",
+    replace: "canvas.setAttribute('aria-hidden', 'false');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the surface carries the stable selection marker',
+    file: 'src/render/surface.ts',
+    find: "canvas.dataset['pf'] = 'play-surface';",
+    replace: "canvas.dataset['pf'] = 'surface';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the stripe count comes from the spacing scale, and stays even',
+    file: 'src/render/pitch.ts',
+    find: 'const count = Math.ceil(FIELD_WIDTH / STRIPE_WIDTH);',
+    replace: 'const count = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the vignette fades the stripes and then hands the alpha back',
+    file: 'src/render/pitch.ts',
+    find: 'context.globalAlpha = VIGNETTE_EDGE_ALPHA;',
+    replace: 'context.globalAlpha = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the rail boundary is a hairline, the one the section measures',
+    file: 'src/render/pitch.ts',
+    find: 'context.lineWidth = BORDER.hair;',
+    replace: 'context.lineWidth = BORDER.thick;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the end walls sit outside the field bounds',
+    file: 'src/render/pitch.ts',
+    find: 'const left = FIELD_LEFT - WALL_THICKNESS;',
+    replace: 'const left = FIELD_LEFT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the centre spot stays the small radius step',
+    file: 'src/render/pitch.ts',
+    find: 'context.arc(BALL_START_X, BALL_START_Y, RADIUS.sm, 0, TAU);',
+    replace: 'context.arc(BALL_START_X, BALL_START_Y, CENTRE_CIRCLE_RADIUS, 0, TAU);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'each goal frame is tinted to the side that defends it',
+    file: 'src/render/pitch.ts',
+    find: 'context.fillStyle = index === 0 ? palette.teamPlayer : palette.teamOpponent;',
+    replace: 'context.fillStyle = index === 0 ? palette.teamOpponent : palette.teamPlayer;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the static pitch is cached, not rebuilt every frame',
+    file: 'src/render/pitch.ts',
+    find: 'if (layer === null || !pitchLayerIsCurrent(layer, surface, palette)) {',
+    replace: 'if (true) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the blit returns the surface to design space',
+    file: 'src/render/pitch.ts',
+    find: 'applySurfaceTransform(surface.context, surface.scale);',
+    replace: 'surface.context.setTransform(1, 0, 0, 1, 0, 0);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'every circle carries its facing marker',
+    file: 'src/render/entities.ts',
+    find: '  drawMarker(context, body, facing, glyphColour);',
+    replace: '  ;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the ball boundary ring draws at the border step, like the circles',
+    file: 'src/render/entities.ts',
+    find:
+      '  context.strokeStyle = palette.line;\n' +
+      '  context.lineWidth = BORDER.thick;\n' +
+      '  context.beginPath();\n' +
+      '  context.arc(x, y, body.radius, 0, TAU);\n' +
+      '  context.stroke();\n' +
+      '}',
+    replace:
+      '  context.strokeStyle = palette.line;\n' +
+      '  context.lineWidth = BORDER.hair;\n' +
+      '  context.beginPath();\n' +
+      '  context.arc(x, y, body.radius, 0, TAU);\n' +
+      '  context.stroke();\n' +
+      '}',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the kickoff glyphs are the ones SPEC section 4 names',
+    file: 'src/render/entities.ts',
+    find: "export const DEFAULT_GLYPHS: Glyphs = { player: 'P', opponent: 'O' };",
+    replace: "export const DEFAULT_GLYPHS: Glyphs = { player: 'X', opponent: 'X' };",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the glyph counter-flip is a real flip',
+    file: 'src/render/entities.ts',
+    find: 'context.scale(1, -1);',
+    replace: 'context.scale(1, 1);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the central panel of the ball is a real pentagon',
+    file: 'src/render/entities.ts',
+    find: 'const PANEL_RADIUS = 0.42;',
+    replace: 'const PANEL_RADIUS = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the rim patches reach into the clip',
+    file: 'src/render/entities.ts',
+    find: 'const PATCH_RADIUS = 0.3;',
+    replace: 'const PATCH_RADIUS = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the ball draws, and draws last in the entity pass',
+    file: 'src/render/entities.ts',
+    find: '  drawBall(context, palette, world.ball);',
+    replace: '  ;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the shipping entry never imports the capture hooks',
+    file: 'src/main.ts',
+    find: "import { drawFrame } from './render/pitch';",
+    replace: "import { drawFrame } from './render/pitch';\nimport '../render/capture';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the capture module never joins the emitted bytes by chunk either',
+    file: 'src/main.ts',
+    find: 'boot();\nmountPlaySurface();',
+    replace: "boot();\nmountPlaySurface();\nimport('./render/capture');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the hooks register under the key the capture script reads',
+    file: 'src/render/capture.ts',
+    find: "export const CAPTURE_KEY = '__pfCapture';",
+    replace: "export const CAPTURE_KEY = '__pfSomethingElse';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the density watch arms a live query and re-arms on every fire',
+    file: 'src/render/surface.ts',
+    find: 'query = win.matchMedia(`(resolution: ${String(ratio)}dppx)`);',
+    replace: 'query = null;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'a layer is stale when the backing-store height moves too',
+    file: 'src/render/pitch.ts',
+    find: 'layer.canvas.height === surface.canvas.height',
+    replace: 'layer.canvas.height === layer.canvas.height',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the capture hooks re-derive the scale on every redraw',
+    file: 'src/render/capture.ts',
+    find: '      surface.scale = scaleOf(seams.canvas);',
+    replace: '      ;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the composition root asks the theme the stylesheet answers',
+    file: 'src/main.ts',
+    find: "const THEME_QUERY = '(prefers-color-scheme: dark)';",
+    replace: "const THEME_QUERY = '(prefers-color-scheme: light)';",
+    detectedBy: 'unit',
+  },
 ];
 
 /**
