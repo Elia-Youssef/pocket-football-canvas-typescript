@@ -2153,8 +2153,8 @@ export const EDITS = [
     item: 'E3',
     name: 'the capture module never joins the emitted bytes by chunk either',
     file: 'src/main.ts',
-    find: 'boot();\nmountPlaySurface();',
-    replace: "boot();\nmountPlaySurface();\nimport('./render/capture');",
+    find: 'mount(host);',
+    replace: "mount(host);\nimport('./render/capture');",
     detectedBy: 'unit',
   },
   {
@@ -2195,6 +2195,141 @@ export const EDITS = [
     file: 'src/main.ts',
     find: "const THEME_QUERY = '(prefers-color-scheme: dark)';",
     replace: "const THEME_QUERY = '(prefers-color-scheme: light)';",
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-13. The HUD and the panels as real DOM, and the gates the part
+  // added: the MM:SS ceiling, the per-phase presence and reachability of
+  // the pause control, the census of focusable controls per screen, the
+  // derivation of every panel from the readout, and the scan that keeps a
+  // pointer coordinate away from a chrome rectangle. The scan's own
+  // entries are detected by the inventory that pins the matchers, the
+  // positive controls and the empty exemption lists as source, because a
+  // weakened scan over a clean tree still passes it.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'M1',
+    name: 'the clock face is the ceiling of the exact seconds',
+    file: 'src/ui/components/clock.ts',
+    find: '  return Math.ceil(remaining);',
+    replace: '  return Math.round(remaining);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the clock reads 00:00 only at exactly zero',
+    file: 'src/ui/components/clock.ts',
+    find: `  if (!(remaining > 0)) {
+    return 0;
+  }`,
+    replace: `  if (remaining < 1) {
+    return 0;
+  }`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the turn indicator names the side and the state',
+    file: 'src/ui/components/hud.ts',
+    find: "      return 'YOUR TURN';",
+    replace: "      return 'YOUR GO';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the pause control is reachable in exactly the four in-play states',
+    file: 'src/ui/components/hud.ts',
+    find: `  'MOVING',
+  'GOAL',
+];`,
+    replace: `  'MOVING',
+];`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'a refused pause is refused without needing a pointer',
+    file: 'src/ui/components/hud.ts',
+    find: "    if (pause.getAttribute('aria-disabled') === 'true') {",
+    replace: "    if (pause.getAttribute('aria-disabled') === 'never') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'a panel opens when its wiring shows it',
+    file: 'src/ui/components/panel.ts',
+    find: '      root.hidden = false;',
+    replace: '      root.hidden = true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the census freezes the named controls per screen',
+    file: 'src/ui/components/pause-panel.ts',
+    find: "  panel.addControl(button('Resume', options.onResume));",
+    replace: "  panel.addControl(button('Continue', options.onResume));",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'panel visibility is derived from the readout on every sync',
+    file: 'src/ui/layout.ts',
+    find: "    if (readout.state.kind !== 'PAUSED') {",
+    replace: "    if (readout.state.kind === 'PAUSED') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the game-over panel words the result as the spec states it',
+    file: 'src/ui/components/game-over-panel.ts',
+    find: "    return 'You win!';",
+    replace: "    return 'You lose!';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the pause stack closes with the pause, whatever dismissed it',
+    file: 'src/ui/layout.ts',
+    find: `      if (settings.isOpen()) {
+        settings.hide();
+      }`,
+    replace: '      void settings;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the game-over panel hands focus to a stable anchor on the way out',
+    file: 'src/ui/layout.ts',
+    find: '        game.show(hud.pause);',
+    replace: '        game.show();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the coordinate matcher reads every way a pointer coordinate arrives',
+    file: 'tests/unit/chrome-dom.test.ts',
+    find: String.raw`const POINTER_COORDINATE = /\.(?:clientX|clientY|pageX|pageY|screenX|screenY|offsetX|offsetY)\b/;`,
+    replace: String.raw`const POINTER_COORDINATE = /\.(?:clientY|pageX|pageY|screenX|screenY|offsetX|offsetY)\b/;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'the scan is proved live by its positive controls',
+    file: 'tests/unit/chrome-dom.test.ts',
+    find: "  'const x = pointer.pageY;',\n",
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'an exemption from the scan can only be added by name, here',
+    file: 'tests/unit/chrome-dom.test.ts',
+    find: `/** Checked exemptions: a path may hold a pattern only by name, here. */
+const EXEMPT_COORDINATE: readonly string[] = [];`,
+    replace: `/** Checked exemptions: a path may hold a pattern only by name, here. */
+const EXEMPT_COORDINATE: readonly string[] = ['src/render/surface.ts'];`,
     detectedBy: 'unit',
   },
 ];
