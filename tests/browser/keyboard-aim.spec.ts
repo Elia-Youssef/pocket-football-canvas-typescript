@@ -21,10 +21,13 @@ import type { Page } from '@playwright/test';
  * a machine running three engines at once, at which point the press IS a hold
  * and the model is right to sweep. So each assertion allows exactly what the
  * section says a press of the length this run measured is worth, and the
- * quantisation allowance is the longest frame this run actually took. Both
- * numbers come from the run, so the check keeps its meaning on a loaded
- * machine instead of turning into a wide constant, and closes to a single
- * value on a quiet one.
+ * quantisation allowance is the longest frame this run actually took, charged
+ * through the model's own delta ceiling. Both numbers come from the run, so
+ * the check keeps its meaning on a loaded machine instead of turning into a
+ * wide constant, and closes to a single value on a quiet one. The two long
+ * holds drive on CREDITED time for the same reason: a wall-clock hold
+ * under-delivers exactly when a frame runs past the ceiling, because the
+ * simulation then advances slower than real time by design.
  *
  * THE TWO MODELS ARE COMPARED IN THE PIXELS. SPEC section 5.1 requires the
  * arrow to render identically from a keyboard aim and from a pointer one. The
@@ -128,6 +131,15 @@ interface KeyRecord {
   readonly presses: readonly Press[];
   /** The longest frame this page took while a key was down, in seconds. */
   readonly maxGap: number;
+  /**
+   * The hold time the model could have CREDITED, in seconds: each frame gap
+   * while a key was down, charged through the same delta ceiling and resume
+   * gap QUALITY-BAR section 7 makes the model charge it through. On a quiet
+   * machine this is the wall clock; on a loaded one it is less, by design,
+   * because a frame past the quarter-second ceiling is consumed as the
+   * ceiling and the simulation deliberately falls behind real time.
+   */
+  readonly clamped: number;
 }
 
 /**
@@ -158,6 +170,7 @@ async function armKeyProbe(page: Page): Promise<void> {
     const probe = {
       presses: [] as { key: string; seconds: number }[],
       maxGap: 0,
+      clamped: 0,
       open: new Map<string, number>(),
       settle: 0,
     };
@@ -194,7 +207,12 @@ async function armKeyProbe(page: Page): Promise<void> {
     const tick = (now: number): void => {
       const watching = probe.open.size > 0;
       if (previous !== null && (watching || probe.settle > 0)) {
-        probe.maxGap = Math.max(probe.maxGap, (now - previous) / 1000);
+        const gap = (now - previous) / 1000;
+        probe.maxGap = Math.max(probe.maxGap, gap);
+        // The model's own reading of this gap: a resume consumes nothing and
+        // anything above the delta ceiling is the ceiling, so the credited
+        // total below is what the hold could actually have been worth.
+        probe.clamped += gap > 5 ? 0 : Math.min(gap, 0.25);
         if (!watching) {
           probe.settle -= 1;
         }
@@ -210,11 +228,39 @@ async function readKeys(page: Page): Promise<KeyRecord> {
   return page.evaluate(() => {
     const probe = (
       window as unknown as {
-        __pfKeys?: { presses: { key: string; seconds: number }[]; maxGap: number };
+        __pfKeys?: {
+          presses: { key: string; seconds: number }[];
+          maxGap: number;
+          clamped: number;
+        };
       }
     ).__pfKeys;
-    return { presses: probe?.presses ?? [], maxGap: probe?.maxGap ?? 0 };
+    return {
+      presses: probe?.presses ?? [],
+      maxGap: probe?.maxGap ?? 0,
+      clamped: probe?.clamped ?? 0,
+    };
   });
+}
+
+/**
+ * Hold a key until the probe has seen enough CREDITED time, rather than for a
+ * wall-clock interval. A fixed interval under-delivers on a loaded machine,
+ * where frames run past the delta ceiling and the model deliberately credits
+ * less than the wall clock; driving on the credited total means the hold the
+ * assertion reasons about is the hold that actually happened, at every load.
+ * The engine's own waiting machinery is the starvation budget.
+ */
+async function holdUntilCredited(page: Page, key: string, seconds: number): Promise<void> {
+  await page.keyboard.down(key);
+  await page.waitForFunction(
+    (wanted) =>
+      ((window as unknown as { __pfKeys?: { clamped: number } }).__pfKeys?.clamped ?? 0) >=
+      wanted,
+    seconds,
+    SETTLE,
+  );
+  await page.keyboard.up(key);
 }
 
 /** The last press of a key, which is the one an assertion has just made. */
@@ -496,23 +542,25 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     await focusSurface(page);
     await nextFrames(page);
 
-    await page.keyboard.down('ArrowLeft');
-    await page.waitForTimeout(1400);
-    await page.keyboard.up('ArrowLeft');
+    await holdUntilCredited(page, 'ArrowLeft', 1.4);
     await nextFrames(page);
     const swept = await valueOf(page, 'aim-angle');
     const record = await readKeys(page);
-    const hold = { held: lastPress(record, 'ArrowLeft'), maxGap: record.maxGap };
-    expect(hold.maxGap).toBeGreaterThan(0);
-    expect(hold.held).toBeGreaterThan(1);
+    const gap = Math.min(record.maxGap, 0.25);
+    expect(record.maxGap).toBeGreaterThan(0);
+    expect(lastPress(record, 'ArrowLeft')).toBeGreaterThan(1);
+    expect(record.clamped).toBeGreaterThanOrEqual(1.4);
 
     // The model integrates the frame deltas that arrive between the two key
-    // events, so it can be a frame ahead at the start and a frame behind at
-    // the end, and by nothing else. Both bounds are the second implementation
-    // of the section's own rates evaluated at the window this run measured.
-    const ceiling = TAP_DEGREES + sweptDegrees(hold.held + hold.maxGap) + ROUNDING;
+    // events, each charged through the delta ceiling, so it can be a frame
+    // ahead at the start and a frame behind at the end, and by nothing else.
+    // Both bounds are the second implementation of the section's own rates
+    // evaluated at the CREDITED window this run measured: the wall clock on a
+    // quiet machine, and less than it, by the model's own design, on a loaded
+    // one whose frames run past the ceiling.
+    const ceiling = TAP_DEGREES + sweptDegrees(record.clamped + gap) + ROUNDING;
     const floor =
-      TAP_DEGREES + sweptDegrees(Math.max(0, hold.held - hold.maxGap)) - ROUNDING;
+      TAP_DEGREES + sweptDegrees(Math.max(0, record.clamped - gap)) - ROUNDING;
     expectDirectionWithin(swept, floor, ceiling, 'a held arrow');
     // And a hold is worth vastly more than the tap that began it, so a build
     // that had lost the hold entirely could not land in that window.
@@ -525,20 +573,19 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     await armKeyProbe(page);
     await focusSurface(page);
     await nextFrames(page);
-    await page.keyboard.down('ArrowLeft');
-    await page.waitForTimeout(2125);
-    await page.keyboard.up('ArrowLeft');
+    await holdUntilCredited(page, 'ArrowLeft', 2.125);
     await nextFrames(page);
     const shown = await valueOf(page, 'aim-angle');
     const record = await readKeys(page);
-    const hold = { held: lastPress(record, 'ArrowLeft'), maxGap: record.maxGap };
+    const gap = Math.min(record.maxGap, 0.25);
 
-    const ceiling = TAP_DEGREES + sweptDegrees(hold.held + hold.maxGap) + ROUNDING;
+    const ceiling = TAP_DEGREES + sweptDegrees(record.clamped + gap) + ROUNDING;
     const floor =
-      TAP_DEGREES + sweptDegrees(Math.max(0, hold.held - hold.maxGap)) - ROUNDING;
+      TAP_DEGREES + sweptDegrees(Math.max(0, record.clamped - gap)) - ROUNDING;
     // The hold really did pay out a whole turn, which is the claim SPEC
     // section 5.1 derives: 0.25 s of delay, 150 degrees of ramp, then 210
-    // degrees at the top rate.
+    // degrees at the top rate, which is 360 at 2.125 s of credited hold.
+    expect(record.clamped).toBeGreaterThanOrEqual(2.125);
     expect(ceiling).toBeGreaterThan(360);
     expectDirectionWithin(shown, floor, ceiling, 'a whole turn');
   });

@@ -29,6 +29,16 @@ export interface Surface {
   readonly context: CanvasRenderingContext2D;
   /** Logical design units to device pixels, from the last resize. */
   scale: number;
+  /**
+   * The height the surface RENDERS at, in CSS pixels, from the last resize.
+   *
+   * Carried because SPEC section 14 states the screen shake against the
+   * rendered height and a CSS height is what a player sees; the backing store
+   * is that height times the device pixel ratio, and a magnitude stated
+   * against one and applied in the other would carry the ratio into a chain
+   * QUALITY-BAR section 7 keeps it out of.
+   */
+  cssHeight: number;
 }
 
 /**
@@ -55,12 +65,23 @@ export function logicalScale(cssWidth: number, deviceRatio: number): number {
  * flipped. Nothing else in the renderer calls setTransform with these numbers
  * except the blit, which leaves device space for one call and comes straight
  * back.
+ *
+ * THE OFFSET IS SPEC SECTION 14'S SCREEN SHAKE AND NOTHING ELSE, in device
+ * pixels, and it is a parameter of this transform rather than a transform of
+ * its own. DESIGN section 7 puts the shake on the play surface only: it moves
+ * the backing store's contents and never the canvas element, because a CSS
+ * transform on the element is what QUALITY-BAR section 7 forbids outright and
+ * what would break the pointer mapping and the frame's focus ring together.
+ * Both offsets default to zero, so every caller that has no shake to apply
+ * asks for the same matrix it always did.
  */
 export function applySurfaceTransform(
   context: CanvasRenderingContext2D,
   scale: number,
+  offsetX = 0,
+  offsetY = 0,
 ): void {
-  context.setTransform(scale, 0, 0, -scale, 0, LOGICAL_HEIGHT * scale);
+  context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);
 }
 
 /** Wrap a canvas that is already in the document as a play surface. */
@@ -69,7 +90,7 @@ export function attachSurface(canvas: HTMLCanvasElement): Surface {
   if (context === null) {
     throw new Error('the play surface could not get a 2d context');
   }
-  return { canvas, context, scale: 0 };
+  return { canvas, context, scale: 0, cssHeight: 0 };
 }
 
 /**
@@ -109,7 +130,21 @@ export function resizeSurface(
   surface.canvas.style.width = `${String(cssWidth)}px`;
   surface.canvas.style.height = `${String(cssHeightFor(cssWidth))}px`;
   surface.scale = logicalScale(cssWidth, deviceRatio);
+  surface.cssHeight = cssHeightFor(cssWidth);
   applySurfaceTransform(surface.context, surface.scale);
+}
+
+/**
+ * Device pixels per CSS pixel for this surface, which is the device pixel ratio
+ * the backing store was last sized at, recovered rather than asked for. It is
+ * the ONE place anything outside this module needs it, and it exists so that a
+ * magnitude stated in CSS pixels can be applied to a backing store: nothing
+ * above the wrapper divides by it, which is the whole of QUALITY-BAR section
+ * 7's third rule. A surface that has never been sized answers one, because a
+ * scene drawn at no size needs no conversion.
+ */
+export function backingRatio(surface: Surface): number {
+  return surface.cssHeight > 0 ? surface.canvas.height / surface.cssHeight : 1;
 }
 
 /**
