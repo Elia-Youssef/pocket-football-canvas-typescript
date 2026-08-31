@@ -88,7 +88,12 @@ test.describe('PF-0 scaffold', () => {
     });
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // A starvation budget, not a correctness one: idleness detection can be
+    // starved for minutes when the whole suite runs beside a build, and the
+    // listener above has been recording since before the navigation, so a
+    // longer wait only ever catches MORE late requests. The suite was 12
+    // tests when this wait was written and is over ten times that now.
+    await page.waitForLoadState('networkidle', { timeout: 120_000 });
 
     // QUALITY-BAR section 9: no telemetry, no analytics, no third-party
     // request of any kind at runtime. SPEC section 21 says the same.

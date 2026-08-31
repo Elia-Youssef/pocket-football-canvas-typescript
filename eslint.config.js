@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 import coreBoundary from './tools/eslint-plugin-core-boundary/index.js';
+import pointerEvents from './tools/eslint-plugin-pointer-events/index.js';
 
 // Node's globals, written out rather than pulled from a dependency. Only the
 // tooling files get them; nothing under src/ does, which is what leaves a
@@ -76,6 +77,20 @@ export default [
   {
     files: ['**/core/**'],
     linterOptions: { noInlineConfig: true },
+  },
+
+  // Item C9. Applied to every file the project lints rather than scoped to
+  // src/, for the same reason item M3's rules are: the criterion says no mouse
+  // or touch listener exists in THE SOURCE, and a scope is one edit away from
+  // being wrong. Nothing outside src/ has one either, so the wider scope costs
+  // nothing and closes the hole where a second input path would be written
+  // first as a test helper.
+  {
+    files: ['**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}'],
+    plugins: { 'pointer-events': pointerEvents },
+    rules: {
+      'pointer-events/no-mouse-or-touch-listeners': 'error',
+    },
   },
 
   {

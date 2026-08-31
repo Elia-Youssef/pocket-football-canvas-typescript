@@ -152,3 +152,97 @@ body {
   block-size: var(--target-min);
   margin: 0;
 }
+
+/*
+ * The focus indicator, QUALITY-BAR section 3 and item C12: visible at 3:1 and
+ * never removed. It is stated once, for everything focusable, because a ring
+ * added per component is a ring the next component forgets; the four
+ * --focus-ring-* tokens are QUALITY-BAR section 15's own, and the colour is
+ * the accent, which SPEC section 18 measures at 11.56 on the dark ground and
+ * 5.63 on the light one. There is no `outline: none` anywhere in this project
+ * and tests/unit/tokens.test.ts is not what says so: the scan that says so is
+ * in the part that added this rule.
+ */
+:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/*
+ * The play surface's frame: the focusable element SPEC section 5.1 calls the
+ * play surface, wrapped around the canvas because the canvas itself is
+ * aria-hidden and an aria-hidden element may not be focusable. It carries no
+ * box of its own, and the zero line height is why: a canvas is inline-level,
+ * so a line box beneath it would push the focus ring off the pitch it belongs
+ * to. QUALITY-BAR section 7's no-transform, no-border, no-padding rule is
+ * about the canvas and is untouched by anything here.
+ */
+.pf-play-frame {
+  line-height: 0;
+}
+
+/*
+ * The no-drag aim controls, SPEC section 5.0: two sliders with stepper
+ * buttons, plus Launch and Cancel, all of them 44 by 44 CSS pixels with the
+ * 8 px clearance QUALITY-BAR section 3 asks for, which is --target-clearance.
+ * Nothing here is hover-only and nothing here is hidden: SC 2.5.7's
+ * alternative to a drag has to be visible to be tappable.
+ */
+.pf-aim-controls:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--target-clearance);
+  padding: var(--space-2) var(--space-4);
+  background: var(--pf-ground);
+  color: var(--pf-text);
+}
+
+.pf-aim-row:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--target-clearance);
+}
+
+.pf-aim-controls .pf-aim-step,
+.pf-aim-controls .pf-aim-action {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-base);
+  color: var(--pf-text);
+  background: transparent;
+  border: var(--border-hair) solid var(--pf-text-muted);
+  border-radius: var(--radius-md);
+}
+
+.pf-aim-controls .pf-aim-action {
+  border-width: var(--border-thin);
+  border-color: var(--pf-accent);
+}
+
+/*
+ * Refused in place, never removed. The dashed boundary is the shape half of
+ * the signal, because QUALITY-BAR section 4 forbids a state told by colour
+ * alone, and the turn indicator is already naming the state that refuses it.
+ */
+.pf-aim-controls [aria-disabled='true'] {
+  color: var(--pf-text-muted);
+  border-style: dashed;
+}
+
+.pf-aim-controls .pf-aim-slider {
+  flex: 1 1 var(--space-8);
+  min-inline-size: var(--space-8);
+  block-size: var(--target-min);
+  margin: 0;
+  accent-color: var(--pf-accent);
+}
+
+.pf-aim-readout {
+  margin: 0;
+  font-size: var(--type-sm);
+  color: var(--pf-text);
+  font-variant-numeric: tabular-nums;
+}

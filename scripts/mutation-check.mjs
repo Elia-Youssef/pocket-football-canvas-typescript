@@ -105,6 +105,7 @@ const DETECTORS = {
 };
 
 const PLUGIN = 'tools/eslint-plugin-core-boundary';
+const PLUGIN2 = 'tools/eslint-plugin-pointer-events';
 
 /**
  * One entry per protected property. Named after the property, so that a FAIL
@@ -2713,6 +2714,612 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
 .pf-hud {`,
     detectedBy: 'browser',
   },
+  // ---------------------------------------------------------------------
+  // PF-6. The two discrete aim models, the controls that carry them, and
+  // the lint rule behind item C9.
+  //
+  // The rates get one entry per number AND one per shape, because a rate
+  // whose constant has drifted and a rate whose integral has been replaced
+  // by its top value fail in different places, and the second is silent at
+  // every moment except the first second of a hold.
+  //
+  // The eight entries at the end name the browser suite. Each attacks the
+  // composition root's own wiring or the shipped stylesheet, which no unit
+  // test reaches: whether the surface is focusable at all, whether it is
+  // given a name, whether the controls are mounted, whether the frame's own
+  // elapsed time reaches the model, and whether the focus ring is drawn.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'C9',
+    name: 'the pointer-events rule is switched on in the shipping config',
+    file: 'eslint.config.js',
+    find: "      'pointer-events/no-mouse-or-touch-listeners': 'error',",
+    replace: "      'pointer-events/no-mouse-or-touch-listeners': 'off',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'the whole mouse family is a legacy event name',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mousenever[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'the whole touch family is a legacy event name',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touchnever[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'the double click is a mouse event with no touch equivalent',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|neverclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a handler property is the same listener written another way',
+    file: `${PLUGIN2}/index.js`,
+    find: "  /^on(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "  /^never(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'the HTML drag family is a second input path, and is refused',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|dragnever[a-z]*|drop|dblclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a drop listener is refused, and it is nobody prefix',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|dropnever|dblclick|auxclick)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'the auxiliary mouse button is refused like the double click',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;",
+    replace: "const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclicknever)$/;",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'removing a listener is registering one somewhere',
+    file: `${PLUGIN2}/index.js`,
+    find: "const LISTENER_METHODS = new Set(['addEventListener', 'removeEventListener']);",
+    replace: "const LISTENER_METHODS = new Set(['addEventListener']);",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a template with nothing interpolated is a string',
+    file: `${PLUGIN2}/index.js`,
+    find: `  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value?.cooked ?? null;
+  }`,
+    replace: '  void node;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a bracketed method name is the same method',
+    file: `${PLUGIN2}/index.js`,
+    find: `  if (node.type === 'Literal' && typeof node.value === 'string') {
+    return node.value;
+  }
+  return null;
+}
+
+/**
+ * A statically known event name, or null.`,
+    replace: `  return null;
+}
+
+/**
+ * A statically known event name, or null.`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a handler property in an object literal is reported',
+    file: `${PLUGIN2}/index.js`,
+    find: `      Property: (node) => {
+        reportHandler(node.key, nameOf(node.key));
+      },`,
+    replace: '      Property: () => undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C9',
+    name: 'a handler property assigned on an element is reported',
+    file: `${PLUGIN2}/index.js`,
+    find: `      MemberExpression: (node) => {
+        reportHandler(node.property, nameOf(node.property));
+      },`,
+    replace: '      MemberExpression: () => undefined,',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G5',
+    name: 'the arrow tap is the step SPEC section 5.1 states',
+    file: 'src/core/aiming.ts',
+    find: 'export const ANGLE_TAP_DEGREES = 3;',
+    replace: 'export const ANGLE_TAP_DEGREES = 4;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the fine tap is the step the modified row states',
+    file: 'src/core/aiming.ts',
+    find: 'export const ANGLE_FINE_TAP_DEGREES = 1;',
+    replace: 'export const ANGLE_FINE_TAP_DEGREES = 3;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the ramp starts at the rate the table states',
+    file: 'src/core/aiming.ts',
+    find: 'export const ANGLE_HOLD_FROM_DEGREES = 60;',
+    replace: 'export const ANGLE_HOLD_FROM_DEGREES = 90;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the ramp reaches the rate the table states',
+    file: 'src/core/aiming.ts',
+    find: 'export const ANGLE_HOLD_TO_DEGREES = 240;',
+    replace: 'export const ANGLE_HOLD_TO_DEGREES = 200;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the fine hold is the constant rate the table states',
+    file: 'src/core/aiming.ts',
+    find: 'export const ANGLE_FINE_HOLD_DEGREES = 20;',
+    replace: 'export const ANGLE_FINE_HOLD_DEGREES = 60;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a power tap is five points of the one power scale',
+    file: 'src/core/aiming.ts',
+    find: 'export const POWER_TAP = 0.05;',
+    replace: 'export const POWER_TAP = 0.1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a held power key pays out forty points a second',
+    file: 'src/core/aiming.ts',
+    find: 'export const POWER_HOLD_RATE = 0.4;',
+    replace: 'export const POWER_HOLD_RATE = 0.8;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the hold delay is the 250 ms the table states',
+    file: 'src/core/aiming.ts',
+    find: 'export const HOLD_DELAY = 0.25;',
+    replace: 'export const HOLD_DELAY = 0.5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the ramp takes the one second the table states',
+    file: 'src/core/aiming.ts',
+    find: 'export const HOLD_RAMP = 1;',
+    replace: 'export const HOLD_RAMP = 2;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a keyboard aim opens at sixty percent power',
+    file: 'src/core/aiming.ts',
+    find: 'export const OPENING_POWER = 0.6;',
+    replace: 'export const OPENING_POWER = 0.5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the delay is served before any rate is paid out',
+    file: 'src/core/aiming.ts',
+    find: `  const active = usable(held) - HOLD_DELAY;
+  if (active <= 0) {
+    return 0;
+  }
+  if (active >= HOLD_RAMP) {`,
+    replace: `  const active = usable(held);
+  if (active <= 0) {
+    return 0;
+  }
+  if (active >= HOLD_RAMP) {`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the ramp is integrated rather than taken at its top rate',
+    file: 'src/core/aiming.ts',
+    find: `  return (
+    ANGLE_HOLD_FROM_DEGREES * active +
+    ((ANGLE_HOLD_TO_DEGREES - ANGLE_HOLD_FROM_DEGREES) * active * active) /
+      (2 * HOLD_RAMP)
+  );`,
+    replace: '  return ANGLE_HOLD_TO_DEGREES * active;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the fine hold serves the same delay before it pays out',
+    file: 'src/core/aiming.ts',
+    find: '  return active <= 0 ? 0 : ANGLE_FINE_HOLD_DEGREES * active;',
+    replace: '  return ANGLE_FINE_HOLD_DEGREES * active;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a held power key serves the same delay before it pays out',
+    file: 'src/core/aiming.ts',
+    find: '  return active <= 0 ? 0 : POWER_HOLD_RATE * active;',
+    replace: '  return POWER_HOLD_RATE * active;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a discrete reach starts at the minimum drag, not at nothing',
+    file: 'src/core/aiming.ts',
+    find: '  return MIN_DRAG + clampPower(power01Value) * (MAX_DRAG - MIN_DRAG);',
+    replace: '  return clampPower(power01Value) * (MAX_DRAG - MIN_DRAG);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'an angle turned past zero folds instead of going negative',
+    file: 'src/core/aiming.ts',
+    find: '  return value < 0 ? value + DEGREES_PER_TURN : value;',
+    replace: '  return value;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a reading that rounds to a whole turn is the first direction',
+    file: 'src/core/aiming.ts',
+    find: '  return Math.round(radiansToDegrees(aim.angleRad)) % DEGREES_PER_TURN;',
+    replace: '  return Math.round(radiansToDegrees(aim.angleRad));',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a tap aims TOWARD the point and never opposite it',
+    file: 'src/core/aiming.ts',
+    find: '  return Math.atan2(usable(toY) - usable(fromY), usable(toX) - usable(fromX));',
+    replace: '  return Math.atan2(usable(fromY) - usable(toY), usable(fromX) - usable(toX));',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a keyboard aim opens pointing at the ball',
+    file: 'src/core/aiming.ts',
+    find: `      world.ball.position.x,
+      world.ball.position.y,`,
+    replace: `      world.opponent.position.x,
+      world.opponent.position.y,`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C11',
+    name: 'a drag holding the pointer owns the aim against every held key',
+    file: 'src/render/input.ts',
+    find: '    if (live === null || captured !== null) {',
+    replace: '    if (live === null) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a hold refuses a gap past the resume threshold outright',
+    file: 'src/render/input.ts',
+    find: '  if (delta > RESUME_GAP) {',
+    replace: '  if (delta > RESUME_GAP * 1000) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a hold charges a hitch at the ceiling the simulation takes',
+    file: 'src/render/input.ts',
+    find: '  return Math.min(delta, DELTA_CEILING);',
+    replace: '  return delta;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the Launch control enters aim mode the way Space does',
+    file: 'src/render/input.ts',
+    find: `      if (!beginDiscrete()) {
+        return false;
+      }
+      return launchNow();`,
+    replace: '      return launchNow();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'the tracks are written back over a refused move, every frame',
+    file: 'src/ui/components/aim-controls.ts',
+    find: `      angleSlider.value = String(shownDegrees);
+      powerSlider.value = String(shownPercent);
+      pump(elapsed);`,
+    replace: '      pump(elapsed);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the announcement returns to the no-aim state when an aim ends',
+    file: 'src/ui/components/aim-controls.ts',
+    find: '        queue(NO_AIM_TEXT);',
+    replace: '        void NO_AIM_TEXT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'the power track steps by one, so it can hold what the aim holds',
+    file: 'src/ui/components/aim-controls.ts',
+    find: `    // angle track beside it.
+    1,`,
+    replace: `    // angle track beside it.
+    PERCENT_STEP,`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a tap is a press that did not travel',
+    file: 'src/render/input.ts',
+    find: '    if (!(Math.hypot(at.x - tapX, at.y - tapY) < MIN_DRAG)) {',
+    replace: '    if (!(Math.hypot(at.x - tapX, at.y - tapY) < MAX_DRAG)) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C12',
+    name: 'the keys are bound to the play surface and never to the canvas',
+    file: 'src/render/input.ts',
+    find: "    surface.addEventListener('keydown', (event: KeyboardEvent) => {",
+    replace: "    canvas.addEventListener('keydown', (event: KeyboardEvent) => {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the four arrows, Space and Enter never reach the page',
+    file: 'src/render/input.ts',
+    find: '      event.preventDefault();',
+    replace: '      void event;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'Escape cancels the aim, and opens the pause with none to cancel',
+    file: 'src/render/input.ts',
+    find: "      if (event.key === 'Escape') {",
+    replace: "      if (event.key === 'Never') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the platform own key repeat is not a second tap',
+    file: 'src/render/input.ts',
+    find: '      if (event.repeat) {',
+    replace: '      if (event.repeat && event.altKey) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a held key accumulates the frames it has been down',
+    file: 'src/render/input.ts',
+    find: '      angleHold.held += elapsed;',
+    replace: '      angleHold.held = elapsed;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a sweep is the difference of two totals, not a running sum',
+    file: 'src/render/input.ts',
+    find: '        angleHold.base + angleHold.direction * (sweptBy(angleHold) - angleHold.from),',
+    replace: '        aimDegreesNow + angleHold.direction * sweptBy(angleHold),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'focusing the surface enters aim mode, and a press does not',
+    file: 'src/render/input.ts',
+    find: "      if (!surface.matches(':focus-visible')) {",
+    replace: "      if (!surface.matches(':focus')) {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'leaving the surface ends the hold and never the aim',
+    file: 'src/render/input.ts',
+    find: `      angleHold = null;
+      powerHold = null;
+    });`,
+    replace: `      endGesture();
+    });`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'a drag launch is remembered as the next turn starting point',
+    file: 'src/render/input.ts',
+    find: `      remember(finished.aim);
+      options.onLaunch(finished.aim);`,
+    replace: `      options.onLaunch(finished.aim);`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C11',
+    name: 'the aim controls are refused outside the player own turn',
+    file: 'src/ui/components/aim-controls.ts',
+    find: "        control.setAttribute('aria-disabled', allowed ? 'false' : 'true');",
+    replace: "        control.setAttribute('aria-disabled', 'false');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a refused control ignores its own event',
+    file: 'src/ui/components/aim-controls.ts',
+    find: "  return control.getAttribute('aria-disabled') === 'true';",
+    replace: "  return control.getAttribute('aria-disabled') === 'never';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'an angle stepper is worth the same as the matching key tap',
+    file: 'src/ui/components/aim-controls.ts',
+    find: 'const ANGLE_STEP = ANGLE_TAP_DEGREES;',
+    replace: 'const ANGLE_STEP = ANGLE_TAP_DEGREES * 2;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a power stepper is worth the same as the matching key tap',
+    file: 'src/ui/components/aim-controls.ts',
+    find: 'const PERCENT_STEP = POWER_TAP * PERCENT;',
+    replace: 'const PERCENT_STEP = POWER_TAP;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a control steps from the pair it last asked for',
+    file: 'src/ui/components/aim-controls.ts',
+    find: '    shownDegrees = normaliseDegrees(degrees);',
+    replace: '    void degrees;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the announcement floor is the half second section 4 states',
+    file: 'src/ui/components/aim-controls.ts',
+    find: 'const ANNOUNCE_INTERVAL = 0.5;',
+    replace: 'const ANNOUNCE_INTERVAL = 0.005;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the announcement states power as a percentage',
+    file: 'src/ui/components/aim-controls.ts',
+    find: '          `Aim ${formatNumber(shownDegrees)} degrees, power ${formatNumber(',
+    replace: '          `Aim ${formatNumber(shownDegrees)} degrees, reach ${formatNumber(',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G5',
+    name: 'the aim readout is a polite live region',
+    file: 'src/ui/components/aim-controls.ts',
+    find: "  readout.setAttribute('aria-live', 'polite');",
+    replace: "  readout.setAttribute('aria-live', 'off');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'the census freezes the named controls of the no-drag row',
+    file: 'src/ui/components/aim-controls.ts',
+    find: "  button(angleRow, 'aim-left', 'Aim left', 'pf-aim-step', () => {",
+    replace: "  button(angleRow, 'aim-left', 'Left', 'pf-aim-step', () => {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'the two sliders are real range inputs',
+    file: 'src/ui/components/aim-controls.ts',
+    find: "    control.type = 'range';",
+    replace: "    control.type = 'text';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'the angle track stops one short of a whole turn',
+    file: 'src/ui/components/aim-controls.ts',
+    find: '    DEGREES_PER_TURN - 1,',
+    replace: '    DEGREES_PER_TURN,',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C11',
+    name: 'the composition root mounts the no-drag controls',
+    file: 'src/main.ts',
+    find: '  host.appendChild(controls.root);',
+    replace: '  void controls;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C12',
+    name: 'the play surface is a focusable element',
+    file: 'src/main.ts',
+    find: "  frame.setAttribute('tabindex', '0');",
+    replace: "  frame.setAttribute('tabindex', '-1');",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'G5',
+    name: 'the play surface carries an accessible name',
+    file: 'src/main.ts',
+    find: "  frame.setAttribute('aria-label', PLAY_SURFACE_LABEL);",
+    replace: '  void PLAY_SURFACE_LABEL;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'G5',
+    name: 'the input model is given the focusable frame to bind its keys to',
+    file: 'src/main.ts',
+    find: '    surface: frame,',
+    replace: "    surface: document.createElement('div'),",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'G5',
+    name: 'the frame own elapsed time reaches the hold rates',
+    file: 'src/main.ts',
+    find: '    input.refresh(elapsed);',
+    replace: '    input.refresh(0);',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C11',
+    name: 'the controls are brought in line with the aim every frame',
+    file: 'src/main.ts',
+    find: '    controls.sync(elapsed, input.preview(), input.allowed());',
+    replace: '    controls.sync(elapsed, null, input.allowed());',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'G5',
+    name: 'Escape with no aim raises the pause intent at the root',
+    file: 'src/main.ts',
+    find: "    match.dispatch({ kind: 'pause' });",
+    replace: '    void match;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C12',
+    name: 'the focus indicator is drawn, and drawn as an outline',
+    file: 'src/ui/components/chrome.css',
+    find: '  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);',
+    replace: '  outline-color: var(--focus-ring-color);',
+    detectedBy: 'browser',
+  },
 ];
 
 /**
@@ -2801,6 +3408,31 @@ export const ADDITIONS = [
     name: 'a literal in a directory with no code yet is rejected',
     file: 'src/core/mutation-inherited-sweep.ts',
     content: "export const marker = '#123456';\n",
+    detectedBy: 'unit',
+  },
+  // Item C9. Fresh mouse and touch listeners dropped into the REAL src/, one
+  // per arm of the rule, because the criterion is about the SOURCE and not
+  // about a fixture: the shipping lint has to reach a module nobody wrote to
+  // be rejected. One is answered by the lint run the build uses and one by the
+  // sweep the C9 test makes over src/, so neither gate can go quiet alone.
+  {
+    item: 'C9',
+    name: 'a new source module with a mouse listener is rejected',
+    file: 'src/render/mutation-mouse-listener.ts',
+    content:
+      'export function wire(target: HTMLElement): void {\n' +
+      "  target.addEventListener('mousedown', () => undefined);\n" +
+      '}\n',
+    detectedBy: 'lint',
+  },
+  {
+    item: 'C9',
+    name: 'a new source module with a touch handler property is rejected',
+    file: 'src/ui/mutation-touch-handler.ts',
+    content:
+      'export function wire(target: HTMLElement): void {\n' +
+      '  target.ontouchstart = (): void => undefined;\n' +
+      '}\n',
     detectedBy: 'unit',
   },
 ];
