@@ -79,6 +79,29 @@ const DETECTORS = {
       'tests/lint/fixtures/',
     ],
   },
+  // Added at PF-5, when the first gate arrived that neither of the two above
+  // can see: the composition root's own wiring, which no unit test reaches
+  // and no lint rule has an opinion about. The bundle is built HERE rather
+  // than assumed, because a suite driven against a stale dist would record a
+  // false negative, which is the defect class this harness exists to catch;
+  // a build that a mutation breaks throws out of argv() and the entry is
+  // correctly reported as detected. It is by far the slowest detector, three
+  // engines and a build per entry, so an entry names it only where nothing
+  // cheaper can witness the property.
+  browser: {
+    label: 'browser suite',
+    argv: () => {
+      execFileSync(
+        process.execPath,
+        [binaryFor('vite', 'node_modules/vite/bin/vite.js'), 'build'],
+        { cwd: PROJECT_ROOT, stdio: 'pipe' },
+      );
+      return [
+        binaryFor('@playwright/test', 'node_modules/@playwright/test/cli.js'),
+        'test',
+      ];
+    },
+  },
 };
 
 const PLUGIN = 'tools/eslint-plugin-core-boundary';
@@ -2326,11 +2349,369 @@ export const EDITS = [
     item: 'M1',
     name: 'an exemption from the scan can only be added by name, here',
     file: 'tests/unit/chrome-dom.test.ts',
+    // RE-POINTED AT PF-5, which earned the list its first and only entry.
+    // The property is unchanged: an exemption added anywhere but here, by
+    // name, is caught by the inventory that pins both lists as source. The
+    // mutation now adds a SECOND name to a list the inventory pins at one.
     find: `/** Checked exemptions: a path may hold a pattern only by name, here. */
-const EXEMPT_COORDINATE: readonly string[] = [];`,
+const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts'];`,
     replace: `/** Checked exemptions: a path may hold a pattern only by name, here. */
-const EXEMPT_COORDINATE: readonly string[] = ['src/render/surface.ts'];`,
+const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface.ts'];`,
     detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-5. Pointer aiming: what a drag means, the mapping that gets it into
+  // design space, the arrow that previews it, and the four states that
+  // refuse it.
+  //
+  // The mapping gets one entry per term rather than one for the whole
+  // expression, because a dropped scale, a dropped origin and a dropped
+  // flip are three different defects and two of them are invisible at the
+  // centre of the pitch, where the flip is its own mirror image.
+  //
+  // The five entries at the end name the browser suite, and they are the
+  // only ones in this file that do. Each attacks the composition root's own
+  // wiring, which no unit test reaches: whether the pointer input is
+  // attached to the surface at all, whether the aim pass is drawn, whether
+  // the launch intent carries the aim it previewed, and whether the match
+  // is advanced with the frame's own delta. A unit detector cannot see any
+  // of it, so an entry claiming one would be an entry that cannot fail.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'C2',
+    name: 'the aim is opposite the drag in both components',
+    file: 'src/core/aiming.ts',
+    find: 'aim: { angleRad: Math.atan2(-y, -x), power01: power01(dragged) },',
+    replace: 'aim: { angleRad: Math.atan2(-y, x), power01: power01(dragged) },',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C2',
+    name: 'a drag is measured as a distance and not as one component',
+    file: 'src/core/aiming.ts',
+    find: '  const dragged = Math.hypot(x, y);',
+    replace: '  const dragged = Math.abs(x);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C4',
+    name: "the arrow's reach is clamped at the maximum drag",
+    file: 'src/core/aiming.ts',
+    find: '    reach: Math.min(dragged, MAX_DRAG),',
+    replace: '    reach: dragged,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C3',
+    name: 'the minimum drag itself launches, and only below it cancels',
+    file: 'src/core/aiming.ts',
+    find: '    launchable: dragged >= MIN_DRAG,',
+    replace: '    launchable: dragged > MIN_DRAG,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C1',
+    name: "aiming happens in the player's own turn and in no other state",
+    file: 'src/core/aiming.ts',
+    find: "  return state.kind === 'PLAYER_TURN' && everyBodyStopped(world);",
+    replace: "  return state.kind !== 'MENU' && everyBodyStopped(world);",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C8',
+    name: 'aiming is refused while any body is still moving',
+    file: 'src/core/aiming.ts',
+    find: "'PLAYER_TURN' && everyBodyStopped(world);",
+    replace: "'PLAYER_TURN';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C1',
+    name: "a press is measured against the circle's own radius",
+    file: 'src/core/aiming.ts',
+    find: '  return dx * dx + dy * dy <= body.radius * body.radius;',
+    replace: '  return dx * dx + dy * dy <= body.radius * body.radius * 4;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C1',
+    name: 'the press has to land on your own circle and not on a circle',
+    file: 'src/core/aiming.ts',
+    find: 'pressLandsOn(world.player, x, y)',
+    replace: 'pressLandsOn(world.opponent, x, y)',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C3',
+    name: 'the minimum drag is the value SPEC section 5 states',
+    file: 'src/core/config.ts',
+    find: 'export const MIN_DRAG = 30;',
+    replace: 'export const MIN_DRAG = 40;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C4',
+    name: 'the maximum drag is the value SPEC section 5 states',
+    file: 'src/core/config.ts',
+    find: 'export const MAX_DRAG = 180;',
+    replace: 'export const MAX_DRAG = 200;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C5',
+    name: 'a pointer is scaled from the rectangle into the logical width',
+    file: 'src/render/input.ts',
+    find: '    x: ((clientX - rect.left) * LOGICAL_WIDTH) / rect.width,',
+    replace: '    x: clientX - rect.left,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C5',
+    name: 'the y axis is flipped into the design space',
+    file: 'src/render/input.ts',
+    find: '    y: LOGICAL_HEIGHT - ((clientY - rect.top) * LOGICAL_HEIGHT) / rect.height,',
+    replace: '    y: ((clientY - rect.top) * LOGICAL_HEIGHT) / rect.height,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C5',
+    name: "the rectangle's own left edge carries the letterbox across",
+    file: 'src/render/input.ts',
+    find: '(clientX - rect.left)',
+    replace: 'clientX',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C5',
+    name: "the rectangle's own top edge carries the letterbox down",
+    file: 'src/render/input.ts',
+    find: '(clientY - rect.top)',
+    replace: 'clientY',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C5',
+    name: 'the rectangle is read per event and never cached across a scroll',
+    file: 'src/render/input.ts',
+    find: `  function rectNow(): SurfaceRect {
+    const box = canvas.getBoundingClientRect();
+    return { left: box.left, top: box.top, width: box.width, height: box.height };
+  }`,
+    replace: `  let cachedRect: SurfaceRect | null = null;
+  function rectNow(): SurfaceRect {
+    if (cachedRect === null) {
+      const box = canvas.getBoundingClientRect();
+      cachedRect = { left: box.left, top: box.top, width: box.width, height: box.height };
+    }
+    return cachedRect;
+  }`,
+    detectedBy: 'unit',
+  },
+  {
+    // The defect QUALITY-BAR section 7 names in as many words: the ratio put
+    // back into a chain that is already in CSS pixels, so the arithmetic
+    // divides by it twice. Nothing about the mapping's OUTPUT can refute a
+    // read it does not make, so the gate here is the source scan that asserts
+    // this file never asks the platform for the ratio, and this is what
+    // requires that scan to be able to fail.
+    item: 'C5',
+    name: 'the device pixel ratio is kept out of the input mapping',
+    file: 'src/render/input.ts',
+    find: `  return {
+    x: ((clientX - rect.left) * LOGICAL_WIDTH) / rect.width,`,
+    replace: `  const ratio = window.devicePixelRatio;
+  return {
+    x: ((clientX - rect.left) * LOGICAL_WIDTH * ratio) / rect.width,`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C8',
+    name: 'the lock is asked once a frame, not only at the press and the release',
+    file: 'src/render/input.ts',
+    find: `      if (live !== null && !aimingAllowed(options.state(), options.world)) {
+        endGesture();
+      }`,
+    replace: '      void endGesture;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C1',
+    name: 'a drag takes a pointer capture on pointerdown',
+    file: 'src/render/input.ts',
+    find: '    canvas.setPointerCapture(event.pointerId);',
+    replace: '    void event;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C1',
+    name: 'touch-action is none for the duration of the capture only',
+    file: 'src/render/input.ts',
+    find: '    canvas.style.touchAction = TOUCH_DRAGGING;',
+    replace: '    canvas.style.touchAction = TOUCH_IDLE;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C8',
+    name: 'a second pointer arriving mid-drag is not a second aim',
+    file: 'src/render/input.ts',
+    find: `    if (captured !== null) {
+      return;
+    }`,
+    replace: '    void captured;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C3',
+    name: 'a release below the minimum drag launches nothing',
+    file: 'src/render/input.ts',
+    find: '    if (finished !== null && finished.launchable && allowed) {',
+    replace: '    if (finished !== null && allowed) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C8',
+    name: 'the lock is asked again at the release, not only at the press',
+    file: 'src/render/input.ts',
+    find: '    const allowed = aimingAllowed(options.state(), options.world);',
+    replace: '    const allowed = true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C3',
+    name: 'the mirrored phase names a sub-minimum aim apart from a launchable one',
+    file: 'src/render/input.ts',
+    find: '  return preview.launchable ? PHASE_AIMING : PHASE_BELOW_MINIMUM;',
+    replace: '  return PHASE_AIMING;',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C7',
+    name: 'the arrowhead is clamped by the shaft it sits on',
+    file: 'src/render/arrow.ts',
+    find: '  const headLength = Math.min(HEAD_LENGTH, shaftLength / 2);',
+    replace: '  const headLength = HEAD_LENGTH;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C7',
+    name: 'the clamp is half the shaft rather than the whole of it',
+    file: 'src/render/arrow.ts',
+    find: 'Math.min(HEAD_LENGTH, shaftLength / 2)',
+    replace: 'Math.min(HEAD_LENGTH, shaftLength)',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C2',
+    name: 'the arrow starts at the circle centre',
+    file: 'src/render/arrow.ts',
+    find: '    at(0, half),',
+    replace: '    at(-half, half),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C4',
+    name: 'the strength ramp runs from the boundary token to the accent',
+    file: 'src/render/arrow.ts',
+    find: '  return mixed(palette.line, palette.accent, amount);',
+    replace: '  return mixed(palette.accent, palette.line, amount);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C3',
+    name: 'the sub-minimum signal is drawn outside the rim',
+    file: 'src/render/arrow.ts',
+    find: `  if (!preview.launchable) {
+    drawBelowMinimumRing(context, palette, body);
+  }`,
+    replace: '  void drawBelowMinimumRing;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C3',
+    name: 'the sub-minimum arrow carries no fill, so the two read apart',
+    file: 'src/render/arrow.ts',
+    find: `  if (preview.launchable) {
+    context.fillStyle = rampColour(palette, preview.aim.power01);
+    context.fill();
+  }`,
+    replace: `  context.fillStyle = rampColour(palette, preview.aim.power01);
+  context.fill();`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C2',
+    name: 'the arrow carries the boundary outline that is its contrast',
+    file: 'src/render/arrow.ts',
+    find: `  context.strokeStyle = palette.line;
+  context.lineWidth = BORDER.thick;
+  context.stroke();
+}`,
+    replace: `  context.stroke();
+}`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'C1',
+    name: 'the composition root attaches the pointer input to the play surface',
+    file: 'src/main.ts',
+    find: '    canvas: surface.canvas,',
+    replace: "    canvas: document.createElement('canvas'),",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C3',
+    name: 'the composition root draws the aim pass over the frame',
+    file: 'src/main.ts',
+    find: '      drawAimArrow(surface.context, palette, world.player, preview);',
+    replace: '      void drawAimArrow;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C6',
+    name: 'the launch intent carries the direction the arrow previewed',
+    file: 'src/main.ts',
+    find: 'angle: aim.angleRad, power: aim.power01 });',
+    replace: 'angle: 0, power: aim.power01 });',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C4',
+    name: 'the launch intent carries the strength the arrow previewed',
+    file: 'src/main.ts',
+    find: 'power: aim.power01 });',
+    replace: 'power: 1 });',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C8',
+    name: "the composition root advances the match with the frame's own delta",
+    file: 'src/main.ts',
+    find: '    match.update(delta);',
+    replace: '    match.update(0);',
+    detectedBy: 'browser',
+  },
+  {
+    // QUALITY-BAR section 7's other clause: no CSS transform, border or
+    // padding on the canvas, because the rectangle the whole coordinate chain
+    // is measured from would then be measuring something else. The rule is
+    // kept by there being no such declaration anywhere, which is a property
+    // of the absence of a line and is broken by adding one.
+    item: 'C5',
+    name: 'no chrome rule gives the play surface a box of its own',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-hud {',
+    replace: `[data-pf='play-surface'] {
+  border: var(--border-thin) solid var(--pf-text);
+}
+
+.pf-hud {`,
+    detectedBy: 'browser',
   },
 ];
 

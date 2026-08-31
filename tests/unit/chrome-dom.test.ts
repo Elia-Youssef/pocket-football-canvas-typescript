@@ -26,11 +26,13 @@ import type { FakeElement } from './support/chrome-dom';
  * prevent: two overlapping rectangles consulted by hand, which a real
  * element hit-test cannot produce.
  *
- * THE EXEMPTION LISTS ARE PART OF THE GATE. Empty today, and pinned as
- * empty below: the play surface maps pointer input through the one
- * transform in the wrapper, so nothing under src/ needs either pattern. If
- * a later part earns an entry here, it adds the path to the list and the
- * inventory assertion is changed with it, in the same commit, on purpose.
+ * THE EXEMPTION LISTS ARE PART OF THE GATE. They were empty until the
+ * pointer aiming part, which earned exactly one entry: `render/input.ts`
+ * owns the mapping from CSS pixels into the logical design space, so it
+ * reads a pointer coordinate and the surface rectangle by design. It is
+ * named here, in the same change that added it, and the inventory below
+ * pins both lists by text AND by length, so a second site doing the same
+ * thing reddens the suite rather than joining the list.
  *
  * A SCAN THAT CANNOT FAIL IS NOT A SCAN. The positive controls below prove
  * both matchers fire, including on the exact string a future hit test
@@ -49,8 +51,8 @@ const POINTER_COORDINATE = /\.(?:clientX|clientY|pageX|pageY|screenX|screenY|off
 const RECT_HIT_TEST = /\b(?:getBoundingClientRect|getClientRects|elementFromPoint|elementsFromPoint)\b/;
 
 /** Checked exemptions: a path may hold a pattern only by name, here. */
-const EXEMPT_COORDINATE: readonly string[] = [];
-const EXEMPT_RECT: readonly string[] = [];
+const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts'];
+const EXEMPT_RECT: readonly string[] = ['render/input.ts'];
 
 /** Strings that must fire the coordinate matcher. */
 const POSITIVE_COORDINATES: readonly string[] = [
@@ -170,10 +172,15 @@ describe('PF-13 no chrome rectangle is ever hit-tested', () => {
     );
     expect(source).toContain(
       [
-        'const EXEMPT_COORDINATE: readonly string[] = [];',
-        'const EXEMPT_RECT: readonly string[] = [];',
+        "const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts'];",
+        "const EXEMPT_RECT: readonly string[] = ['render/input.ts'];",
       ].join('\n'),
     );
+    // The exemption is exactly one module wide, and it is the one that owns
+    // the pointer mapping. A second hit-test site is a defect and not a
+    // second name here, so the lists are pinned by length as well as by text.
+    expect(EXEMPT_COORDINATE).toEqual(['render/input.ts']);
+    expect(EXEMPT_RECT).toEqual(['render/input.ts']);
     expect(NEGATIVE_CONTROLS).toHaveLength(4);
   });
 });

@@ -26,11 +26,16 @@
 import './ui/tokens.css';
 import './ui/components/chrome.css';
 
-import { createWorld } from './core/bodies';
+import type { AimPreview, AimState } from './core/aiming';
+import type { World } from './core/bodies';
 import { createMatch } from './core/match';
+import type { Match } from './core/match';
+import { drawAimArrow } from './render/arrow';
+import { kickoffFacing } from './render/entities';
+import { attachAimInput } from './render/input';
 import { createSurface, resizeSurface, watchDeviceRatio } from './render/surface';
 import { drawFrame } from './render/pitch';
-import type { PitchCacheCell } from './render/pitch';
+import type { FrameOptions, PitchCacheCell } from './render/pitch';
 import { pitchFor } from './render/tokens';
 import type { Theme } from './render/tokens';
 import { mountChrome } from './ui/layout';
@@ -39,6 +44,9 @@ export const GAME_ID = 'pocket-football';
 
 /** SPEC section 18: the chrome theme chooses the pitch's brightness variant. */
 const THEME_QUERY = '(prefers-color-scheme: dark)';
+
+/** The frame driver's deltas arrive in milliseconds and the game takes seconds. */
+const MILLISECONDS_PER_SECOND = 1000;
 
 /**
  * The theme in force: a stored override first, the platform read otherwise.
@@ -60,46 +68,163 @@ export function boot(): void {
 }
 
 /**
- * The play surface, mounted once. DESIGN section 8: nodes, listeners and
- * timers are created once and a restart mutates state, so the surface, the
- * world, the cache cell and the two observers here are created exactly one
- * time and nothing tears them down per frame.
+ * The per-scene render inputs an aim supplies. The player's circle looks
+ * where it is about to shoot, which is the facing `entities.ts` left as a
+ * parameter for exactly this; the opponent keeps the derived kickoff facing,
+ * because nothing in this part gives it an aim of its own.
  *
- * The palette is read per render rather than at mount, so a theme override
- * from the settings control re-renders the pitch in the variant the chrome
- * has just adopted; with no override the read lands on the same query the
- * stylesheet answers. The frame driver is likewise a later part: nothing
- * moves until aiming exists, so the scene is drawn at mount, on resize, and
- * when the device pixel ratio changes, which the resize observer cannot see
- * because the css box does not move when a window changes monitors.
+ * An absent option is absent rather than undefined, which is what
+ * `exactOptionalPropertyTypes` asks of a pass-through.
  */
-function mountPlaySurface(host: HTMLElement): { render: () => void } {
+function frameOptionsFor(
+  world: World,
+  preview: AimPreview | null,
+): FrameOptions | undefined {
+  // A press that has not moved is an aim with no length and therefore no
+  // direction, so the circle keeps the facing it already had rather than
+  // snapping to whatever an atan2 of nothing happens to return.
+  if (preview === null || preview.reach <= 0) {
+    return undefined;
+  }
+  return {
+    facing: {
+      player: preview.aim.angleRad,
+      opponent: kickoffFacing(world).opponent,
+    },
+  };
+}
+
+/**
+ * The frame driver, and the one loop in the project. DESIGN section 8: it is
+ * started once and never torn down, so a restart mutates state rather than
+ * rebuilding the scene.
+ *
+ * The delta is the browser's own timestamp difference in seconds, handed
+ * straight on. QUALITY-BAR section 7's clamp, the resume drop and the
+ * treatment of a delta that is negative or not a number all live inside the
+ * simulation, where they are already tested at every frame rate; a second
+ * clamp here would be a second policy for the same fact.
+ */
+function startFrameDriver(step: (delta: number) => void): void {
+  let previous: number | null = null;
+  const frame = (now: number): void => {
+    const delta = previous === null ? 0 : (now - previous) / MILLISECONDS_PER_SECOND;
+    previous = now;
+    step(delta);
+    window.requestAnimationFrame(frame);
+  };
+  window.requestAnimationFrame(frame);
+}
+
+/**
+ * The play surface, mounted once, drawing the match's own world. DESIGN
+ * section 8: nodes, listeners and timers are created once, so the surface,
+ * the cache cell, the pointer input and the two observers here are created
+ * exactly one time and nothing tears them down per frame.
+ *
+ * Sizing and drawing are separate. A backing store is resized when the css box
+ * or the device pixel ratio changes and at no other moment, because assigning
+ * a canvas width reallocates and clears it; the frame driver only draws.
+ *
+ * The palette is read per frame rather than at mount, so a theme override from
+ * the settings control re-renders the pitch in the variant the chrome has just
+ * adopted; with no override the read lands on the same query the stylesheet
+ * answers.
+ *
+ * THE AIM PASS SITS WHERE DESIGN SECTION 7 PUTS IT, after the entities, and it
+ * is appended by this root rather than inserted into `drawFrame`. The order is
+ * the section's either way; the part that adds the effects in front of the
+ * entities owns moving it inside, because that is the first moment the
+ * difference between "after the frame" and "after the entities" exists.
+ */
+function mountPlaySurface(
+  host: HTMLElement,
+  match: Match,
+): { render: () => void; refresh: () => void } {
   const surface = createSurface(host);
-  const world = createWorld();
+  const world = match.world;
   const cache: PitchCacheCell = { current: null };
-  const render = (): void => {
+  const input = attachAimInput({
+    canvas: surface.canvas,
+    world,
+    state: () => match.readout().state,
+    onLaunch: (aim: AimState) => {
+      match.dispatch({ kind: 'launch', angle: aim.angleRad, power: aim.power01 });
+    },
+  });
+
+  const fit = (): void => {
     const width = host.clientWidth;
     if (width <= 0) {
       return;
     }
     resizeSurface(surface, width, window.devicePixelRatio);
-    drawFrame(surface, cache, world, pitchFor(themeInForce()));
   };
-  render();
-  new ResizeObserver(render).observe(host);
-  watchDeviceRatio(window, render);
-  return { render };
+
+  const render = (): void => {
+    if (surface.scale <= 0) {
+      return;
+    }
+    const palette = pitchFor(themeInForce());
+    const preview = input.preview();
+    // THE FRAME STARTS EMPTY. The cached pitch layer is opaque over the pitch
+    // and transparent everywhere else, so blitting it leaves whatever was
+    // outside the pitch on the previous frame exactly where it was. Nothing
+    // drew out there until the aim arrow did: a circle resting against a wall
+    // aims up to a hundred and eighty units past it, and every one of those
+    // pixels would otherwise stay on the surface for the rest of the session.
+    // Clearing belongs inside the frame composition, and the part that moves
+    // the aim pass in there owns moving this with it.
+    surface.context.save();
+    surface.context.setTransform(1, 0, 0, 1, 0, 0);
+    surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
+    surface.context.restore();
+    drawFrame(surface, cache, world, palette, frameOptionsFor(world, preview));
+    if (preview !== null) {
+      drawAimArrow(surface.context, palette, world.player, preview);
+    }
+  };
+
+  const refit = (): void => {
+    fit();
+    render();
+  };
+
+  refit();
+  new ResizeObserver(refit).observe(host);
+  watchDeviceRatio(window, refit);
+  return { render, refresh: input.refresh };
 }
 
 /**
  * The whole game, in mount order: the surface, then the chrome that wraps it
- * as DOM. The match is the plain default - no clock, no target - because the
- * modes own both numbers and arrive with their own part; the chrome reads
- * whatever this match reports and shows it.
+ * as DOM, then the loop that drives both.
+ *
+ * The match repairs a value that is not a number rather than raising on it,
+ * which is the policy `physics.ts` leaves to a composition root and the one a
+ * shipping build takes: a poisoned body is put back where it was and play goes
+ * on, where a raise would end the match on a defect the player did not cause.
+ *
+ * The match is otherwise the plain default, no clock and no target, because
+ * the modes own both numbers and arrive with their own part. Starting it here
+ * is provisional in the same way: SPEC section 9's mode menu is what will
+ * start a match, and until it exists the root starts the default one so the
+ * surface has a turn to aim in.
  */
 function mount(host: HTMLElement): void {
-  const play = mountPlaySurface(host);
-  mountChrome(host, { match: createMatch(), onThemeChange: play.render });
+  const match = createMatch({ onNonFinite: 'repair' });
+  const play = mountPlaySurface(host, match);
+  const chrome = mountChrome(host, { match, onThemeChange: play.render });
+  match.dispatch({ kind: 'start' });
+  startFrameDriver((delta) => {
+    match.update(delta);
+    // The lock, once a frame, before anything reads the aim: the match may
+    // have left the player's turn since the last pointer event, and an aim
+    // that outlives its own turn is what item C8 forbids.
+    play.refresh();
+    chrome.sync();
+    play.render();
+  });
 }
 
 boot();
