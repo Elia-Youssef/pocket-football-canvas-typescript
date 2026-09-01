@@ -26,10 +26,26 @@
 import './ui/tokens.css';
 import './ui/components/chrome.css';
 
+import { OPPONENT_STREAM, respond } from './core/ai'; // the opponent's aim routine
 import type { AimPreview, AimState } from './core/aiming';
-import type { World } from './core/bodies';
+import type { Body, World } from './core/bodies';
+import type { AimGuide } from './core/guide';
+import { predictGuide } from './core/guide';
 import { createMatch } from './core/match';
-import type { Match } from './core/match';
+import type { Match, MatchState } from './core/match';
+import {
+  DEFAULT_MODE,
+  createMemoryProgress,
+  guideShown,
+  ladderComplete,
+  ladderRungAfter,
+  ladderStepFor,
+  outcomeOf,
+  setupFor,
+} from './core/modes';
+import type { ModeChoice, ModeSetup, ProgressStore } from './core/modes';
+import { createRng } from './core/rng';
+import type { Rng } from './core/rng';
 import { createEffects } from './render/effects';
 import type { Effects } from './render/effects';
 import { kickoffFacing } from './render/entities';
@@ -41,6 +57,7 @@ import type { FrameOptions, PitchCacheCell } from './render/pitch';
 import { pitchFor } from './render/tokens';
 import type { Theme } from './render/tokens';
 import { createAimControls } from './ui/components/aim-controls';
+import type { GameOverContext } from './ui/components/game-over-panel';
 import { mountChrome } from './ui/layout';
 
 export const GAME_ID = 'pocket-football';
@@ -85,6 +102,15 @@ const PLAY_SURFACE_ROLE = 'application';
 const MILLISECONDS_PER_SECOND = 1000;
 
 /**
+ * SPEC section 9's Hotseat, as the input models see it. Both turns belong to a
+ * human there, so the state the aim models are asked about is a player's turn
+ * whichever circle is acting; the MATCH stays in the turn it is really in, so
+ * the launch intent still reaches the right body and every other refusal, the
+ * pause and the game over included, is answered by the real state.
+ */
+const HUMAN_TURN: MatchState = Object.freeze({ kind: 'PLAYER_TURN' });
+
+/**
  * The theme in force: a stored override first, the platform read otherwise.
  * The settings control writes the override where the stylesheet reads it; the
  * query above stays the platform half of the tie, asked only when no override
@@ -116,37 +142,69 @@ export function boot(): void {
   document.documentElement.dataset['game'] = GAME_ID;
 }
 
+/** Everything the play surface has to ask the root, and nothing it decides. */
+interface PlayContext {
+  readonly match: Match;
+  /** The state the aim models answer to, which Hotseat translates. */
+  readonly inputState: () => MatchState;
+  /** The world an aim is taken in: Hotseat swaps the acting circle per turn. */
+  readonly aimWorld: World;
+  /** SPEC section 11: whether the guide is showing on this frame. */
+  readonly guideShowing: () => boolean;
+  /** Counted for SPEC section 19's first-two-turns rule. */
+  readonly onLaunched: () => void;
+  readonly onPause: () => void;
+  /** SPEC section 14's motion set for the match in force, or none yet. */
+  readonly effects: () => Effects | undefined;
+}
+
 /**
- * The per-scene render inputs. The player's circle looks where it is about to
- * shoot, which is the facing `entities.ts` left as a parameter for exactly
- * this; the opponent keeps the derived kickoff facing, because nothing in this
- * part gives it an aim of its own. The aim itself and the effects state go the
- * same way, because DESIGN section 7's pass order is `drawFrame`'s and this
- * root's job is to hand it what each pass draws.
+ * The per-scene render inputs. The circle that is about to shoot looks where
+ * it is shooting, which is the facing `entities.ts` left as a parameter for
+ * exactly this; the other keeps the derived kickoff facing. The aim, the
+ * guide and the effects state go the same way, because DESIGN section 7's
+ * pass order is `drawFrame`'s and this root's job is to hand it what each pass
+ * draws.
+ *
+ * THE ARROW AND THE GUIDE START AT THE SAME CIRCLE, which is the acting one:
+ * in Hotseat the second human aims the opponent's circle, and an arrow drawn
+ * from the player's would be pointing out of somebody else's body.
  *
  * An absent option is absent rather than undefined, which is what
  * `exactOptionalPropertyTypes` asks of a pass-through.
  */
 function frameOptionsFor(
   world: World,
+  context: PlayContext,
   preview: AimPreview | null,
-  effects: Effects,
 ): FrameOptions {
   const options: {
     facing?: Facing;
     aim?: AimPreview;
-    effects: Effects;
-  } = { effects };
+    guide?: AimGuide;
+    launcher?: Body;
+    effects?: Effects;
+  } = {};
+  const running = context.effects();
+  if (running !== undefined) {
+    options.effects = running;
+  }
   if (preview !== null) {
+    const acting = context.aimWorld.player;
     options.aim = preview;
+    options.launcher = acting;
+    if (context.guideShowing()) {
+      options.guide = predictGuide(acting, world.ball, preview.aim.angleRad);
+    }
     // A press that has not moved is an aim with no length and therefore no
     // direction, so the circle keeps the facing it already had rather than
     // snapping to whatever an atan2 of nothing happens to return.
     if (preview.reach > 0) {
-      options.facing = {
-        player: preview.aim.angleRad,
-        opponent: kickoffFacing(world).opponent,
-      };
+      const kickoff = kickoffFacing(world);
+      options.facing =
+        acting === world.opponent
+          ? { player: kickoff.player, opponent: preview.aim.angleRad }
+          : { player: preview.aim.angleRad, opponent: kickoff.opponent };
     }
   }
   return options;
@@ -190,15 +248,14 @@ function startFrameDriver(step: (delta: number) => void): void {
  * answers. The motion policy is read the same way and for the same reason.
  *
  * EVERY PASS IS `drawFrame`'S, DESIGN section 7's order included. This root
- * decides the two policies the renderer may not decide for itself, the theme
- * and whether motion is reduced, hands the effects layer the world once a
- * frame, and draws once.
+ * decides the policies the renderer may not decide for itself, hands the
+ * effects layer the world once a frame, and draws once.
  */
 function mountPlaySurface(
   host: HTMLElement,
-  match: Match,
-  onPause: () => void,
+  context: PlayContext,
 ): { render: () => void; refresh: (elapsed: number) => void } {
+  const match = context.match;
   const frame = document.createElement('div');
   frame.className = 'pf-play-frame';
   frame.dataset['pf'] = 'play-frame';
@@ -210,19 +267,16 @@ function mountPlaySurface(
   const surface = createSurface(frame);
   const world = match.world;
   const cache: PitchCacheCell = { current: null };
-  // SPEC section 14's motion set, created once with the surface it draws on.
-  // It reads the world and writes nothing, which is what keeps the simulation
-  // timing identical whatever the motion policy is.
-  const effects = createEffects();
   const input = attachAimInput({
     canvas: surface.canvas,
-    world,
-    state: () => match.readout().state,
+    world: context.aimWorld,
+    state: context.inputState,
     onLaunch: (aim: AimState) => {
       match.dispatch({ kind: 'launch', angle: aim.angleRad, power: aim.power01 });
+      context.onLaunched();
     },
     surface: frame,
-    onPause,
+    onPause: context.onPause,
   });
 
   // SPEC section 5.0's no-drag path, mounted after the surface so it follows
@@ -254,13 +308,7 @@ function mountPlaySurface(
       return;
     }
     const palette = pitchFor(themeInForce());
-    drawFrame(
-      surface,
-      cache,
-      world,
-      palette,
-      frameOptionsFor(world, input.preview(), effects),
-    );
+    drawFrame(surface, cache, world, palette, frameOptionsFor(world, context, input.preview()));
   };
 
   const refit = (): void => {
@@ -276,12 +324,14 @@ function mountPlaySurface(
    *
    * The effects layer is observed here rather than in `render`, because it has
    * to see the world exactly once per update and `render` is also called by a
-   * resize and by a theme change, which advance no time at all.
+   * resize and by a theme change, which advance no time at all. There is no
+   * effects layer at all until a mode has started a match, which is the one
+   * state where nothing on the pitch is moving by construction.
    */
   const refresh = (elapsed: number): void => {
     input.refresh(elapsed);
     controls.sync(elapsed, input.preview(), input.allowed());
-    effects.observe({
+    context.effects()?.observe({
       world,
       scoring: match.readout().scoring,
       elapsed,
@@ -304,27 +354,238 @@ function mountPlaySurface(
  * shipping build takes: a poisoned body is put back where it was and play goes
  * on, where a raise would end the match on a defect the player did not cause.
  *
- * The match is otherwise the plain default, no clock and no target, because
- * the modes own both numbers and arrive with their own part. Starting it here
- * is provisional in the same way: SPEC section 9's mode menu is what will
- * start a match, and until it exists the root starts the default one so the
- * surface has a turn to aim in.
+ * ONE MATCH, RECONFIGURED. SPEC section 9's modes differ in the clock, the
+ * target and the opponent; the match takes the first two through its own
+ * configure intent and this root takes the third, so nothing here builds a
+ * second match, a second world or a second listener when the mode changes.
+ *
+ * ONE SEED PER MATCH, AND EVERY STREAM DERIVED FROM IT. The mode names the
+ * seed, the opponent draws from its own split of it and the effects layer is
+ * built on it, so replaying a seed replays the opponent's turn, the direction
+ * of the shake and the goal burst together (SPEC section 6). The effects layer
+ * is rebuilt with each match for exactly that reason: it holds no node, no
+ * listener and no timer, and a match that inherited a half-spent stream would
+ * not replay.
+ *
+ * SPEC SECTION 2.2's HIDDEN TAB IS A PAUSE INTENT AND NOTHING MORE. The
+ * listener is added once, it raises the same intent the pause control raises,
+ * and the match's own chart refuses it outside the four in-play states. The
+ * clock cannot advance while it is refused, because a paused match steps
+ * nothing at all, and the overlay the chrome derives from PAUSED is what asks
+ * for the one activation that resumes.
  */
 function mount(host: HTMLElement): void {
+  // SPEC sections 9 and 19 need two facts to outlive a match. The seam is
+  // `core/modes.ts`'s and PF-10 lands SPEC section 16's stored document behind
+  // it; this is the implementation that exists today, and it is a real store
+  // rather than a stub, so everything above it is already written against the
+  // interface storage will arrive through.
+  const progress: ProgressStore = createMemoryProgress();
   const match = createMatch({ onNonFinite: 'repair' });
-  // SPEC section 5.1: Escape with no aim active opens the pause overlay. The
-  // surface raises the intent and the chrome derives the overlay from the
-  // readout, exactly as the pause control does, so there is one way into
-  // PAUSED and not two. The chrome is synced at once so that focus reaches
-  // the panel in the same task the key was pressed in.
-  const play = mountPlaySurface(host, match, () => {
+
+  let setup: ModeSetup = setupFor(DEFAULT_MODE);
+  let guideEnabled = setup.guideDefault;
+  let opponent: Rng | undefined;
+  let effects: Effects | undefined;
+  let turnsTaken = 0;
+  let firstEverMatch = false;
+  let recorded = true;
+
+  /** SPEC section 9: Hotseat is the mode with no opponent profile at all. */
+  function hotseat(): boolean {
+    return setup.profile === undefined;
+  }
+
+  /** True while the second human is the one at the controls. */
+  function secondHuman(): boolean {
+    return hotseat() && match.readout().state.kind === 'OPPONENT_TURN';
+  }
+
+  function inputState(): MatchState {
+    return secondHuman() ? HUMAN_TURN : match.readout().state;
+  }
+
+  /**
+   * The world an aim is taken in. Built once and answering from the match, so
+   * the pointer input holds one reference for the life of the game; what it
+   * swaps in Hotseat is which body the aim belongs to, which is every
+   * body-anchored reading the aim models make: the press that begins a drag,
+   * the point a tap aims from, the direction a keyboard aim opens at and the
+   * circle the arrow and the guide are drawn from.
+   */
+  const aimWorld: World = {
+    get player(): Body {
+      return secondHuman() ? match.world.opponent : match.world.player;
+    },
+    get opponent(): Body {
+      return secondHuman() ? match.world.player : match.world.opponent;
+    },
+    ball: match.world.ball,
+    bodies: match.world.bodies,
+  };
+
+  // SPEC section 5.1: Escape with no aim active opens the pause overlay, and
+  // SPEC section 2.2's hidden tab raises the same intent. The surface and the
+  // platform both come through here, so there is one way into PAUSED and not
+  // three. The chrome is synced at once so that focus reaches the panel in the
+  // same task the key was pressed in.
+  function pauseNow(): void {
     match.dispatch({ kind: 'pause' });
     chrome.sync();
+  }
+
+  const play = mountPlaySurface(host, {
+    match,
+    inputState,
+    aimWorld,
+    guideShowing: () => guideShown(guideEnabled, firstEverMatch, turnsTaken),
+    onLaunched: () => {
+      turnsTaken += 1;
+    },
+    onPause: pauseNow,
+    effects: () => effects,
   });
-  const chrome = mountChrome(host, { match, onThemeChange: play.render });
-  match.dispatch({ kind: 'start' });
+
+  /** A fresh match on the mode in force: its own seed, and its own streams. */
+  function beginMatch(): void {
+    turnsTaken = 0;
+    recorded = false;
+    opponent = createRng(setup.seed).split(OPPONENT_STREAM);
+    effects = createEffects({ seed: setup.seed });
+  }
+
+  function startMode(choice: ModeChoice, guide?: boolean): void {
+    setup = setupFor(choice);
+    // SPEC section 11's default is the mode's own; the menu may override it
+    // for the match it starts, and a ladder step that never passes through the
+    // menu takes the new rung's default instead.
+    guideEnabled = guide ?? setup.guideDefault;
+    const stored = progress.read();
+    firstEverMatch = !stored.playedBefore;
+    if (firstEverMatch) {
+      progress.write({ ...stored, playedBefore: true });
+    }
+    beginMatch();
+    match.dispatch({ kind: 'configure', configuration: setup.configuration });
+    chrome.applyMode(setup);
+    chrome.setGuide(guideEnabled);
+    match.dispatch({ kind: 'start' });
+    chrome.sync();
+  }
+
+  /** SPEC section 13's Play Again: the same mode, the same seed, from the top. */
+  function playAgain(): void {
+    beginMatch();
+    match.restart();
+    chrome.sync();
+  }
+
+  /**
+   * SPEC section 13's Change mode: back to the menu. The rung the menu offers
+   * is the store's, read by the menu itself every time it opens, so every
+   * route back to it agrees.
+   */
+  function changeMode(): void {
+    match.dispatch({ kind: 'quit' });
+    chrome.sync();
+  }
+
+  function nextOpponent(): void {
+    match.dispatch({ kind: 'quit' });
+    startMode({ kind: 'ladder', rung: progress.read().ladderRung });
+  }
+
+  function restartLadder(): void {
+    match.dispatch({ kind: 'quit' });
+    progress.write({ ...progress.read(), ladderRung: 1 });
+    startMode({ kind: 'ladder', rung: 1 });
+  }
+
+  /**
+   * SPEC section 9: the ladder advances on a win and restarts on a loss, and
+   * the record is written ONCE, the first frame the rung is over. Writing it
+   * from the readout rather than from the button that follows is what makes
+   * the progress a fact about the match played rather than about which action
+   * the player happened to press afterwards.
+   */
+  function recordLadder(): void {
+    if (recorded || match.readout().state.kind !== 'GAME_OVER') {
+      return;
+    }
+    recorded = true;
+    const ladder = setup.ladder;
+    if (ladder === undefined) {
+      return;
+    }
+    const scoring = match.readout().scoring;
+    const step = ladderStepFor(outcomeOf(scoring.player, scoring.opponent));
+    progress.write({
+      ...progress.read(),
+      ladderRung: ladderRungAfter(ladder.position, step),
+    });
+  }
+
+  /** What the mode says about the match that has just finished. */
+  function gameOverContext(): GameOverContext {
+    const scoring = match.readout().scoring;
+    const ladder = setup.ladder;
+    const context: {
+      opponentName: string;
+      ladderStep?: ReturnType<typeof ladderStepFor>;
+      ladderComplete?: boolean;
+    } = { opponentName: setup.opponentName };
+    if (ladder !== undefined) {
+      const step = ladderStepFor(outcomeOf(scoring.player, scoring.opponent));
+      context.ladderStep = step;
+      context.ladderComplete = ladderComplete(ladder.position, step);
+    }
+    return context;
+  }
+
+  const chrome = mountChrome(host, {
+    match,
+    onThemeChange: play.render,
+    modes: {
+      initial: DEFAULT_MODE,
+      guideOn: guideEnabled,
+      onStart: (choice, guide) => {
+        startMode(choice, guide);
+      },
+      onPlayAgain: playAgain,
+      onChangeMode: changeMode,
+      onNextOpponent: nextOpponent,
+      onRestartLadder: restartLadder,
+      onHowToDismissed: () => {
+        progress.write({ ...progress.read(), howToDismissed: true });
+      },
+      ladderRung: () => progress.read().ladderRung,
+      gameOver: gameOverContext,
+    },
+  });
+
+  // SPEC section 19: How to Play is shown on first launch, and once dismissed
+  // it is not shown again. The overlay opens over the menu, which is where a
+  // first launch lands, and the menu is still there underneath it.
+  if (!progress.read().howToDismissed) {
+    chrome.showHowToPlay();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      pauseNow();
+    }
+  });
+
   startFrameDriver((delta) => {
     match.update(delta);
+    // The opponent answers its own seam with an ordinary launch intent. A
+    // mode with no profile has nobody to answer it, which is the whole of
+    // SPEC section 9's "no AI" and is why Hotseat needs no flag anywhere.
+    const profile = setup.profile;
+    if (profile !== undefined && opponent !== undefined) {
+      respond(match, profile, opponent);
+    }
+    recordLadder();
     // The lock, once a frame, before anything reads the aim: the match may
     // have left the player's turn since the last pointer event, and an aim
     // that outlives its own turn is what item C8 forbids.

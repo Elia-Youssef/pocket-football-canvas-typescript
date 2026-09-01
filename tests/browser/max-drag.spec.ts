@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { advance, startMatch, turnText } from './support/game';
+
 /**
  * Item C4, method T, evidence `playwright/max-drag`:
  *
@@ -188,8 +190,18 @@ async function shoot(page: Page, pull: number): Promise<{ x: number; y: number }
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 5 });
   await page.mouse.up();
+  // THE READING IS TAKEN AT A POINT IN THE MATCH, not at a point in wall clock
+  // time. From PF-9 the opponent answers its own turn, so the frames are
+  // driven one at a time until the handover and then STOPPED: both arms of the
+  // comparison below stop at the same frame of the same match, and the
+  // opponent's own shot cannot move the circle being measured.
+  let handedOver = false;
+  for (let frame = 0; frame < 200 && !handedOver; frame += 1) {
+    await advance(page, 1);
+    handedOver = (await turnText(page)) === 'OPPONENT IS AIMING';
+  }
+  expect(handedOver).toBe(true);
   await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
-  await nextFrames(page);
   const settled = await readSurface(page, PLAYER_FILL);
   return settled.player;
 }
@@ -199,7 +211,7 @@ test.describe('PF-5 the maximum drag, item C4', () => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });
@@ -237,7 +249,15 @@ test.describe('PF-5 the maximum drag, item C4', () => {
     expect(Number(wellPastTheMaximum)).toBeCloseTo(Number(pastTheMaximum), 1);
   });
 
-  test('clamps the launch strength above the maximum', async ({ page }) => {
+  test('clamps the launch strength above the maximum', { tag: '@drive' }, async ({
+    page,
+  }) => {
+    // The page's clock is the test's from before the navigation, so `shoot`
+    // below can stop the match at the handover rather than race it.
+    await page.clock.install({ time: 0 });
+    await startMatch(page);
+    await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    await advance(page, 10);
     // Two hundred and three hundred rather than a hundred and eighty and
     // three hundred. Both are above the clamp, which is what the criterion
     // says, and neither sits ON it: a client coordinate that lost a fraction
@@ -247,14 +267,14 @@ test.describe('PF-5 the maximum drag, item C4', () => {
     // and not this game's arithmetic.
     const pastTheMaximum = await shoot(page, 200);
 
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
-    await nextFrames(page, 10);
+    await advance(page, 10);
     const wellPastTheMaximum = await shoot(page, 300);
 
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
-    await nextFrames(page, 10);
+    await advance(page, 10);
     const shortPull = await shoot(page, 120);
 
     // The same shot: a pull of 300 units is a pull of 200 units once the

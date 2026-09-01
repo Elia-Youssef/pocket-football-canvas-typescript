@@ -68,8 +68,15 @@ function howToRoot(): FakeElement {
 }
 
 function gameRoot(): FakeElement {
-  return createGameOverPanel({ onPlayAgain: () => undefined })
-    .root as unknown as FakeElement;
+  // The panel as the composition root builds it: SPEC section 13's four
+  // actions, which PF-9's mode wiring is what gives three of them somewhere
+  // to go. The census below grew by exactly those three at that part.
+  return createGameOverPanel({
+    onPlayAgain: () => undefined,
+    onChangeMode: () => undefined,
+    onNextOpponent: () => undefined,
+    onRestartLadder: () => undefined,
+  }).root as unknown as FakeElement;
 }
 
 describe('PF-13 the panels', () => {
@@ -89,7 +96,12 @@ describe('PF-13 the panels', () => {
         'Close',
       ]);
       expect(censusControls(howToRoot())).toEqual(['Close']);
-      expect(censusControls(gameRoot())).toEqual(['Play Again']);
+      expect(censusControls(gameRoot())).toEqual([
+        'Play Again',
+        'Change mode',
+        'Next opponent',
+        'Restart ladder',
+      ]);
     } finally {
       installed.restore();
     }

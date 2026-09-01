@@ -1,21 +1,29 @@
 /**
- * The game-over panel, SPEC section 13: both scores and the result, and the
- * way back into a match.
+ * The game-over panel, SPEC section 13: both scores, the result, and every way
+ * back into a match.
  *
  * THE RESULT IS DERIVED, ONCE, FROM THE READOUT. Player ahead is "You win!",
- * the opponent ahead names them, level is "Draw!". In the ladder the name is
- * the rung's; until the modes supply one, the side is named generically.
- * "Change mode" and the ladder's next-opponent and restart-ladder actions
- * are named in place for the mode part, whose chart owns the edges they
- * need: the match has no GAME_OVER to MENU path yet, and a button whose
- * intent no state accepts is exactly the dishonesty this part exists to
- * end.
+ * the opponent ahead names them, level is "Draw!". The name is the mode's: the
+ * ladder rung's in Ladder, the second human's in Hotseat, and a generic one
+ * where SPEC section 9 gives the opponent no name at all.
  *
- * The panel is not dismissible: the match is over, and Play Again is the
- * way back in. Escape has nothing honest to restore, so it has no listener.
+ * FOUR ACTIONS, ALL FOUR ALWAYS IN THE DOCUMENT, EACH REFUSED IN PLACE WHERE
+ * IT DOES NOT APPLY. SPEC section 13 lists Play Again, Change mode, and in
+ * Ladder either Next opponent or Restart ladder, and "either" is the reason
+ * the last two are never both live at once: a rung won offers the next
+ * opponent, a rung lost offers the ladder again, a rung drawn offers neither
+ * and leaves Play Again to replay it, and a ladder completed offers the
+ * restart because there is no seventh rung. Removing the inapplicable one
+ * would drop a focused control on a state change, which QUALITY-BAR section 3
+ * forbids, so they are disabled in place exactly as the pause control is.
+ *
+ * The panel is not dismissible: the match is over, and the four actions are
+ * the ways back in. Escape has nothing honest to restore, so it has no
+ * listener.
  */
 
 import type { MatchReadout } from '../../core/match';
+import type { LadderStep } from '../../core/modes';
 import { formatNumber } from './clock';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
@@ -23,11 +31,26 @@ import type { Panel } from './panel';
 export interface GameOverPanelOptions {
   readonly onPlayAgain: () => void;
   readonly opponentName?: string;
+  /** SPEC section 13's Change mode. Absent in a composition with no menu. */
+  readonly onChangeMode?: () => void;
+  /** SPEC section 9's ladder actions. Absent where there is no ladder. */
+  readonly onNextOpponent?: () => void;
+  readonly onRestartLadder?: () => void;
+}
+
+/** What the mode tells the panel about the match that has just finished. */
+export interface GameOverContext {
+  /** The name the result string uses for the other side. */
+  readonly opponentName: string;
+  /** SPEC section 9's ladder step this result earned, or nothing outside it. */
+  readonly ladderStep?: LadderStep;
+  /** True when the rung just won was the last one, so nothing follows it. */
+  readonly ladderComplete?: boolean;
 }
 
 export interface GameOverPanel extends Panel {
-  /** Re-derives the result and the score line from the readout. */
-  update(readout: MatchReadout): void;
+  /** Re-derives the result, the score line and which actions are live. */
+  update(readout: MatchReadout, context?: GameOverContext): void;
 }
 
 /** SPEC section 13's three results, decided on the scoreboard alone. */
@@ -42,7 +65,7 @@ export function resultText(player: number, opponent: number, name: string): stri
 }
 
 export function createGameOverPanel(options: GameOverPanelOptions): GameOverPanel {
-  const name = options.opponentName ?? 'Opponent';
+  const fallbackName = options.opponentName ?? 'Opponent';
   const panel = createPanel({
     name: 'panel-game-over',
     heading: 'Full time',
@@ -59,17 +82,45 @@ export function createGameOverPanel(options: GameOverPanelOptions): GameOverPane
   panel.addControl(result);
   panel.addControl(scoreLine);
 
-  const playAgain = document.createElement('button');
-  playAgain.type = 'button';
-  playAgain.className = 'pf-choice-button';
-  playAgain.textContent = 'Play Again';
-  playAgain.addEventListener('click', options.onPlayAgain);
-  panel.addControl(playAgain);
+  function action(
+    marker: string,
+    label: string,
+    handler: (() => void) | undefined,
+  ): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pf-choice-button';
+    button.dataset['pf'] = marker;
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-disabled') === 'true') {
+        return;
+      }
+      handler?.();
+    });
+    panel.addControl(button);
+    return button;
+  }
+
+  const playAgain = action('play-again', 'Play Again', options.onPlayAgain);
+  const changeMode = action('change-mode', 'Change mode', options.onChangeMode);
+  const nextOpponent = action('next-opponent', 'Next opponent', options.onNextOpponent);
+  const restartLadder = action('restart-ladder', 'Restart ladder', options.onRestartLadder);
+
+  function refuse(button: HTMLButtonElement, live: boolean): void {
+    button.setAttribute('aria-disabled', live ? 'false' : 'true');
+  }
+
+  refuse(playAgain, true);
+  refuse(changeMode, options.onChangeMode !== undefined);
+  refuse(nextOpponent, false);
+  refuse(restartLadder, false);
 
   return {
     ...panel,
 
-    update(readout: MatchReadout): void {
+    update(readout: MatchReadout, context?: GameOverContext): void {
+      const name = context?.opponentName ?? fallbackName;
       result.textContent = resultText(
         readout.scoring.player,
         readout.scoring.opponent,
@@ -78,6 +129,17 @@ export function createGameOverPanel(options: GameOverPanelOptions): GameOverPane
       scoreLine.textContent = `${formatNumber(readout.scoring.player)} : ${formatNumber(
         readout.scoring.opponent,
       )}`;
+      const step: LadderStep | undefined = context?.ladderStep;
+      const complete = context?.ladderComplete === true;
+      refuse(changeMode, options.onChangeMode !== undefined);
+      refuse(
+        nextOpponent,
+        options.onNextOpponent !== undefined && step === 'advance' && !complete,
+      );
+      refuse(
+        restartLadder,
+        options.onRestartLadder !== undefined && (step === 'restart' || complete),
+      );
     },
   };
 }

@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { startMatch } from './support/game';
+
 /**
  * Item C3, method T, evidence `playwright/min-drag`:
  *
@@ -211,7 +213,7 @@ test.describe('PF-5 the minimum drag, item C3', () => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });

@@ -1,19 +1,22 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { advance, startMatch, turnText } from './support/game';
+
 /**
  * Item C8, method T, evidence `playwright/input-lock`:
  *
  *   "Aiming and launching are impossible during the opponent's turn, while
  *    any body is moving, while paused, and at game over."
  *
- * THREE OF THE FOUR CONDITIONS ARE HERE. Game over is not, and the reason is
- * disclosed in this part's report rather than hidden: nothing in the shipped
- * composition can end a match yet, because the modes that give a match a
- * clock or a goal target arrive at PF-9, so GAME_OVER is not a state a
- * browser can be driven into at this part. That clause is graded in
- * tests/unit/launch.test.ts, over a match given a one-second clock, together
- * with a table over every state SPEC section 7's chart has.
+ * ALL FOUR CONDITIONS ARE HERE, from PF-9. Game over was the one that was
+ * not: nothing in the shipped composition could end a match until SPEC section
+ * 9's modes gave one a clock, so the clause was graded in
+ * tests/unit/launch.test.ts over a match given a one-second clock, and the
+ * split was disclosed rather than hidden. The last test below is that clause
+ * re-homed: a real Quick Match run to full time over the built bundle, with
+ * the unit-layer table left where it is because it walks every state SPEC
+ * section 7's chart has and a browser can only be driven into some of them.
  *
  * PRESENCE BEFORE REACHABILITY. Every test asserts the play surface is in the
  * document in the phase it is testing, because a refusal and a removed
@@ -62,6 +65,9 @@ interface Attempt {
   readonly afterDown: string;
   readonly afterMove: string;
   readonly afterEnd: string;
+  /** The turn readout on either side of the attempt, read in the same task. */
+  readonly turnBefore: string;
+  readonly turnAfter: string;
 }
 
 async function surfaceBox(page: Page): Promise<Box> {
@@ -186,6 +192,10 @@ async function dispatchAim(
           maxY = Math.max(maxY, designY);
         }
       }
+      const readout = document.querySelector('[data-pf="turn"]');
+      if (!(readout instanceof HTMLElement)) {
+        throw new Error('the turn readout is not in the document');
+      }
       const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
       const rect = canvas.getBoundingClientRect();
       const clientX = rect.left + (centre.x * rect.width) / 1280;
@@ -202,12 +212,20 @@ async function dispatchAim(
         );
       };
       const phase = (): string => canvas.dataset['pfAim'] ?? '';
+      const turnBefore = readout.textContent ?? '';
       fire('pointerdown', clientX);
       const afterDown = phase();
       fire('pointermove', clientX + across);
       const afterMove = phase();
       fire(input.ending, clientX + across);
-      return { pressedAt: centre, afterDown, afterMove, afterEnd: phase() };
+      return {
+        pressedAt: centre,
+        afterDown,
+        afterMove,
+        afterEnd: phase(),
+        turnBefore,
+        turnAfter: readout.textContent ?? '',
+      };
     },
     { units, ending, fill },
   );
@@ -232,7 +250,7 @@ test.describe('PF-5 the input lock, item C8', () => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });
@@ -265,7 +283,17 @@ test.describe('PF-5 the input lock, item C8', () => {
     await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
   });
 
-  test("refuses aiming during the opponent's turn", async ({ page }) => {
+  test("refuses aiming during the opponent's turn", { tag: '@drive' }, async ({ page }) => {
+    // THE PAGE'S CLOCK IS THE TEST'S, from before the navigation. From PF-9 the
+    // opponent answers its own turn, so that turn lasts SPEC section 8's
+    // pre-launch delay and then moves on by itself; the frames are driven by
+    // hand to reach it and then stopped, which holds the match in the turn
+    // this test is about however loaded the machine is.
+    await page.clock.install({ time: 0 });
+    await startMatch(page);
+    await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    await advance(page, 4);
+
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
     const box = await surfaceBox(page);
@@ -273,20 +301,30 @@ test.describe('PF-5 the input lock, item C8', () => {
 
     await mouseAim(page, box, start, 40);
     await page.mouse.up();
+    let reached = false;
+    for (let frame = 0; frame < 200 && !reached; frame += 1) {
+      await advance(page, 1);
+      reached = (await turnText(page)) === 'OPPONENT IS AIMING';
+    }
+    expect(reached).toBe(true);
     await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
     await expect(surface).toHaveCount(1);
-    await nextFrames(page);
 
-    // The world is still and nothing covers the pitch, so this is a real
-    // mouse press on the circle where it came to rest.
-    const settled = await playerCentre(page, PLAYER_FILL);
-    await mouseAim(page, box, settled, 100);
-    await nextFrames(page);
+    // THE WHOLE ATTEMPT IN ONE PAGE TASK, from PF-9. The opponent answers its
+    // own turn now, so that turn lasts SPEC section 8's pre-launch delay and
+    // then moves on by itself; a press and a canvas read taken as separate
+    // round trips would be asking about whichever state the machine had
+    // reached by then. The dispatched press reaches the same listener a mouse
+    // press does, and the readout sampled on either side of it is what says
+    // which turn the refusal belongs to.
+    const refused = await dispatchAim(page, 100, 'pointerup', PLAYER_FILL);
+    expect(Number.isFinite(refused.pressedAt.x)).toBe(true);
+    expect(refused.turnBefore).toBe('OPPONENT IS AIMING');
+    expect(refused.turnAfter).toBe(refused.turnBefore);
+    expect(refused.afterDown).toBe('idle');
+    expect(refused.afterMove).toBe('idle');
+    expect(refused.afterEnd).toBe('idle');
     await expect(surface).toHaveAttribute('data-pf-aim', 'idle');
-    await page.mouse.up();
-    await nextFrames(page);
-    await expect(surface).toHaveAttribute('data-pf-aim', 'idle');
-    await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
   });
 
   test('ends an aim already in progress when the match is paused under it', async ({
@@ -348,5 +386,36 @@ test.describe('PF-5 the input lock, item C8', () => {
     await expect(turn).toHaveText('YOUR TURN', SETTLE);
     const again = await dispatchAim(page, 100, 'pointercancel', PLAYER_FILL);
     expect(again.afterMove).toBe('aiming');
+  });
+
+  test('refuses aiming at game over', { tag: '@drive' }, async ({ page }) => {
+    // The fourth condition, re-homed from the unit layer at PF-9. The clock is
+    // the test's own from before the navigation, so a whole 60 second Quick
+    // Match is 260 frames of a quarter of a second rather than a minute of
+    // waiting; every one of them is exactly QUALITY-BAR section 7's ceiling,
+    // so the simulation consumes all of it and the match clock charges all of
+    // it. No launch is taken, so the pitch is still at the whistle and the
+    // refusal below is graded on a scene that cannot be moving for any other
+    // reason.
+    await page.clock.install({ time: 0 });
+    await startMatch(page, { mode: 'quick', duration: 60 });
+    const surface = page.locator('[data-pf="play-surface"]');
+    const turn = page.locator('[data-pf="turn"]');
+
+    // The positive control first, in the turn that allows an aim.
+    const allowed = await dispatchAim(page, 100, 'pointercancel', PLAYER_FILL);
+    expect(allowed.afterMove).toBe('aiming');
+    await expect(turn).toHaveText('YOUR TURN', SETTLE);
+
+    await advance(page, 260);
+    await expect(turn).toHaveText('FULL TIME', SETTLE);
+    await expect(surface).toHaveCount(1);
+
+    const refused = await dispatchAim(page, 100, 'pointerup', PLAYER_FILL);
+    expect(refused.turnBefore).toBe('FULL TIME');
+    expect(refused.turnAfter).toBe('FULL TIME');
+    expect(refused.afterDown).toBe('idle');
+    expect(refused.afterMove).toBe('idle');
+    expect(refused.afterEnd).toBe('idle');
   });
 });

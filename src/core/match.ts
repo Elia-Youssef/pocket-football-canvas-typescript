@@ -58,10 +58,21 @@
  * WITHIN AN UPDATE the world moves first and time is charged after, so a goal
  * scored in the last step of the match counts before the whistle moves the
  * match to GAME_OVER.
+ *
+ * THE MODE SEAM, AND WHY IT REBUILDS RATHER THAN MUTATES. SPEC section 9's
+ * modes differ only in the clock, the goal target and the opening side, and
+ * SPEC section 7 configures a match in MENU. The `configure` intent applies
+ * those three from MENU and nowhere else. The goal target is fixed at the
+ * scoreboard's construction, so a new configuration builds a new scoreboard
+ * and a new simulation around it; both are handed THE SAME WORLD the match was
+ * built with, so `match.world` is one object for the life of the game and the
+ * pointer input, the renderer and the effects layer keep the reference they
+ * took at mount. A second way to set the target on a live scoreboard would be
+ * a second place for SPEC section 9's number to be wrong.
  */
 
 import type { World } from './bodies';
-import { everyBodyStopped, launch } from './bodies';
+import { createWorld, everyBodyStopped, launch } from './bodies';
 import { OPPONENT_PRELAUNCH_DELAY, launchSpeed } from './config';
 import type { Goal, Scoring, ScoringOptions, ScoringReadout, Side } from './goals';
 import { createScoring } from './goals';
@@ -85,9 +96,16 @@ export type MatchIntent =
   | { readonly kind: 'launch'; readonly angle: number; readonly power: number }
   | { readonly kind: 'pause' }
   | { readonly kind: 'resume' }
-  | { readonly kind: 'quit' };
+  | { readonly kind: 'quit' }
+  | { readonly kind: 'configure'; readonly configuration: MatchConfiguration };
 
-export interface MatchOptions {
+/**
+ * The numbers a mode gives a match, which is everything SPEC section 9 varies
+ * between the four of them. Separated from the construction options because a
+ * mode menu changes them between matches and the finiteness policy is a
+ * property of the build rather than of the mode.
+ */
+export interface MatchConfiguration {
   /**
    * The full match length in seconds. Omitted, the match has no clock and
    * never times out, which is SPEC section 9's First-to-N and Hotseat case.
@@ -97,9 +115,12 @@ export interface MatchOptions {
   readonly first?: Side;
   /**
    * SPEC section 9's First to N, forwarded to the scoreboard whose `over`
-   * carries it. The modes that would choose a value are PF-9's.
+   * carries it. The modes that choose a value are `core/modes.ts`'s.
    */
   readonly target?: number;
+}
+
+export interface MatchOptions extends MatchConfiguration {
   /**
    * The finiteness policy, forwarded to the simulation this match builds.
    * Defaults to `throw`; only a composition root passes `repair`.
@@ -119,6 +140,13 @@ export interface MatchReadout {
   readonly opponentReady: boolean;
   /** The scoreboard: both scores, the goals, the last goal, `over`. */
   readonly scoring: ScoringReadout;
+  /**
+   * SPEC section 9's First-to-N target in force, absent in a match with no
+   * target. It rides the readout because SPEC section 12's centre slot is
+   * derived from the readout and from nothing else, so a mode change reaches
+   * the HUD by the one route every other match fact already takes.
+   */
+  readonly target?: number;
 }
 
 export interface Match {
@@ -142,22 +170,54 @@ export interface Match {
  * option is absent rather than undefined, which is what the scoreboard's own
  * defaults are for and what `exactOptionalPropertyTypes` asks of a pass-through.
  */
-function forwardedScoring(options: MatchOptions): ScoringOptions {
+function forwardedScoring(configuration: MatchConfiguration): ScoringOptions {
   const chosen: { first?: Side; target?: number } = {};
-  if (options.first !== undefined) {
-    chosen.first = options.first;
+  if (configuration.first !== undefined) {
+    chosen.first = configuration.first;
   }
-  if (options.target !== undefined) {
-    chosen.target = options.target;
+  if (configuration.target !== undefined) {
+    chosen.target = configuration.target;
   }
   return chosen;
 }
 
-/** The one simulation option a match owns besides its own scoreboard. */
-function forwardedSimulation(scoring: Scoring, options: MatchOptions): SimulationOptions {
-  const chosen: { scoring: Scoring; onNonFinite?: NonFinitePolicy } = { scoring };
+/**
+ * The simulation options a match owns besides its own scoreboard.
+ *
+ * THE WORLD IS PASSED IN, AND IT IS THE SAME ONE EVERY TIME. A mode change
+ * rebuilds the scoreboard, because SPEC section 9's First-to-N target is
+ * fixed at the scoreboard's construction, and rebuilding the scoreboard means
+ * rebuilding the simulation around it. Handing both the world the match was
+ * built with keeps `match.world` one object for the life of the game, which is
+ * what lets the pointer input, the renderer and the effects layer hold their
+ * reference from mount to teardown (DESIGN section 8).
+ */
+function forwardedSimulation(
+  world: World,
+  scoring: Scoring,
+  options: MatchOptions,
+): SimulationOptions {
+  const chosen: { world: World; scoring: Scoring; onNonFinite?: NonFinitePolicy } = {
+    world,
+    scoring,
+  };
   if (options.onNonFinite !== undefined) {
     chosen.onNonFinite = options.onNonFinite;
+  }
+  return chosen;
+}
+
+/** A configuration copy with absent fields absent, never undefined. */
+function configurationOf(source: MatchConfiguration): MatchConfiguration {
+  const chosen: { duration?: number; first?: Side; target?: number } = {};
+  if (source.duration !== undefined) {
+    chosen.duration = source.duration;
+  }
+  if (source.first !== undefined) {
+    chosen.first = source.first;
+  }
+  if (source.target !== undefined) {
+    chosen.target = source.target;
   }
   return chosen;
 }
@@ -187,12 +247,15 @@ function other(side: Side): Side {
 }
 
 export function createMatch(options: MatchOptions = {}): Match {
-  const scoring = createScoring(forwardedScoring(options));
-  const sim = createSimulation(forwardedSimulation(scoring, options));
+  // The one world this match plays on, whatever it is later configured to be.
+  const world = createWorld();
+  let configured = configurationOf(options);
+  let scoring = createScoring(forwardedScoring(configured));
+  let sim = createSimulation(forwardedSimulation(world, scoring, options));
 
   // The match clock: exact seconds remaining, or no clock at all, which is
   // what `undefined` means and what the update below tests for.
-  let remaining = options.duration;
+  let remaining = configured.duration;
   let state: MatchState = { kind: 'MENU' };
   let opponentDelay = 0;
   let opponentReady = false;
@@ -307,6 +370,24 @@ export function createMatch(options: MatchOptions = {}): Match {
   }
 
   function dispatch(intent: MatchIntent): void {
+    if (intent.kind === 'configure') {
+      // SPEC section 9: the mode's numbers, applied from MENU, which is where
+      // SPEC section 7 says a match is configured. The scoreboard is rebuilt
+      // rather than mutated because its target is fixed at construction and a
+      // second way to set it would be a second place for it to be wrong; the
+      // world is the same object either way, so nothing that holds a
+      // reference to it is invalidated by a mode change.
+      if (state.kind === 'MENU') {
+        configured = configurationOf(intent.configuration);
+        scoring = createScoring(forwardedScoring(configured));
+        sim = createSimulation(forwardedSimulation(world, scoring, options));
+        putBack();
+        remaining = configured.duration;
+        opponentDelay = 0;
+        opponentReady = false;
+      }
+      return;
+    }
     if (intent.kind === 'start') {
       // MENU is where a match is configured (SPEC section 7); starting applies
       // the configuration to a fresh match, which is a restart plus the
@@ -353,21 +434,35 @@ export function createMatch(options: MatchOptions = {}): Match {
       }
       return;
     }
-    // quit, SPEC section 7's other way out of PAUSED.
-    if (state.kind === 'PAUSED') {
+    // quit, SPEC section 7's other way out of PAUSED, and SPEC section 13's
+    // Change mode out of GAME_OVER. The second edge is the one PF-13 named
+    // and deliberately left unwired: its panel offers Change mode, and a
+    // button whose intent no state accepts is the dishonesty that part
+    // refused to ship. Nothing is reset here; the configuration that follows
+    // in MENU is what puts the match back.
+    if (state.kind === 'PAUSED' || state.kind === 'GAME_OVER') {
       state = { kind: 'MENU' };
     }
   }
 
-  function restart(): void {
-    // THE RESTART ORDER: the world goes back first, so that the scoreboard
-    // reset below can never hand the next step a ball still lying in the net.
+  /**
+   * THE RESTART ORDER, in the one place both callers take it: the world goes
+   * back first, so that the scoreboard reset can never hand the next step a
+   * ball still lying in the net. A restart and a mode change are the two ways
+   * a match is put back, and one order serves both.
+   */
+  function putBack(): void {
     sim.reset();
     scoring.reset();
-    // A fresh match: the full clock, no opponent wait, and the turn order back
-    // to the opening side. Nothing is rebuilt; every object above is the one
-    // the match was constructed with (SPEC section 13).
-    remaining = options.duration;
+  }
+
+  function restart(): void {
+    putBack();
+    // A fresh match: the full clock of the mode in force, no opponent wait,
+    // and the turn order back to the opening side. Nothing is rebuilt; every
+    // object above is the one the match is currently configured with (SPEC
+    // section 13).
+    remaining = configured.duration;
     opponentDelay = 0;
     opponentReady = false;
     if (state.kind !== 'MENU') {
@@ -378,16 +473,26 @@ export function createMatch(options: MatchOptions = {}): Match {
   }
 
   function readout(): MatchReadout {
-    return {
+    const reading: {
+      state: MatchState;
+      clock: number | undefined;
+      opponentReady: boolean;
+      scoring: ScoringReadout;
+      target?: number;
+    } = {
       state,
       clock: remaining,
       opponentReady,
       scoring: sim.scoring.readout(),
     };
+    if (configured.target !== undefined) {
+      reading.target = configured.target;
+    }
+    return reading;
   }
 
   return {
-    world: sim.world,
+    world,
     update,
     dispatch,
     restart,

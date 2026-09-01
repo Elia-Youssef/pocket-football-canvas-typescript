@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { startMatch } from './support/game';
+
 /**
  * Item C12, method T, evidence `playwright/keyboard`:
  *
@@ -178,7 +180,7 @@ test.describe('PF-6 keyboard operation, item C12', () => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });
@@ -329,7 +331,12 @@ test.describe('PF-6 keyboard operation, item C12', () => {
     await page.keyboard.press('Enter');
     await expect(page.locator('[data-pf="turn"]')).toHaveText('IN PLAY', SETTLE);
     changes.push(await activeMarker(page));
-    await expect(page.locator('[data-pf="turn"]')).toHaveText('OPPONENT IS AIMING', SETTLE);
+    // The turn passing out of play, whichever state it has reached by the time
+    // this reads: from PF-9 the opponent answers its own turn and hands the
+    // match back by itself, so naming one of the states it passes through
+    // would be racing the game rather than sampling it. What this test is
+    // about is where focus is after a state change, and any of them is one.
+    await expect(page.locator('[data-pf="turn"]')).not.toHaveText('IN PLAY', SETTLE);
     changes.push(await activeMarker(page));
     // Both sinks, not just one: an element removed under a focused control
     // drops focus on the body in most engines and on the root element in
@@ -352,7 +359,7 @@ test.describe('PF-6 keyboard operation, item C12', () => {
   test('measures the focus ring at every stop, in both themes', async ({ page }) => {
     for (const theme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme: theme });
-      await page.goto('/');
+      await startMatch(page);
       await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
       const rings: Ring[] = [];
       for (const marker of TAB_ORDER) {

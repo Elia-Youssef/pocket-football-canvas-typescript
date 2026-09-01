@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { advance, startMatch } from './support/game';
+
 /**
  * Item G5, method T, evidence `playwright/keyboard-aim`:
  *
@@ -36,14 +38,14 @@ import type { Page } from '@playwright/test';
  * canvas back both times, so "one presentation path" is measured on the
  * surface rather than inferred from the source.
  *
- * A FULL MATCH WITH NO POINTER is played to full time in
- * tests/unit/discrete-aim.test.ts, over these same modules, because the
- * composition root builds a match with no clock and no goal target and nothing
- * answers the opponent's seam, so a browser match parks after the first shot.
- * What is driven here is the complete keyboard turn over the built bundle. The
- * split is disclosed in this part's report and RE-HOMES AT PF-9, which owns
- * the modes and the opponent driver together; it is not a claim that this file
- * already covers it.
+ * A FULL MATCH WITH NO POINTER is driven here from PF-9, in the last test. It
+ * could not be until then: the composition root built a match with no clock
+ * and no goal target and nothing answered the opponent's seam, so a browser
+ * match parked after the first shot and the many-turn run was graded over the
+ * same modules in tests/unit/discrete-aim.test.ts with the split disclosed.
+ * That unit-layer run stays where it is, because it drives the model at frame
+ * rates and on unstable clocks no browser lets a test choose; what is added
+ * here is the claim the criterion actually makes, over the built bundle.
  */
 
 const SETTLE = { timeout: 120_000 };
@@ -430,7 +432,7 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });
@@ -638,7 +640,7 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     // browser would actually do. Without it "the page did not scroll" is
     // satisfied by a page that could not scroll anyway.
     await page.setViewportSize({ width: 700, height: 400 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
     const scrollable = await page.evaluate(
@@ -762,7 +764,7 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     // The same aim as a drag. Sixty percent of the power scale is a drag of
     // 120 design units, and pulling back along the pitch aims down it, so the
     // two models are being asked for exactly the same shot.
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
     await captureBaseline(page);
@@ -788,5 +790,57 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     // of the way from the 30 unit minimum to the 180 unit maximum is 120.
     expect(byKey.furthest).toBeGreaterThan(110);
     expect(byKey.furthest).toBeLessThan(140);
+  });
+  test('plays a FULL match with no pointer at all', { tag: '@drive' }, async ({ page }) => {
+    test.setTimeout(A_WHOLE_TEST);
+    // The criterion's last sentence, over the built bundle. The clock is the
+    // test's own from before the navigation, so a whole 60 second Quick Match
+    // is a few hundred frames of a quarter of a second; every frame is exactly
+    // QUALITY-BAR section 7's ceiling, so the simulation consumes all of it.
+    await page.clock.install({ time: 0 });
+    await startMatch(page, { mode: 'quick', duration: 60 });
+
+    // Every pointer event that reaches the surface, counted, so "no pointer at
+    // all" is a property the test can be held to rather than a sentence.
+    await page.evaluate(() => {
+      const canvas = document.querySelector('[data-pf="play-surface"]');
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error('the play surface is not in the document');
+      }
+      const store = window as unknown as { __pfPointers?: string[] };
+      store.__pfPointers = [];
+      for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+        canvas.addEventListener(
+          type,
+          () => {
+            store.__pfPointers?.push(type);
+          },
+          true,
+        );
+      }
+    });
+
+    await focusSurface(page);
+    let turns = 0;
+    for (let frame = 0; frame < 400; frame += 1) {
+      await advance(page, 1);
+      const state = (await page.locator('[data-pf="turn"]').textContent()) ?? '';
+      if (state === 'FULL TIME') {
+        break;
+      }
+      if (state === 'YOUR TURN') {
+        await page.keyboard.press('ArrowUp');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press(' ');
+        turns += 1;
+      }
+    }
+    await expect(page.locator('[data-pf="turn"]')).toHaveText('FULL TIME', SETTLE);
+    // Several complete turn cycles, not one.
+    expect(turns).toBeGreaterThanOrEqual(3);
+    const seen = await page.evaluate(
+      () => (window as unknown as { __pfPointers?: string[] }).__pfPointers ?? [],
+    );
+    expect(seen).toEqual([]);
   });
 });

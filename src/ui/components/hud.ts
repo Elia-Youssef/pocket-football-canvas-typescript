@@ -51,6 +51,13 @@ export interface Hud {
   /** The ladder readout: opponent name and rung, or nothing without one. */
   showLadder(name: string, position: number, total: number): void;
   clearLadder(): void;
+  /**
+   * The names the turn indicator uses, which SPEC section 9's modes supply:
+   * the ladder rung's name for the opponent, and in Hotseat a name for the
+   * player's own side as well, because both sides are humans there and
+   * "YOUR TURN" names neither of them.
+   */
+  setNames(opponent: string, player?: string): void;
 }
 
 /** The states the match accepts a pause intent from, and the control with it. */
@@ -65,15 +72,26 @@ const PAUSABLE: readonly MatchState['kind'][] = [
  * The turn indicator's line: the side to act and the state, in that order.
  * KICKOFF never reaches a readout (PF-7 routes it inside the update that
  * enters it) but the switch is total over the chart regardless.
+ *
+ * THE PLAYER'S OWN SIDE IS NAMED ONLY WHERE A MODE NAMES IT. SPEC section 9's
+ * Hotseat is two humans, so "YOUR TURN" would name whichever of them is not
+ * holding the device; given a name, the player's turn reads the same way the
+ * opponent's already does.
  */
-export function turnIndicatorText(state: MatchState, opponentName: string): string {
+export function turnIndicatorText(
+  state: MatchState,
+  opponentName: string,
+  playerName?: string,
+): string {
   switch (state.kind) {
     case 'MENU':
       return 'MENU';
     case 'KICKOFF':
       return 'KICKOFF';
     case 'PLAYER_TURN':
-      return 'YOUR TURN';
+      return playerName === undefined
+        ? 'YOUR TURN'
+        : `${playerName.toUpperCase()} IS AIMING`;
     case 'OPPONENT_TURN':
       return `${opponentName.toUpperCase()} IS AIMING`;
     case 'MOVING':
@@ -95,7 +113,8 @@ function span(marker: string, className: string): HTMLSpanElement {
 }
 
 export function createHud(options: HudOptions): Hud {
-  const opponentName = options.opponentName ?? 'OPPONENT';
+  let opponentName = options.opponentName ?? 'OPPONENT';
+  let playerName: string | undefined;
 
   const root = document.createElement('div');
   root.className = 'pf-hud';
@@ -141,8 +160,12 @@ export function createHud(options: HudOptions): Hud {
       return;
     }
     clock.hidden = true;
-    if (options.target !== undefined) {
-      targetLine.textContent = `FIRST TO ${formatNumber(options.target)}`;
+    // The target rides the readout, which is what lets a mode change reach the
+    // centre slot by the one route every other match fact takes; the
+    // construction option is the fallback for a composition that has no modes.
+    const target = readout.target ?? options.target;
+    if (target !== undefined) {
+      targetLine.textContent = `FIRST TO ${formatNumber(target)}`;
       targetLine.hidden = false;
     } else {
       targetLine.hidden = true;
@@ -161,7 +184,7 @@ export function createHud(options: HudOptions): Hud {
       playerScore.textContent = formatNumber(readout.scoring.player);
       opponentScore.textContent = formatNumber(readout.scoring.opponent);
       updateCentre(readout);
-      turn.textContent = turnIndicatorText(readout.state, opponentName);
+      turn.textContent = turnIndicatorText(readout.state, opponentName, playerName);
       const pausable = PAUSABLE.includes(readout.state.kind);
       pause.setAttribute('aria-disabled', pausable ? 'false' : 'true');
     },
@@ -172,6 +195,11 @@ export function createHud(options: HudOptions): Hud {
 
     clearLadder(): void {
       ladder.textContent = '';
+    },
+
+    setNames(opponent: string, player?: string): void {
+      opponentName = opponent;
+      playerName = player;
     },
   };
 }
