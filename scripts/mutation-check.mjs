@@ -2970,12 +2970,19 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C5',
     name: 'no chrome rule gives the play surface a box of its own',
     file: 'src/ui/components/chrome.css',
-    find: '.pf-hud {',
+    // RE-POINTED at PF-14, protection identical. The anchor was `.pf-hud {`,
+    // which the responsive arrangement made three matches: the base rule, the
+    // sticky rule and the compact one. It is now the base rule's own opening
+    // pair of lines, which is the same place in the file and inserts the same
+    // rule ahead of it.
+    find: `.pf-hud {
+  display: flex;`,
     replace: `[data-pf='play-surface'] {
   border: var(--border-thin) solid var(--pf-text);
 }
 
-.pf-hud {`,
+.pf-hud {
+  display: flex;`,
     detectedBy: 'browser',
   },
   // ---------------------------------------------------------------------
@@ -5014,6 +5021,511 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     find: '      matchesPlayed: data.counters.matchesPlayed + 1,',
     replace: '      matchesPlayed: data.counters.matchesPlayed,',
     detectedBy: 'unit',
+  },
+  // ---------------------------------------------------------------------
+  // PF-14. QUALITY-BAR section 5's four breakpoints, SPEC section 2.1's
+  // letterbox and its hint, QUALITY-BAR section 4's play-surface size and the
+  // safe-area insets. Items F1 to F7.
+  //
+  // BROWSER ENTRIES ARE THE LAST RESORT AND FOUR OF THEM EARN IT. All four
+  // are a round trip through the stored document: a value written at the
+  // moment the player changes it and read back on the next load. A source tie
+  // would prove the line reads a certain way and nothing about whether the
+  // document carries it, so the browser is the honest detector there.
+  //
+  // EVERYTHING ELSE IS TIED INSTEAD, including the composition root's own
+  // wiring: tests/unit/responsive-chrome.test.ts reads src/main.ts as text and
+  // holds the class names, the attribute names AND the values every ternary
+  // chooses against the stylesheet that answers them. A tie is weaker evidence
+  // than a behaviour test and it is not offered as a substitute for one: the
+  // browser specs grade the behaviour regardless. What it buys is an entry
+  // that costs three seconds rather than a build and a Playwright pass, which
+  // is what the last-resort rule asks for.
+  // ---------------------------------------------------------------------
+  {
+    item: 'F1',
+    name: 'the wide breakpoint begins at the width the document gives it',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const WIDE_MIN_WIDTH = 1024;',
+    replace: 'export const WIDE_MIN_WIDTH = 1023;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'the medium breakpoint begins at the width the document gives it',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const MEDIUM_MIN_WIDTH = 768;',
+    replace: 'export const MEDIUM_MIN_WIDTH = 767;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'the breakpoints resolve by width before orientation',
+    file: 'src/ui/breakpoints.ts',
+    find: '  if (width >= WIDE_MIN_WIDTH) {',
+    replace: '  if (width >= WIDE_MIN_WIDTH && height < width) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'a square viewport is portrait, as the platform reads it',
+    file: 'src/ui/breakpoints.ts',
+    find: "  return height >= width ? 'portrait' : 'compact';",
+    replace: "  return height > width ? 'portrait' : 'compact';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'the root asks for the breakpoint by width and then by height',
+    file: 'src/main.ts',
+    find: 'breakpointFor(window.innerWidth, window.innerHeight)',
+    replace: 'breakpointFor(window.innerHeight, window.innerWidth)',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'the HUD wraps rather than overflowing a narrow viewport',
+    file: 'src/ui/components/chrome.css',
+    find: `.pf-hud {
+  display: flex;
+  flex-wrap: wrap;`,
+    replace: `.pf-hud {
+  display: flex;
+  flex-wrap: nowrap;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F2',
+    name: 'the aim row wraps rather than overflowing a narrow viewport',
+    file: 'src/ui/components/chrome.css',
+    find: `.pf-aim-row:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;`,
+    replace: `.pf-aim-row:not([hidden]) {
+  display: flex;
+  flex-wrap: nowrap;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the sticky threshold is the height the document gives it',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const STICKY_MIN_HEIGHT = 400;',
+    replace: 'export const STICKY_MIN_HEIGHT = 360;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the bars stay stuck AT the threshold and unstick below it',
+    file: 'src/ui/breakpoints.ts',
+    find: '  return height >= STICKY_MIN_HEIGHT;',
+    replace: '  return height > STICKY_MIN_HEIGHT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the HUD sticks to the top while the bars are stuck',
+    file: 'src/ui/components/chrome.css',
+    find: `:root[data-pf-bars='sticky'] .pf-hud {
+  position: sticky;`,
+    replace: `:root[data-pf-bars='sticky'] .pf-hud {
+  position: static;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the aim bar sticks to the bottom and not to the top',
+    file: 'src/ui/components/chrome.css',
+    find: '  inset-block-end: 0;',
+    replace: '  inset-block-start: 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the stage takes a viewport of its own once the bars unstick',
+    file: 'src/ui/components/chrome.css',
+    find: ":root[data-pf-bars='static'] .pf-stage {",
+    replace: ":root[data-pf-bars='sticky'] .pf-stage {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the fit is the smaller of what the width and the height allow',
+    file: 'src/render/surface.ts',
+    find: '  const base = Math.min(availableWidth, byHeight);',
+    replace: '  const base = availableWidth;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the height s own limit is derived through the logical aspect',
+    file: 'src/render/surface.ts',
+    find: '  const byHeight = (availableHeight * LOGICAL_WIDTH) / LOGICAL_HEIGHT;',
+    replace: '  const byHeight = (availableHeight * LOGICAL_HEIGHT) / LOGICAL_WIDTH;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the fitted width is floored to a whole css pixel',
+    file: 'src/render/surface.ts',
+    find: '  const whole = Number.isFinite(base) ? Math.floor(base) : 0;',
+    replace: '  const whole = Number.isFinite(base) ? base : 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the size setting is the percent it names',
+    file: 'src/render/surface.ts',
+    find: '  return sizePercent / 100;',
+    replace: '  return sizePercent / 200;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the base is floored BEFORE the size factor is applied',
+    file: 'src/render/surface.ts',
+    find: '  return Math.max(1, whole) * surfaceFactor(sizePercent);',
+    replace: '  return Math.max(1, Math.floor(base * surfaceFactor(sizePercent)));',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the overflow question is answered for the down axis',
+    file: 'src/render/surface.ts',
+    find: '    down: cssHeightFor(cssWidth) > availableHeight,',
+    replace: '    down: false,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the overflow question is answered for the across axis',
+    file: 'src/render/surface.ts',
+    find: '    across: cssWidth > availableWidth,',
+    replace: '    across: false,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the two axes are answered separately and not by one boolean',
+    file: 'src/render/surface.ts',
+    find: `    across: cssWidth > availableWidth,
+    down: cssHeightFor(cssWidth) > availableHeight,`,
+    replace: `    across: cssWidth > availableWidth || cssHeightFor(cssWidth) > availableHeight,
+    down: cssWidth > availableWidth || cssHeightFor(cssWidth) > availableHeight,`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the frame anchors the across axis only where it overflows',
+    file: 'src/main.ts',
+    find: "    frame.dataset['pfFitX'] = over.across ? 'over' : 'fit';",
+    replace: "    frame.dataset['pfFitX'] = over.across ? 'fit' : 'over';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the frame anchors the down axis only where it overflows',
+    file: 'src/main.ts',
+    find: "    frame.dataset['pfFitY'] = over.down ? 'over' : 'fit';",
+    replace: "    frame.dataset['pfFitY'] = over.down ? 'fit' : 'over';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F7',
+    name: 'the bars are told to stick above the threshold and not below it',
+    file: 'src/main.ts',
+    find: "  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';",
+    replace: "  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'static' : 'sticky';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a magnified frame follows the play, which no gesture can pan',
+    file: 'src/main.ts',
+    find: `    frame.scrollLeft = at.left;
+    frame.scrollTop = at.top;`,
+    replace: '    void at;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the frame watches the launcher while an aim can be taken',
+    file: 'src/main.ts',
+    find: '    const watched = input.allowed() ? context.aimWorld.player : world.ball;',
+    replace: '    const watched = world.ball;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a design point is centred in the frame through the one transform',
+    file: 'src/render/surface.ts',
+    find: '    left: designX * cssPerUnit - viewWidth / 2,',
+    replace: '    left: designX * cssPerUnit,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the follow scroll carries the y flip the draw transform carries',
+    file: 'src/render/surface.ts',
+    find: '    top: (LOGICAL_HEIGHT - designY) * cssPerUnit - viewHeight / 2,',
+    replace: '    top: designY * cssPerUnit - viewHeight / 2,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a magnified across axis is anchored rather than centred',
+    file: 'src/ui/components/chrome.css',
+    find: `.pf-play-frame[data-pf-fit-x='over'] {
+  justify-content: start;`,
+    replace: `.pf-play-frame[data-pf-fit-x='over'] {
+  justify-content: center;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a magnified down axis is anchored rather than centred',
+    file: 'src/ui/components/chrome.css',
+    find: `.pf-play-frame[data-pf-fit-y='over'] {
+  align-content: start;`,
+    replace: `.pf-play-frame[data-pf-fit-y='over'] {
+  align-content: center;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the play frame is what a magnified across axis overflows into',
+    file: 'src/ui/components/chrome.css',
+    find: '  overflow-x: auto;',
+    replace: '  overflow-x: hidden;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the play frame is what a magnified down axis overflows into',
+    file: 'src/ui/components/chrome.css',
+    find: `  align-content: start;
+  overflow-y: auto;`,
+    replace: `  align-content: start;
+  overflow-y: hidden;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F1',
+    name: 'a fitted surface is centred in both axes, so the bands are even',
+    file: 'src/ui/components/chrome.css',
+    find: `  justify-content: center;
+  align-content: center;
+  overflow: hidden;`,
+    replace: `  justify-content: start;
+  align-content: center;
+  overflow: hidden;`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the size control offers every size the stored settings name',
+    file: 'src/ui/components/settings-panel.ts',
+    find: '  for (const percent of SURFACE_SCALES) {',
+    replace: '  for (const percent of SURFACE_SCALES.slice(1)) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the size control is named by the percent it carries',
+    file: 'src/ui/components/settings-panel.ts',
+    find: "    radio.setAttribute('aria-label', `${String(percent)}%`);",
+    replace: "    radio.setAttribute('aria-label', String(percent));",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'only the radio that was checked raises a size change',
+    file: 'src/ui/components/settings-panel.ts',
+    find: `      if (radio.checked) {
+        options.onSurfaceScaleChange(percent);
+      }`,
+    replace: '      options.onSurfaceScaleChange(percent);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the size control opens on the stored value',
+    file: 'src/ui/layout.ts',
+    find: '  settings.selectSurfaceScale(options.initialSurfaceScale ?? NEW_SURFACE_SCALE);',
+    replace: '  settings.selectSurfaceScale(NEW_SURFACE_SCALE);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a reset checks the size a new player gets',
+    file: 'src/ui/layout.ts',
+    find: '      settings.selectSurfaceScale(NEW_SURFACE_SCALE);',
+    replace: '      settings.selectSurfaceScale(200);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'a reset raises the size a new player gets, so the pitch follows',
+    file: 'src/ui/layout.ts',
+    find: '      options.onSurfaceScaleChange?.(NEW_SURFACE_SCALE);',
+    replace: '      options.onSurfaceScaleChange?.(200);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the hint is put away by its own control',
+    file: 'src/ui/components/portrait-hint.ts',
+    find: `    root.hidden = true;
+    options.onDismiss();`,
+    replace: '    options.onDismiss();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the hint opens on the dismissal it was handed',
+    file: 'src/ui/layout.ts',
+    find: '  hint.setDismissed(options.hintDismissed ?? false);',
+    replace: '  hint.setDismissed(false);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the hint takes its own row between the HUD and the pitch',
+    file: 'src/ui/layout.ts',
+    find: `  host.insertBefore(hint.root, host.firstChild);
+  host.insertBefore(hud.root, hint.root);`,
+    replace: `  host.insertBefore(hud.root, host.firstChild);
+  host.append(hint.root);`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the hint is shown at the portrait breakpoint and at no other',
+    file: 'src/ui/components/chrome.css',
+    find: ":root[data-pf-breakpoint='portrait'] .pf-portrait-hint:not([hidden]) {",
+    replace: ":root[data-pf-breakpoint='compact'] .pf-portrait-hint:not([hidden]) {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'a reset brings the hint back',
+    file: 'src/ui/layout.ts',
+    find: '      hint.setDismissed(false);',
+    replace: '      hint.isDismissed();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'the progress record answers for the hint s dismissal',
+    file: 'src/core/modes.ts',
+    find: '    rotateHintDismissed: rotate === true,',
+    replace: '    rotateHintDismissed: false,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F3',
+    name: 'a player who has never opened the game has dismissed nothing',
+    file: 'src/core/modes.ts',
+    find: `  howToDismissed: false,
+  rotateHintDismissed: false,`,
+    replace: `  howToDismissed: false,
+  rotateHintDismissed: true,`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F4',
+    name: 'all four safe-area insets are read from the platform',
+    file: 'src/ui/components/chrome.css',
+    find: '  --pf-safe-top: env(safe-area-inset-top);',
+    replace: '  --pf-safe-top: env(safe-area-inset-bottom);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F4',
+    name: 'the top bar adds the top inset, so no control sits under a notch',
+    file: 'src/ui/components/chrome.css',
+    find: '  padding-block: calc(var(--space-2) + var(--pf-safe-top)) var(--space-2);',
+    replace: '  padding-block: var(--space-2);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F4',
+    name: 'the bottom bar adds the bottom inset, for the home indicator',
+    file: 'src/ui/components/chrome.css',
+    find: '  padding-block: var(--space-2) calc(var(--space-2) + var(--pf-safe-bottom));',
+    replace: '  padding-block: var(--space-2);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F4',
+    name: 'the overlays add the insets as well as the bars',
+    file: 'src/ui/components/chrome.css',
+    find: `  padding-block: calc(var(--space-4) + var(--pf-safe-top))
+    calc(var(--space-4) + var(--pf-safe-bottom));`,
+    replace: '  padding-block: var(--space-4);',
+    detectedBy: 'unit',
+  },
+  {
+    // The cheap seam the directive asks for, rather than a browser run: the
+    // unit suite ties this call as source, so both arguments are protected
+    // without a build and a Playwright pass. The BEHAVIOUR is graded in
+    // tests/browser/breakpoints.spec.ts and surface-scale.spec.ts either way.
+    item: 'F3',
+    name: 'the fit is given the height of the box it is fitted into',
+    file: 'src/main.ts',
+    find: '    const cssWidth = fitCssWidth(width, height, sizePercent);',
+    replace: '    const cssWidth = fitCssWidth(width, height * 100, sizePercent);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'F6',
+    name: 'the size setting reaches the fit',
+    file: 'src/main.ts',
+    find: '    const cssWidth = fitCssWidth(width, height, sizePercent);',
+    replace: '    const cssWidth = fitCssWidth(width, height, 100);',
+    detectedBy: 'unit',
+  },
+  {
+    // BROWSER: a settings write is a composition-root decision about WHEN the
+    // document is written, and SPEC section 16 allows exactly this moment.
+    item: 'F6',
+    name: 'a size change is written to the stored document',
+    file: 'src/main.ts',
+    find:
+      '      store.save({ ...stored, settings: { ...stored.settings, surfaceScale: percent } });',
+    replace: '      void stored;',
+    detectedBy: 'browser',
+  },
+  {
+    // BROWSER: the other half of the same handler, and a different property.
+    // Without it the size is stored and not applied until the next resize.
+    item: 'F6',
+    name: 'a size change is applied to the pitch at the moment it is made',
+    file: 'src/main.ts',
+    find: '      play.setScale(percent);',
+    replace: '      void percent;',
+    detectedBy: 'browser',
+  },
+  {
+    // BROWSER: the hint's dismissal reaches the stored document through the
+    // progress seam. The unit layer sees the chrome raise it and the store
+    // round-trip it; only a mounted root joins the two.
+    item: 'F3',
+    name: 'the hint s dismissal is written to the stored document',
+    file: 'src/main.ts',
+    find: '      progress.write({ ...progress.read(), rotateHintDismissed: true });',
+    replace: '      progress.read();',
+    detectedBy: 'browser',
+  },
+  {
+    // BROWSER: and the read back, which is what makes the dismissal outlive
+    // the session rather than the tab.
+    item: 'F3',
+    name: 'the hint opens on the dismissal the stored document holds',
+    file: 'src/main.ts',
+    find: '    hintDismissed: progress.read().rotateHintDismissed,',
+    replace: '    hintDismissed: false,',
+    detectedBy: 'browser',
   },
 ];
 

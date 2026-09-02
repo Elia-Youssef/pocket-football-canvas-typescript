@@ -51,11 +51,19 @@ import type { Effects } from './render/effects';
 import { kickoffFacing } from './render/entities';
 import type { Facing } from './render/entities';
 import { attachAimInput } from './render/input';
-import { createSurface, resizeSurface, watchDeviceRatio } from './render/surface';
+import {
+  createSurface,
+  fitCssWidth,
+  resizeSurface,
+  scrollToCentre,
+  surfaceOverflow,
+  watchDeviceRatio,
+} from './render/surface';
 import { drawFrame } from './render/pitch';
 import type { FrameOptions, PitchCacheCell } from './render/pitch';
 import { pitchFor } from './render/tokens';
 import type { Theme } from './render/tokens';
+import { barsStick, breakpointFor } from './ui/breakpoints';
 import { createAimControls } from './ui/components/aim-controls';
 import type { GameOverContext } from './ui/components/game-over-panel';
 import { mountChrome } from './ui/layout';
@@ -162,6 +170,29 @@ function openStorage(): KeyValueStore {
   return window.localStorage;
 }
 
+/**
+ * QUALITY-BAR section 5's breakpoint and its sticky-bar rule, resolved here
+ * and written onto the root element where the stylesheet selects on them.
+ *
+ * THE NUMBERS LIVE IN ONE PLACE AND IT IS NOT THE STYLESHEET. `ui/breakpoints`
+ * owns the three thresholds and a unit test holds them against the copy of
+ * QUALITY-BAR section 5's own table in the design contract; a media query
+ * would carry the same numbers as literals nothing can read back. What the
+ * stylesheet gets is the answer, so it carries arrangement and no thresholds.
+ *
+ * The window is the one thing that can answer this and the one thing no module
+ * below the root may ask, which is why the read is here. It is taken on every
+ * refit rather than on a listener of its own: the play surface's own resize
+ * observer already fires on the box changes an orientation change, a window
+ * resize and this attribute's own effect all produce, so a second listener
+ * would be a second answer to the same question.
+ */
+function applyViewport(): void {
+  const root = document.documentElement;
+  root.dataset['pfBreakpoint'] = breakpointFor(window.innerWidth, window.innerHeight);
+  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';
+}
+
 export function boot(): void {
   document.documentElement.dataset['game'] = GAME_ID;
 }
@@ -180,6 +211,8 @@ interface PlayContext {
   readonly onPause: () => void;
   /** SPEC section 14's motion set for the match in force, or none yet. */
   readonly effects: () => Effects | undefined;
+  /** QUALITY-BAR section 4's play-surface size, as the store left it. */
+  readonly initialSurfaceScale: number;
 }
 
 /**
@@ -266,6 +299,23 @@ function startFrameDriver(step: (delta: number) => void): void {
  * or the device pixel ratio changes and at no other moment, because assigning
  * a canvas width reallocates and clears it; the frame driver only draws.
  *
+ * THE STAGE IS THE BOX THE PITCH IS FITTED INTO, and it exists so that the
+ * measurement is stable. It is the flex row between the two chrome bars, so
+ * its size is decided by the layout above it and never by what is inside it;
+ * the frame fills it absolutely and is where a magnified surface overflows, so
+ * a scrollbar raised inside the frame cannot change the box the fit was
+ * computed from. SPEC section 2.1's letterbox is the difference between the
+ * two: the surface takes the largest 1280 x 720 box the stage allows and is
+ * centred in it, and the bands are whatever is left in the axis that did not
+ * bind.
+ *
+ * THE SIZE SETTING MULTIPLIES THE CSS BOX AND NOTHING ELSE. `resizeSurface`
+ * still takes one CSS width and derives everything from it, so the logical
+ * space is untouched at every setting and SPEC section 6.1's drag constants
+ * keep their meaning; what changes is how many CSS pixels one design unit is
+ * drawn across, which is exactly what QUALITY-BAR section 4 asks the setting
+ * to do and what browser zoom cannot.
+ *
  * The palette is read per frame rather than at mount, so a theme override from
  * the settings control re-renders the pitch in the variant the chrome has just
  * adopted; with no override the read lands on the same query the stylesheet
@@ -278,15 +328,24 @@ function startFrameDriver(step: (delta: number) => void): void {
 function mountPlaySurface(
   host: HTMLElement,
   context: PlayContext,
-): { render: () => void; refresh: (elapsed: number) => void } {
+): {
+  render: () => void;
+  refresh: (elapsed: number) => void;
+  setScale: (percent: number) => void;
+} {
   const match = context.match;
+  const stage = document.createElement('div');
+  stage.className = 'pf-stage';
+  stage.dataset['pf'] = 'stage';
+  host.appendChild(stage);
+
   const frame = document.createElement('div');
   frame.className = 'pf-play-frame';
   frame.dataset['pf'] = 'play-frame';
   frame.setAttribute('tabindex', '0');
   frame.setAttribute('role', PLAY_SURFACE_ROLE);
   frame.setAttribute('aria-label', PLAY_SURFACE_LABEL);
-  host.appendChild(frame);
+  stage.appendChild(frame);
 
   const surface = createSurface(frame);
   const world = match.world;
@@ -319,12 +378,74 @@ function mountPlaySurface(
   });
   host.appendChild(controls.root);
 
+  let sizePercent = context.initialSurfaceScale;
+  let magnified = false;
+
   const fit = (): void => {
-    const width = host.clientWidth;
-    if (width <= 0) {
+    // The breakpoint first, because it decides the arrangement the box below
+    // is then measured in: reading the stage before the attributes are in
+    // force would fit the surface to the layout the last viewport had.
+    applyViewport();
+    const width = stage.clientWidth;
+    const height = stage.clientHeight;
+    // Below one css pixel there is no box to fit anything into, and the fit's
+    // own one-pixel floor would answer a surface larger than what it was
+    // given, which is the one case that would be tagged as magnified at the
+    // default size.
+    if (width < 1 || height < 1) {
       return;
     }
-    resizeSurface(surface, width, window.devicePixelRatio);
+    const cssWidth = fitCssWidth(width, height, sizePercent);
+    // An axis larger than its stage stops being centred: a centred overflow
+    // puts its own start edge out of reach of every scroll position, so the
+    // frame anchors THAT AXIS and leaves the other one centred, which is what
+    // keeps the letterbox band the fit still allows.
+    const over = surfaceOverflow(width, height, cssWidth);
+    frame.dataset['pfFitX'] = over.across ? 'over' : 'fit';
+    frame.dataset['pfFitY'] = over.down ? 'over' : 'fit';
+    magnified = over.across || over.down;
+    resizeSurface(surface, cssWidth, window.devicePixelRatio);
+  };
+
+  /**
+   * Keep the play in view while the surface is larger than the frame.
+   *
+   * WHY THE FRAME IS SCROLLED FOR THE PLAYER RATHER THAN BY THEM. The canvas
+   * covers the whole frame at any size above the fit, and the canvas has
+   * already claimed both gestures that could pan it: `touch-action` is
+   * `pinch-zoom` so a finger is an aim and never a scroll, and the four arrows
+   * belong to SPEC section 5.1's keyboard model while the frame has focus.
+   * Handing either of them to the scroller would take drag-to-aim away, so
+   * neither is asked for: the frame follows the play instead, which is what a
+   * magnified view is for. QUALITY-BAR section 4 makes this setting the only
+   * path a low-vision player has to a larger pitch, and a larger pitch nobody
+   * can pan would be a pitch with most of itself out of reach.
+   *
+   * WHAT IT FOLLOWS IS WHAT MATTERS NOW: the acting circle while an aim can be
+   * taken, because that is where a drag begins and where the arrow is drawn,
+   * and the ball at every other moment, because that is the play. The two
+   * cannot both be held at 200 percent on a small screen - the window is a
+   * fraction of the pitch by definition - so the choice is made rather than
+   * split. An aim is only ever taken at rest, so the point does not move while
+   * a finger is down and nothing slides under it mid-drag.
+   *
+   * A clamped scroll cannot lose the point it was aimed at, because the point
+   * is inside the surface and the clamp keeps the window inside it too.
+   */
+  const follow = (): void => {
+    if (!magnified) {
+      return;
+    }
+    const watched = input.allowed() ? context.aimWorld.player : world.ball;
+    const at = scrollToCentre(
+      surface,
+      watched.position.x,
+      watched.position.y,
+      frame.clientWidth,
+      frame.clientHeight,
+    );
+    frame.scrollLeft = at.left;
+    frame.scrollTop = at.top;
   };
 
   const render = (): void => {
@@ -333,6 +454,7 @@ function mountPlaySurface(
     }
     const palette = pitchFor(themeInForce());
     drawFrame(surface, cache, world, palette, frameOptionsFor(world, context, input.preview()));
+    follow();
   };
 
   const refit = (): void => {
@@ -364,9 +486,17 @@ function mountPlaySurface(
   };
 
   refit();
-  new ResizeObserver(refit).observe(host);
+  new ResizeObserver(refit).observe(stage);
   watchDeviceRatio(window, refit);
-  return { render, refresh };
+  return {
+    render,
+    refresh,
+
+    setScale(percent: number): void {
+      sizePercent = percent;
+      refit();
+    },
+  };
 }
 
 /**
@@ -404,6 +534,13 @@ function mount(host: HTMLElement): void {
   // document that will not parse and a value out of range all resolve to the
   // new-player data inside the module, which is what makes "saved state cannot
   // stop the game starting" a property of the type rather than a promise.
+  // The host is the column QUALITY-BAR section 5's arrangement is built in:
+  // the HUD, the hint, the stage and the aim controls, top to bottom, with the
+  // stylesheet deciding which of them stick. The class is written here rather
+  // than in index.html because the arrangement is this root's, and the
+  // stylesheet stays class-based like every other rule in it.
+  host.className = 'pf-app';
+
   const store: DataStore = createDataStore(openStorage);
   // Everything that only wants the ladder rung or the onboarding flag keeps
   // talking to the narrow seam, so the widening below is visible where it is
@@ -422,6 +559,10 @@ function mount(host: HTMLElement): void {
 
   let setup: ModeSetup = setupFor(startingChoice);
   let guideEnabled = store.data().settings.guide;
+  // QUALITY-BAR section 4's play-surface size, which PF-10 reserved in the
+  // document and this part gives a control. The root holds it because the fit
+  // is the root's; the panel raises the change and the store keeps it.
+  let surfaceScale = store.data().settings.surfaceScale;
   let opponent: Rng | undefined;
   let effects: Effects | undefined;
   let turnsTaken = 0;
@@ -481,6 +622,7 @@ function mount(host: HTMLElement): void {
     },
     onPause: pauseNow,
     effects: () => effects,
+    initialSurfaceScale: surfaceScale,
   });
 
   /** A fresh match on the mode in force: its own seed, and its own streams. */
@@ -612,6 +754,24 @@ function mount(host: HTMLElement): void {
       play.render();
     },
     initialTheme: store.data().settings.theme,
+    // QUALITY-BAR section 4's size setting: the control raises the number, the
+    // root applies it to the fit and writes it where the theme is written.
+    // SPEC section 16 allows a settings write at exactly this moment, which is
+    // an explicit change the player made, and at no other.
+    initialSurfaceScale: surfaceScale,
+    onSurfaceScaleChange: (percent: number) => {
+      surfaceScale = percent;
+      const stored = store.data();
+      store.save({ ...stored, settings: { ...stored.settings, surfaceScale: percent } });
+      play.setScale(percent);
+    },
+    // SPEC section 2.1's hint: shown until it is put away, and the dismissal
+    // outlives the session the way SPEC section 19's does, beside it in the
+    // same progress record and through the same seam.
+    hintDismissed: progress.read().rotateHintDismissed,
+    onHintDismissed: () => {
+      progress.write({ ...progress.read(), rotateHintDismissed: true });
+    },
     // SPEC section 17's Reset all data, after the panel's own confirmation.
     // The document goes, the session goes back to the new-player state, and
     // every readout follows from the store the way it always does: the menu
@@ -629,6 +789,12 @@ function mount(host: HTMLElement): void {
       recorded = true;
       guideEnabled = store.data().settings.guide;
       chrome.setGuide(guideEnabled);
+      // The size and SPEC section 2.1's hint are NOT put back here, and that
+      // is the same rule the theme already follows: the chrome owns its own
+      // controls and puts each of them where a new player would have it, and
+      // the size change it raises on the way through is what brings this
+      // root's copy and the fit along with it. A second writer here would be
+      // a second place for the two to disagree.
     },
     modes: {
       initial: startingChoice,

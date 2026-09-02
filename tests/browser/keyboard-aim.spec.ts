@@ -639,7 +639,14 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     // A viewport the page is taller than, so that scrolling is something the
     // browser would actually do. Without it "the page did not scroll" is
     // satisfied by a page that could not scroll anyway.
-    await page.setViewportSize({ width: 700, height: 400 });
+    //
+    // BELOW THE STICKY THRESHOLD, from PF-14. At and above 400 px of height
+    // the chrome bars stay stuck and the layout fits the viewport exactly, so
+    // there is nothing to scroll; below it the bars unstick, the play stage
+    // takes a viewport of its own and the page is taller than the screen
+    // again. The premise this control needs is the same premise; the height
+    // that produces it moved.
+    await page.setViewportSize({ width: 700, height: 380 });
     await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);

@@ -11,8 +11,13 @@
  * otherwise beat the browser's own [hidden] rule and a closed overlay
  * would still cover the pitch.
  *
- * The chrome layout here is the minimum the HUD needs to be screen-anchored
- * and legible; breakpoints and the adaptive rules are PF-14's.
+ * THE BREAKPOINTS ARE NOT IN THIS FILE, deliberately. QUALITY-BAR section 5's
+ * four names and the 400 px sticky threshold are resolved in
+ * src/ui/breakpoints.ts, where a unit test holds them against the copy of that
+ * section's own table in the design contract, and the composition root writes
+ * the answer onto the root element. Every rule below selects on that answer,
+ * so this file carries arrangement and not one threshold: a media query here
+ * would carry the same numbers as literals nothing can read back out.
  */
 
 [hidden] {
@@ -20,6 +25,23 @@
 }
 
 body {
+  /*
+   * QUALITY-BAR section 5's safe-area insets, read once here and inherited by
+   * every bar and panel that adds one. index.html declares viewport-fit=cover,
+   * without which all four resolve to zero and the rule is inert.
+   *
+   * READ INTO CUSTOM PROPERTIES RATHER THAN CALLED AT EACH SITE, for two
+   * reasons. Every bar then adds the same four names rather than four
+   * spellings of them; and a device with a notch is not something a desktop
+   * engine has, so a scripted capture or a test can set the four to real
+   * device values and watch the chrome move, which is what makes the armour
+   * for item F4 able to fail at all.
+   */
+  --pf-safe-top: env(safe-area-inset-top);
+  --pf-safe-right: env(safe-area-inset-right);
+  --pf-safe-bottom: env(safe-area-inset-bottom);
+  --pf-safe-left: env(safe-area-inset-left);
+
   margin: 0;
   background: var(--pf-ground);
   color: var(--pf-text);
@@ -27,14 +49,76 @@ body {
   line-height: var(--leading-body);
 }
 
+/*
+ * The column the whole arrangement is built in: the HUD, SPEC section 2.1's
+ * hint, the play stage and the no-drag aim controls, top to bottom. It is at
+ * least one viewport tall, so the stage is given whatever the bars leave and
+ * the pitch is letterboxed into that rather than running off the bottom of the
+ * screen; where the chrome needs more than the viewport has, the column grows
+ * and the page scrolls in one dimension.
+ */
+.pf-app {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
+}
+
+/*
+ * The box the pitch is fitted into. Its size is decided by the column above
+ * and never by what is inside it, which is what keeps the composition root's
+ * measurement stable: the frame fills it absolutely, so a scrollbar raised
+ * inside the frame by the size setting cannot shrink the box the fit was
+ * computed from and set the two chasing each other.
+ */
+.pf-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+/*
+ * Below the sticky threshold the bars scroll away rather than standing over
+ * the pitch, so the stage takes a whole viewport of its own and the page
+ * scrolls to reach the chrome. QUALITY-BAR section 5: that is what stops two
+ * sticky bars consuming a 256 px viewport, and the scrolling stays one
+ * dimensional because the surface is still fitted inside the width.
+ */
+:root[data-pf-bars='static'] .pf-stage {
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
+}
+
 .pf-hud {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-2) var(--space-4);
+  padding-block: calc(var(--space-2) + var(--pf-safe-top)) var(--space-2);
+  padding-inline: calc(var(--space-4) + var(--pf-safe-left))
+    calc(var(--space-4) + var(--pf-safe-right));
   background: var(--pf-ground);
   color: var(--pf-text);
+}
+
+/*
+ * The two bars stay in view while the page scrolls, which is what "the HUD
+ * remains fully visible at every breakpoint" means once a viewport is small
+ * enough that something has to move. They are given a stacking order above the
+ * pitch and below the overlays, because a bar painted over an open panel would
+ * be a control covering a control.
+ */
+:root[data-pf-bars='sticky'] .pf-hud {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}
+
+:root[data-pf-bars='sticky'] .pf-aim-controls:not([hidden]) {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 1;
 }
 
 .pf-score {
@@ -107,9 +191,13 @@ body {
 .pf-panel:not([hidden]) {
   position: fixed;
   inset: 0;
+  z-index: 2;
   display: grid;
   place-items: center;
-  padding: var(--space-4);
+  padding-block: calc(var(--space-4) + var(--pf-safe-top))
+    calc(var(--space-4) + var(--pf-safe-bottom));
+  padding-inline: calc(var(--space-4) + var(--pf-safe-left))
+    calc(var(--space-4) + var(--pf-safe-right));
   background: var(--pf-ground);
   color: var(--pf-text);
 }
@@ -192,9 +280,47 @@ body {
  * so a line box beneath it would push the focus ring off the pitch it belongs
  * to. QUALITY-BAR section 7's no-transform, no-border, no-padding rule is
  * about the canvas and is untouched by anything here.
+ *
+ * IT FILLS THE STAGE AND CENTRES THE SURFACE IN IT, which is SPEC section
+ * 2.1's letterbox: the pitch keeps its 1280 x 720 shape and the bands are
+ * whatever is left over in the axis that did not bind the fit. The overflow is
+ * for QUALITY-BAR section 4's size setting, which is the one thing that can
+ * make the surface larger than the box it is drawn in; the page never scrolls
+ * sideways for it, because the excess is this frame's and not the document's.
+ *
+ * IT SCROLLS ONLY IN AN AXIS THAT ACTUALLY OVERFLOWS, and the two are answered
+ * separately. A box is measured as a whole number of css pixels and a rounded
+ * measurement can be a fraction wider than the box it names, so a frame that
+ * scrolled in both axes at all times could raise a scrollbar over a fraction
+ * of a pixel of a letterboxed pitch. Clipping the axis that fits removes that
+ * without hiding anything: there is nothing outside a surface that fits.
  */
 .pf-play-frame {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  justify-content: center;
+  align-content: center;
+  overflow: hidden;
   line-height: 0;
+}
+
+/*
+ * A magnified axis is anchored rather than centred, because a centred overflow
+ * puts its own start edge out of reach at every scroll position: the start is
+ * what a scroll container cannot scroll back to. PER AXIS, because the two
+ * overflow separately and pinning the axis that still fits would collapse its
+ * band and jam the pitch against an edge. The composition root decides each of
+ * them from the same fit arithmetic that sized the surface.
+ */
+.pf-play-frame[data-pf-fit-x='over'] {
+  justify-content: start;
+  overflow-x: auto;
+}
+
+.pf-play-frame[data-pf-fit-y='over'] {
+  align-content: start;
+  overflow-y: auto;
 }
 
 /*
@@ -209,13 +335,26 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--target-clearance);
-  padding: var(--space-2) var(--space-4);
+  padding-block: var(--space-2) calc(var(--space-2) + var(--pf-safe-bottom));
+  padding-inline: calc(var(--space-4) + var(--pf-safe-left))
+    calc(var(--space-4) + var(--pf-safe-right));
   background: var(--pf-ground);
   color: var(--pf-text);
 }
 
+/*
+ * The row wraps as well as the bar it sits in. Measured at 320 css pixels:
+ * a stepper's label is a phrase, so its min-content width is a hundred pixels
+ * rather than the 44 the touch minimum asks for, and a row of two of them
+ * around a track has a min-content width wider than the viewport. A flex item
+ * is never shrunk below that, so without this the row hangs eleven pixels off
+ * the right edge and the page scrolls sideways, which is exactly what item F2
+ * forbids. Engines differ on whether a button's label wraps at all, so the
+ * wrap is stated here rather than left to one.
+ */
 .pf-aim-row:not([hidden]) {
   display: flex;
+  flex-wrap: wrap;
   flex: 1 1 auto;
   align-items: center;
   gap: var(--target-clearance);
@@ -261,4 +400,92 @@ body {
   font-size: var(--type-sm);
   color: var(--pf-text);
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * DESIGN section 6's arrangement per breakpoint. `wide` is the reference
+ * layout above and carries no rule of its own; the three below compress it,
+ * and not one of them removes a readout or a control. A readout that is gone
+ * is not a compressed readout, and SC 1.4.10 asks for no loss of information
+ * as well as no two-dimensional scrolling, so what happens at narrow widths is
+ * that the bar wraps.
+ *
+ * The team colours DESIGN section 6 mentions for the compact score readouts
+ * are deliberately not applied: SPEC section 18 measures the two team fills
+ * against the pitch and against each other, and neither is measured against
+ * the chrome ground, so colouring chrome text with them would create a
+ * contrast pair no document has measured. The identity is already carried by
+ * position, which is what QUALITY-BAR section 4's never-colour-alone rule asks
+ * for anyway.
+ */
+:root[data-pf-breakpoint='medium'] .pf-centre,
+:root[data-pf-breakpoint='compact'] .pf-centre,
+:root[data-pf-breakpoint='portrait'] .pf-centre {
+  flex-direction: row;
+  gap: var(--space-2);
+}
+
+:root[data-pf-breakpoint='compact'] .pf-hud,
+:root[data-pf-breakpoint='portrait'] .pf-hud {
+  gap: var(--space-2);
+  padding-block: calc(var(--space-1) + var(--pf-safe-top)) var(--space-1);
+}
+
+:root[data-pf-breakpoint='compact'] .pf-score,
+:root[data-pf-breakpoint='compact'] .pf-clock,
+:root[data-pf-breakpoint='portrait'] .pf-score,
+:root[data-pf-breakpoint='portrait'] .pf-clock {
+  font-size: var(--type-base);
+}
+
+/*
+ * The steppers keep their 44 by 44 target and give up the padding around their
+ * labels, so the two aim rows still fit on one line each at the narrowest
+ * supported width. The row wraps either way; this is what stops it having to.
+ */
+:root[data-pf-breakpoint='compact'] .pf-aim-controls .pf-aim-step,
+:root[data-pf-breakpoint='portrait'] .pf-aim-controls .pf-aim-step {
+  padding-inline: var(--space-1);
+}
+
+/*
+ * SPEC section 2.1's portrait hint. It is in the document at every breakpoint
+ * and shown at one, so nothing under ui/ has to know how wide the viewport is;
+ * it takes its own row between the HUD and the pitch, which is what makes
+ * "covers no control" a property of the flow rather than a measurement. The
+ * dismissal is the `hidden` attribute, so a hint put away stays away at every
+ * breakpoint and comes back only when the stored dismissal does.
+ */
+.pf-portrait-hint {
+  display: none;
+}
+
+:root[data-pf-breakpoint='portrait'] .pf-portrait-hint:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--target-clearance);
+  padding-block: var(--space-1);
+  padding-inline: calc(var(--space-4) + var(--pf-safe-left))
+    calc(var(--space-4) + var(--pf-safe-right));
+  background: var(--pf-ground);
+  color: var(--pf-text);
+}
+
+.pf-portrait-hint .pf-hint-text {
+  margin: 0;
+  font-size: var(--type-sm);
+  color: var(--pf-text-muted);
+}
+
+.pf-portrait-hint .pf-hint-dismiss {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-base);
+  color: var(--pf-text);
+  background: transparent;
+  border: var(--border-hair) solid var(--pf-text-muted);
+  border-radius: var(--radius-md);
 }

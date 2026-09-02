@@ -238,7 +238,7 @@ describe('PF-10 defaults are overwritten on the next successful write, item I2',
     const store = createDataStore(() => backing);
     expect(store.data()).toEqual(NEW_DATA);
 
-    store.write({ ladderRung: 3, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 3, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
 
     const text = backing.getItem(STORAGE_KEY) ?? '';
     expect(text).not.toBe(CORRUPT);
@@ -251,6 +251,7 @@ describe('PF-10 defaults are overwritten on the next successful write, item I2',
     expect(reopened.read()).toEqual({
       ladderRung: 3,
       howToDismissed: true,
+      rotateHintDismissed: true,
       playedBefore: true,
     });
     expect(reopened.lastFailure()).toBeNull();
@@ -262,7 +263,7 @@ describe('PF-10 defaults are overwritten on the next successful write, item I2',
     // this file and fail this one.
     const stored = {
       ...NEW_DATA,
-      progress: { ladderRung: 5, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
       settings: { ...NEW_SETTINGS, mode: 'first-to' as const, target: 7, theme: 'dark' as const },
       records: { ...NEW_RECORDS, 'first-to': { goalsFor: 7, goalsAgainst: 2 } },
       counters: { matchesPlayed: 11, goalsFor: 34, goalsAgainst: 19 },

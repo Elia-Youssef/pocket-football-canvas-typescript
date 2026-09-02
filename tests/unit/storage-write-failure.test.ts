@@ -143,10 +143,11 @@ describe('PF-10 a SecurityError on property access cannot stop the game, item I3
     const store = createDataStore(() => {
       throw securityError();
     });
-    store.write({ ladderRung: 4, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 4, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(store.read()).toEqual({
       ladderRung: 4,
       howToDismissed: true,
+      rotateHintDismissed: true,
       playedBefore: true,
     });
     store.save(recordResult(store.data(), 'ladder', 3, 1));
@@ -166,7 +167,7 @@ describe('PF-10 a SecurityError on property access cannot stop the game, item I3
     const store = createDataStore(() => null);
     expect(store.persistent()).toBe(false);
     expect(store.lastFailure()).toBeNull();
-    store.write({ ladderRung: 2, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 2, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(store.read().ladderRung).toBe(2);
     expect(matchFor(store.data()).readout().state.kind).toBe('PLAYER_TURN');
   });
@@ -228,7 +229,7 @@ describe('PF-10 a write that throws does not interrupt the match, item I3', () =
 
   it('keeps the in-memory value authoritative when the write is refused', () => {
     const store = createDataStore(() => createBacking({ throwOnWrite: true }));
-    store.write({ ladderRung: 5, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     // Only the carry across sessions degrades. Within the session the value
     // the game wrote is the value the game reads.
     expect(store.read().ladderRung).toBe(5);
@@ -245,7 +246,7 @@ describe('PF-10 a write that throws does not interrupt the match, item I3', () =
     // reads a player who has nothing rather than the one just erased.
     const backing = createBacking({ throwOnRemove: true });
     const store = createDataStore(() => backing);
-    store.write({ ladderRung: 6, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 6, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(backing.text()).not.toBeNull();
 
     store.clear();
@@ -264,7 +265,7 @@ describe('PF-10 a write that throws does not interrupt the match, item I3', () =
     const store = createDataStore(() =>
       createBacking({ throwOnRemove: true, throwOnWrite: true }),
     );
-    store.write({ ladderRung: 6, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 6, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     store.clear();
     expect(store.data()).toEqual(NEW_DATA);
     expect(store.lastFailure() ?? '').toContain('writing the saved document');
@@ -276,7 +277,7 @@ describe('PF-10 a write that throws does not interrupt the match, item I3', () =
     // working store is driven through the same calls and its bytes are read.
     const backing = createBacking();
     const store = createDataStore(() => backing);
-    store.write({ ladderRung: 5, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(backing.writes()).toBe(1);
     expect(backing.text()).toBe(serialiseData(store.data()));
 

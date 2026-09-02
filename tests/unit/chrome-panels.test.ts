@@ -55,6 +55,7 @@ function pauseRoot(onEscape: () => void): FakeElement {
 function settingsRoot(onTheme: (theme: 'system' | 'light' | 'dark') => void): FakeElement {
   return createSettingsPanel({
     onThemeChange: onTheme,
+    onSurfaceScaleChange: () => undefined,
     onReset: () => undefined,
     onClose: () => undefined,
     onEscape: () => undefined,
@@ -91,12 +92,17 @@ describe('PF-13 the panels', () => {
         'Quit',
       ]);
       // Grown at PF-10 by SPEC section 17's Reset all data and the two halves
-      // of its in-place confirmation. Nothing that was here was removed or
-      // renamed: the three theme radios and Close are where they were.
+      // of its in-place confirmation, and at PF-14 by the four play-surface
+      // sizes QUALITY-BAR section 4 offers. Nothing that was here was removed
+      // or renamed: the three theme radios and Close are where they were.
       expect(censusControls(settingsRoot(() => undefined))).toEqual([
         'System',
         'Light',
         'Dark',
+        '100%',
+        '125%',
+        '150%',
+        '200%',
         'Reset all data',
         'Confirm reset',
         'Cancel reset',
@@ -162,6 +168,7 @@ describe('PF-13 the panels', () => {
       const settingsEscape = vi.fn();
       const settings = createSettingsPanel({
         onThemeChange: () => undefined,
+        onSurfaceScaleChange: () => undefined,
         onReset: () => undefined,
         onClose: () => undefined,
         onEscape: settingsEscape,
@@ -221,6 +228,7 @@ describe('PF-13 the panels', () => {
       const changes: string[] = [];
       const panel = createSettingsPanel({
         onThemeChange: (theme) => changes.push(theme),
+        onSurfaceScaleChange: () => undefined,
         onReset: () => undefined,
         onClose: () => undefined,
         onEscape: () => undefined,
@@ -228,12 +236,24 @@ describe('PF-13 the panels', () => {
       const root = panel.root as unknown as FakeElement;
       panel.select('dark');
       expect(changes).toEqual([]);
-      const radios = findAllByTag(root, 'INPUT');
-      expect(radios).toHaveLength(3);
-      expect(radios.map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      const inputs = findAllByTag(root, 'INPUT');
+      // Seven from PF-14: the three theme radios, then the four play-surface
+      // sizes, which are a group of their own and raise their own callback.
+      expect(inputs).toHaveLength(7);
+      expect(inputs.map((radio) => radio.getAttribute('aria-label'))).toEqual([
         'System',
         'Light',
         'Dark',
+        '100%',
+        '125%',
+        '150%',
+        '200%',
+      ]);
+      const radios = inputs.slice(0, 3);
+      expect(radios.map((radio) => radio.getAttribute('name'))).toEqual([
+        'pf-theme',
+        'pf-theme',
+        'pf-theme',
       ]);
       const dark = radios[2];
       expect(dark?.checked).toBe(true);
@@ -250,6 +270,7 @@ describe('PF-13 the panels', () => {
       let closed = false;
       const panel = createSettingsPanel({
         onThemeChange: () => undefined,
+        onSurfaceScaleChange: () => undefined,
         onReset: () => undefined,
         onClose: () => {
           closed = true;
