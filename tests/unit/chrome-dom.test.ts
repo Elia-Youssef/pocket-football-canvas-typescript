@@ -210,7 +210,9 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       // The chrome as the composition root mounts it, mode menu included,
       // so the census describes the chrome the game actually ships. It grew
       // at PF-9 by SPEC section 13's three further game-over actions and by
-      // SPEC section 9's menu; nothing that was here was removed or renamed.
+      // SPEC section 9's menu, and at PF-10 by SPEC section 17's Reset all
+      // data and the two halves of its in-place confirmation; nothing that
+      // was here was removed or renamed.
       mountChrome(host as unknown as HTMLElement, {
         match: createMatch(),
         onThemeChange: () => undefined,
@@ -253,6 +255,9 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         'System',
         'Light',
         'Dark',
+        'Reset all data',
+        'Confirm reset',
+        'Cancel reset',
         'Close',
         'Close',
         'Play Again',

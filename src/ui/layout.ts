@@ -26,6 +26,12 @@
  * asked to re-render, so the canvas variant and the chrome theme cannot
  * split.
  *
+ * THE STORED THEME IS APPLIED HERE AND NOWHERE ELSE, for the same reason: a
+ * composition root that wrote `data-theme` itself at boot would be a second
+ * writer of the one attribute this wiring owns, and the two would drift the
+ * first time either changed. The stored value arrives as an option, is applied
+ * once at mount and is what the reset puts back.
+ *
  * THE MODE WIRING IS OPTIONAL, AND ITS ABSENCE IS HONEST. A composition that
  * supplies no modes gets no menu, and the game-over panel's mode actions stay
  * refused in place: SPEC section 13's Change mode needs somewhere to change to.
@@ -71,6 +77,18 @@ export interface ChromeOptions {
   readonly match: Match;
   /** Called after a theme change, so the pitch re-renders in the variant. */
   readonly onThemeChange: () => void;
+  /**
+   * SPEC section 17's stored theme, applied at mount. The chrome owns the
+   * theme policy, so the stored value is handed to it rather than written to
+   * the root by whoever read it: two writers of `data-theme` would be two
+   * places for the canvas variant and the chrome theme to disagree.
+   */
+  readonly initialTheme?: ThemeChoice;
+  /**
+   * SPEC section 17's Reset all data, raised after the panel's own
+   * confirmation. Absent in a composition that stores nothing.
+   */
+  readonly onResetData?: () => void;
   /** SPEC section 9's mode menu, absent in a composition that has none. */
   readonly modes?: ModeWiring;
 }
@@ -85,6 +103,9 @@ export interface Chrome {
   /** The guide setting the menu shows, for a mode that changed its default. */
   setGuide(on: boolean): void;
 }
+
+/** The theme a player who has never chosen one gets, and the reset's target. */
+const NEW_THEME: ThemeChoice = 'system';
 
 /**
  * The stored theme setting, written where the token stylesheet reads it.
@@ -115,10 +136,22 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       applyTheme(theme);
       options.onThemeChange();
     },
+    // THE THEME GOES BACK BEFORE THE DATA GOES. The chrome's own theme policy
+    // puts the override where a new player would have it and asks the pitch to
+    // follow, and only then is the stored data cleared, so the clear is the
+    // last word rather than something a default written over the top of it.
+    onReset: () => {
+      applyTheme(NEW_THEME);
+      settings.select(NEW_THEME);
+      options.onThemeChange();
+      options.onResetData?.();
+    },
     onClose: () => settings.hide(),
     onEscape: () => settings.hide(),
   });
-  settings.select('system');
+  const theme = options.initialTheme ?? NEW_THEME;
+  applyTheme(theme);
+  settings.select(theme);
 
   const howTo = createHowToPanel({
     onClose: () => dismissHowTo(),

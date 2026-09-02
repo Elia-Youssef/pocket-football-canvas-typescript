@@ -64,13 +64,26 @@ function at(page: Page, marker: string): ReturnType<Page['locator']> {
  * Load the page and put SPEC section 19's first-launch overlay away. The
  * viewport is deliberately left where the caller set it: a spec that is about
  * a small screen sets one before it opens the game.
+ *
+ * THE OVERLAY IS PUT AWAY IF IT IS THERE, and from PF-10 that is a real
+ * condition rather than a hedge. SPEC section 19 shows it on a FIRST launch
+ * and never again once it has been dismissed, and PF-10 made that dismissal
+ * survive the navigation, so a spec that opens the game a second time inside
+ * one test lands on a session that has already seen it and has nothing to put
+ * away. Both halves of the claim itself, shown once and not again, are graded
+ * in tests/browser/onboarding.spec.ts against a raw navigation; nothing here
+ * is asserted on behalf of a criterion, and what this function owes its
+ * callers is the same premise it always owed them: the menu, with no overlay
+ * over it.
  */
 export async function openGame(page: Page): Promise<void> {
   await page.goto('/');
-  const howTo = at(page, 'panel-how-to-play');
-  await expect(howTo).toBeVisible(SETTLE);
-  await page.locator('[data-pf="panel-how-to-play"] button', { hasText: 'Close' }).click();
   await expect(at(page, 'panel-mode')).toBeVisible(SETTLE);
+  const howTo = at(page, 'panel-how-to-play');
+  if (await howTo.isVisible()) {
+    await page.locator('[data-pf="panel-how-to-play"] button', { hasText: 'Close' }).click();
+  }
+  await expect(howTo).toBeHidden(SETTLE);
 }
 
 /** Set every control the menu offers to what this setup asks for. */

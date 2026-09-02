@@ -55,6 +55,7 @@ function pauseRoot(onEscape: () => void): FakeElement {
 function settingsRoot(onTheme: (theme: 'system' | 'light' | 'dark') => void): FakeElement {
   return createSettingsPanel({
     onThemeChange: onTheme,
+    onReset: () => undefined,
     onClose: () => undefined,
     onEscape: () => undefined,
   }).root as unknown as FakeElement;
@@ -89,10 +90,16 @@ describe('PF-13 the panels', () => {
         'How to play',
         'Quit',
       ]);
+      // Grown at PF-10 by SPEC section 17's Reset all data and the two halves
+      // of its in-place confirmation. Nothing that was here was removed or
+      // renamed: the three theme radios and Close are where they were.
       expect(censusControls(settingsRoot(() => undefined))).toEqual([
         'System',
         'Light',
         'Dark',
+        'Reset all data',
+        'Confirm reset',
+        'Cancel reset',
         'Close',
       ]);
       expect(censusControls(howToRoot())).toEqual(['Close']);
@@ -155,6 +162,7 @@ describe('PF-13 the panels', () => {
       const settingsEscape = vi.fn();
       const settings = createSettingsPanel({
         onThemeChange: () => undefined,
+        onReset: () => undefined,
         onClose: () => undefined,
         onEscape: settingsEscape,
       });
@@ -213,6 +221,7 @@ describe('PF-13 the panels', () => {
       const changes: string[] = [];
       const panel = createSettingsPanel({
         onThemeChange: (theme) => changes.push(theme),
+        onReset: () => undefined,
         onClose: () => undefined,
         onEscape: () => undefined,
       });
@@ -241,6 +250,7 @@ describe('PF-13 the panels', () => {
       let closed = false;
       const panel = createSettingsPanel({
         onThemeChange: () => undefined,
+        onReset: () => undefined,
         onClose: () => {
           closed = true;
         },
@@ -249,7 +259,10 @@ describe('PF-13 the panels', () => {
       const root = panel.root as unknown as FakeElement;
       panel.show();
       expect(root.hidden).toBe(false);
-      findAllByTag(root, 'BUTTON')[0]?.dispatch('click');
+      // Found by its own marker rather than by position: the panel grew three
+      // buttons ahead of Close at PF-10, and a control identified by index is
+      // a test that quietly starts asserting something else.
+      findByMarker(root, 'settings-close')?.dispatch('click');
       expect(closed).toBe(true);
     } finally {
       installed.restore();
