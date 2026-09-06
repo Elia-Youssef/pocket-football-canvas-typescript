@@ -91,7 +91,15 @@ body {
   border-radius: var(--radius-md);
 }
 
-.pf-hud .pf-pause[aria-disabled='true'] {
+/*
+ * Refused in place, wherever a control is refused: the HUD's pause outside the
+ * four in-play states, and SPEC section 13's ladder actions outside the result
+ * that offers them. One rule, because a refusal that looked different per
+ * component would read as two different states of the same control.
+ */
+.pf-hud .pf-pause[aria-disabled='true'],
+.pf-panel .pf-choice-button[aria-disabled='true'],
+.pf-panel .pf-choice-input[aria-disabled='true'] {
   color: var(--pf-text-muted);
   border-style: dashed;
 }
@@ -106,10 +114,18 @@ body {
   color: var(--pf-text);
 }
 
+/*
+ * A card taller than the viewport scrolls inside itself rather than pushing
+ * its last control past the bottom edge. SPEC section 9's mode menu is the
+ * first panel with enough controls to reach that, and a control that cannot be
+ * scrolled to has been removed as far as a player is concerned.
+ */
 .pf-panel-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  max-block-size: 100%;
+  overflow-y: auto;
   padding: var(--space-5);
   border: var(--border-thin) solid var(--pf-text-muted);
   border-radius: var(--radius-lg);

@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 
+import { advance, playUntil, scores, startMatch, turnText } from './support/game';
+import type { MatchSetup } from './support/game';
+
 /**
  * Item E6, method T, evidence `playwright/reduced-motion`:
  *
@@ -33,18 +36,21 @@ import type { Browser, Page } from '@playwright/test';
  * page can tell the two modes apart: a world at rest with a maximum aim held,
  * where nothing can change between two frames except an animation.
  *
- * FOUR CLAUSES ARE GRADED AT THE UNIT LAYER, and this is why. The trail, the
+ * THREE CLAUSES ARE GRADED AT THE UNIT LAYER, and this is why. The trail, the
  * impact flash and the wall-segment flash are alive only WHILE the world is
  * moving, so a canvas comparison between two modes is comparing two scenes
  * that differ because the ball is in a different place, not because an effect
- * was drawn; and the particles are the goal burst, which is not reachable in
- * the shipped composition at all until the opponent driver arrives at PF-9 and
- * a match can get past the player's first turn. All four are asserted over the
- * real effects layer in tests/unit/reduced-motion.test.ts, each with the
- * positive control that the same input draws under the preference off:
- * "draws no trail, no flash, no particle and no pulse" and "removes the
- * particles a goal would have burst, and the frame pulse". The particles
- * clause re-homes into this file at PF-9 with the rest of that part's list.
+ * was drawn. All three are asserted over the real effects layer in
+ * tests/unit/reduced-motion.test.ts, each with the positive control that the
+ * same input draws under the preference off.
+ *
+ * THE PARTICLES ARE HERE, from PF-9. They are the goal burst, and no goal was
+ * reachable in the shipped composition until the opponent driver arrived and a
+ * match could get past the player's first turn; until then the clause was
+ * graded at the unit layer with the split disclosed. The last test below plays
+ * a real match to a real goal in both modes and samples the celebration hold,
+ * which is the one window where the world is frozen and the ONLY thing that
+ * can change between two frames is the celebration itself.
  *
  * THE STORED SETTING SPEC SECTION 17 ASKS FOR IS NOT HERE EITHER. The
  * composition root reads the platform preference and nothing else, because the
@@ -166,19 +172,35 @@ async function scriptedTurn(page: Page, power: string): Promise<Turn> {
     const store = window as unknown as { __pfStates?: string[] };
     const seen: string[] = [readout.textContent ?? ''];
     store.__pfStates = seen;
-    new MutationObserver(() => {
+    // THE RECORDING STOPS AT THE HANDOVER, from PF-9. The opponent answers its
+    // own turn now, so the match runs on by itself a fraction of a second
+    // later; a recorder left running would catch a different amount of the
+    // NEXT turn in each arm and compare two windows rather than one turn.
+    const observer = new MutationObserver(() => {
       const text = readout.textContent ?? '';
       if (seen.at(-1) !== text) {
         seen.push(text);
       }
-    }).observe(readout, { characterData: true, childList: true, subtree: true });
+      if (text === 'OPPONENT IS AIMING') {
+        observer.disconnect();
+      }
+    });
+    observer.observe(readout, { characterData: true, childList: true, subtree: true });
   });
   await page.locator('[data-pf="aim-angle"]').fill('0');
   await page.locator('[data-pf="power"]').fill(power);
   expect(await page.locator('[data-pf="power"]').inputValue()).toBe(power);
   await page.locator('[data-pf="aim-launch"]').click();
-  await expect(page.locator('[data-pf="turn"]')).toHaveText('OPPONENT IS AIMING', SETTLE);
-  await nextFrames(page, 5);
+  // DRIVEN TO THE HANDOVER AND STOPPED. From PF-9 the opponent answers its own
+  // turn, so a reading taken a few frames after the handover would be taken at
+  // a different point of the match in each mode; driving one frame at a time
+  // and stopping at the handover puts both readings on the same frame.
+  let handedOver = false;
+  for (let frame = 0; frame < 200 && !handedOver; frame += 1) {
+    await advance(page, 1);
+    handedOver = (await turnText(page)) === 'OPPONENT IS AIMING';
+  }
+  expect(handedOver).toBe(true);
   const states = await page.evaluate(
     () => (window as unknown as { __pfStates?: string[] }).__pfStates ?? [],
   );
@@ -202,6 +224,8 @@ async function inMotionMode<T>(
   mode: 'reduce' | 'no-preference',
   baseURL: string,
   drive: (page: Page) => Promise<T>,
+  setup: MatchSetup = {},
+  ownClock = false,
 ): Promise<T> {
   const context = await browser.newContext({
     baseURL,
@@ -210,9 +234,18 @@ async function inMotionMode<T>(
   });
   try {
     const page = await context.newPage();
-    await page.goto('/');
+    if (ownClock) {
+      // Installed before the navigation, so every timestamp the page reads is
+      // the test's; the frames below are then driven rather than waited for.
+      await page.clock.install({ time: 0 });
+    }
+    await startMatch(page, setup);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
-    await nextFrames(page, 10);
+    if (ownClock) {
+      await advance(page, 10);
+    } else {
+      await nextFrames(page, 10);
+    }
     return await drive(page);
   } finally {
     await context.close();
@@ -377,16 +410,26 @@ async function snapshots(page: Page, budgetMs: number): Promise<Held> {
 }
 
 test.describe('PF-12 reduced motion, item E6', () => {
-  test('plays the same turn to the same finish with the preference both ways', async ({
-    browser,
-    baseURL,
-  }) => {
+  test(
+    'plays the same turn to the same finish with the preference both ways',
+    { tag: '@drive' },
+    async ({ browser, baseURL }) => {
     test.setTimeout(A_WHOLE_TEST);
-    const reduced = await inMotionMode(browser, 'reduce', baseURL ?? '', (page) =>
-      scriptedTurn(page, '60'),
+    const reduced = await inMotionMode(
+      browser,
+      'reduce',
+      baseURL ?? '',
+      (page) => scriptedTurn(page, '60'),
+      {},
+      true,
     );
-    const full = await inMotionMode(browser, 'no-preference', baseURL ?? '', (page) =>
-      scriptedTurn(page, '60'),
+    const full = await inMotionMode(
+      browser,
+      'no-preference',
+      baseURL ?? '',
+      (page) => scriptedTurn(page, '60'),
+      {},
+      true,
     );
     // THE SEQUENCE OF STATES, in order, with no state added, dropped or
     // reordered. This is the clause a blanket animation cancel breaks.
@@ -505,6 +548,99 @@ test.describe('PF-12 reduced motion, item E6', () => {
     expect(reduced.images[0]?.startsWith('data:image/png')).toBe(true);
     // THE POSITIVE CONTROL: with the preference off the same held aim pulses,
     // so the frames are not all the same image.
+    expect(new Set(full.images).size).toBeGreaterThan(1);
+  });
+  test(
+    'bursts no particles at a goal, where it bursts them without',
+    { tag: '@drive' },
+    async ({ browser, baseURL }) => {
+    test.setTimeout(A_WHOLE_TEST);
+    // The particles clause, re-homed from tests/unit/reduced-motion.test.ts at
+    // PF-9. A goal needs an opponent to hand the turn back and a mode that
+    // does not stop the match first, so this is a First to 3 played by the
+    // scripted striker in `support/game.ts`, whose aim is a second reading of
+    // SPEC section 8.1 rather than a copy of the game's own routine.
+    //
+    // THE CELEBRATION HOLD IS THE WINDOW, and it is the only honest one: SPEC
+    // section 6.4 freezes the world for 1.2 s after a goal, so nothing in the
+    // scene can change from frame to frame except the celebration, which is
+    // the burst and the goal-frame pulse. The samples are taken in fiftieths
+    // of a second of the test's own clock, so a dozen of them fit inside it.
+    const toTheGoal = async (page: Page): Promise<{ images: string[]; goals: number }> => {
+      // Caught within ONE driven frame of the goal, because SPEC section 6.4
+      // freezes the world for only 1.2 s and a batched drive could spend most
+      // of that before it noticed. The sampling window below has to sit inside
+      // the hold or it is comparing a celebration against a kickoff.
+      const frames = await playUntil(
+        page,
+        900,
+        'right',
+        async () => {
+          return (await turnText(page)) === 'GOAL';
+        },
+        'YOUR TURN',
+        1,
+      );
+      expect(frames).toBeLessThan(900);
+      // THE WINDOW IS BOUNDED BY THE STATE, not by a count of samples. SPEC
+      // section 6.4's hold is 1.2 s of SIMULATION time and the engines do not
+      // agree on how much of it a driven frame consumes, so a fixed number of
+      // samples runs past the whistle on one of them and compares a
+      // celebration against the kickoff that follows it. Sampling only while
+      // the readout still says GOAL cannot: everything below is inside one
+      // celebration on every engine.
+      const images: string[] = [];
+      while (images.length < 12 && (await turnText(page)) === 'GOAL') {
+        await page.clock.fastForward(25);
+        if ((await turnText(page)) !== 'GOAL') {
+          break;
+        }
+        images.push(
+          await page.evaluate(() => {
+            const canvas = document.querySelector('[data-pf="play-surface"]');
+            if (!(canvas instanceof HTMLCanvasElement)) {
+              throw new Error('the play surface is not in the document');
+            }
+            return canvas.toDataURL();
+          }),
+        );
+      }
+      const board = await scores(page);
+      return { images, goals: board.player + board.opponent };
+    };
+    const reduced = await inMotionMode(
+      browser,
+      'reduce',
+      baseURL ?? '',
+      toTheGoal,
+      { mode: 'first-to', target: 3 },
+      true,
+    );
+    const full = await inMotionMode(
+      browser,
+      'no-preference',
+      baseURL ?? '',
+      toTheGoal,
+      { mode: 'first-to', target: 3 },
+      true,
+    );
+    // Non-vacuous: a goal really was scored in both arms, and the window each
+    // one sampled really held a series rather than a single frame.
+    expect(reduced.goals).toBeGreaterThan(0);
+    expect(full.goals).toBeGreaterThan(0);
+    // At least two frames of the same celebration in each arm. The engines
+    // do not agree on how much simulation a driven frame consumes, so how many
+    // fit inside SPEC section 6.4's 1.2 s hold is theirs to decide; what the
+    // comparison needs is more than one, and the assertions below are then
+    // about what changed BETWEEN frames of one celebration.
+    expect(reduced.images.length).toBeGreaterThanOrEqual(2);
+    expect(full.images.length).toBeGreaterThanOrEqual(2);
+    // The celebration is already over the moment it is born: one image, over
+    // the whole sampled window.
+    expect([...new Set(reduced.images)]).toHaveLength(1);
+    expect(reduced.images[0]?.startsWith('data:image/png')).toBe(true);
+    // THE POSITIVE CONTROL: with the preference off the same goal bursts, so
+    // the frames are not all the same image.
     expect(new Set(full.images).size).toBeGreaterThan(1);
   });
 });

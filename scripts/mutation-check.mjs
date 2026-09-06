@@ -65,13 +65,31 @@ function binaryFor(packageName, fallback) {
   return path.join(PROJECT_ROOT, fallback);
 }
 
+/**
+ * The deadline a detector is given, per detector and in milliseconds.
+ *
+ * It is a safety property rather than a tuning number, so it is sized per
+ * detector rather than once for all three: one number cannot serve a suite that
+ * answers in three seconds and a suite that answers in twelve minutes. Too
+ * small and an honest run is killed and read as red, which is what happened at
+ * PF-9 when the browser suite grew past a single shared ten minute deadline;
+ * too large and a genuinely hung mutation stalls the gate instead of counting
+ * as detected. Each one below is well past its own measured runtime and nowhere
+ * near any other's.
+ */
+const MINUTES = 60 * 1000;
+
 const DETECTORS = {
   unit: {
     label: 'unit suite',
+    // Three seconds measured over 604 tests, and every loop in it carries its
+    // own budget.
+    timeout: 10 * MINUTES,
     argv: () => [binaryFor('vitest', 'node_modules/vitest/vitest.mjs'), 'run'],
   },
   lint: {
     label: 'lint',
+    timeout: 10 * MINUTES,
     argv: () => [
       binaryFor('eslint', 'node_modules/eslint/bin/eslint.js'),
       '.',
@@ -90,15 +108,43 @@ const DETECTORS = {
   // cheaper can witness the property.
   browser: {
     label: 'browser suite',
-    argv: () => {
+    // Thirty minutes against a suite measured between 12.1 and 14.0 minutes
+    // across five full runs at four workers, which is where PF-9 left it at 234
+    // tests on three engines. Playwright bounds every test it runs, so a suite
+    // that has not answered inside twice its worst measured run is hung rather
+    // than slow.
+    timeout: 30 * MINUTES,
+    argv: (whole) => {
       execFileSync(
         process.execPath,
         [binaryFor('vite', 'node_modules/vite/bin/vite.js'), 'build'],
         { cwd: PROJECT_ROOT, stdio: 'pipe' },
       );
+      // THE BASELINE RUNS THE WHOLE SUITE AND A MUTATION RUN DOES NOT, and the
+      // two are asking different questions. The baseline asks whether this tree
+      // is green everywhere, so it is all three engines. A mutation run asks
+      // whether ANY test catches this edit, and every property that names this
+      // detector is composition wiring that no engine holds an opinion about;
+      // running one engine asks the same question in a third of the time. The
+      // narrowing is safe in the only direction that matters: an edit that
+      // some other engine alone would have caught is reported MISSED, which
+      // reddens the gate, and it can never make an uncaught edit look caught.
+      // Twenty three entries name this detector, so the difference is hours.
+      const engine = whole
+        ? []
+        : ['--project=chromium', '--project=chromium-driven', '--no-deps'];
       return [
         binaryFor('@playwright/test', 'node_modules/@playwright/test/cli.js'),
         'test',
+        ...engine,
+        // Pinned at four from PF-9, for a measured reason and not a taste. At
+        // the default worker count this machine runs about thirteen workers
+        // and seventy browser processes at once, and the suite STARVES: tests
+        // that pass alone in seconds time out at four minutes. A starved run
+        // is worse here than anywhere else, because a detector that fails for
+        // the wrong reason reports a mutation as detected when nothing caught
+        // it. Four workers measured 12.8 minutes against 25.3 minutes starved.
+        '--workers=4',
       ];
     },
   },
@@ -2267,8 +2313,10 @@ export const EDITS = [
     item: 'M1',
     name: 'the turn indicator names the side and the state',
     file: 'src/ui/components/hud.ts',
-    find: "      return 'YOUR TURN';",
-    replace: "      return 'YOUR GO';",
+    // RE-POINTED at PF-9: SPEC section 9's Hotseat names the player's own
+    // side, so the return became a conditional. Same string, same break.
+    find: "        ? 'YOUR TURN'",
+    replace: "        ? 'YOUR GO'",
     detectedBy: 'unit',
   },
   {
@@ -2310,8 +2358,11 @@ export const EDITS = [
     item: 'M1',
     name: 'panel visibility is derived from the readout on every sync',
     file: 'src/ui/layout.ts',
-    find: "    if (readout.state.kind !== 'PAUSED') {",
-    replace: "    if (readout.state.kind === 'PAUSED') {",
+    // RE-POINTED at PF-9: the pause reading became a named predicate when the
+    // stack moved to closing on the EDGE of the pause. The same predicate is
+    // inverted, so the same derivation is broken.
+    find: "    const paused = readout.state.kind === 'PAUSED';",
+    replace: "    const paused = readout.state.kind !== 'PAUSED';",
     detectedBy: 'unit',
   },
   {
@@ -2326,9 +2377,11 @@ export const EDITS = [
     item: 'M1',
     name: 'the pause stack closes with the pause, whatever dismissed it',
     file: 'src/ui/layout.ts',
-    find: `      if (settings.isOpen()) {
-        settings.hide();
-      }`,
+    // RE-POINTED at PF-9: the same block, one level deeper inside the edge
+    // test the menu's own overlay required. Same block, same break.
+    find: `        if (settings.isOpen()) {
+          settings.hide();
+        }`,
     replace: '      void settings;',
     detectedBy: 'unit',
   },
@@ -2682,7 +2735,10 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C3',
     name: 'the frame composition draws the aim pass over the entities',
     file: 'src/render/pitch.ts',
-    find: '    drawAimArrow(surface.context, palette, world.player, aim);',
+    // RE-POINTED at PF-9: the arrow's body is the frame's named launcher now,
+    // so the call reads differently. The pass is still removed entirely.
+    find:
+      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);',
     replace: '    void drawAimArrow;',
     detectedBy: 'browser',
   },
@@ -3805,21 +3861,22 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'E5',
     name: 'the effects-in-front pass runs after the aim arrow',
     file: 'src/render/pitch.ts',
+    // RE-POINTED at PF-9: SPEC section 11's guide pass landed between the
+    // entities and the arrow, so the anchor is the last two passes alone. The
+    // break is the same one: the two passes exchanged.
     find:
-      '  const aim = options?.aim;\n' +
       '  if (aim !== undefined) {\n' +
-      '    drawAimArrow(surface.context, palette, world.player, aim);\n' +
+      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);\n' +
       '  }\n' +
       '  if (effects !== undefined) {\n' +
       '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
       '  }',
     replace:
-      '  const aim = options?.aim;\n' +
       '  if (effects !== undefined) {\n' +
       '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
       '  }\n' +
       '  if (aim !== undefined) {\n' +
-      '    drawAimArrow(surface.context, palette, world.player, aim);\n' +
+      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);\n' +
       '  }',
     detectedBy: 'unit',
   },
@@ -3972,6 +4029,356 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
       '      elapsed: 0,',
     detectedBy: 'browser',
   },
+  // ------------------------------------------------------------------
+  // PF-9. SPEC section 9's four modes, section 10's ladder, section 11's aim
+  // guide, section 13's game over, section 2.2's hidden tab and section 19's
+  // onboarding. The composition entries are `browser` only where nothing
+  // cheaper can witness the property: the wiring at the root, which no unit
+  // test reaches and no lint rule has an opinion about.
+  // ------------------------------------------------------------------
+  {
+    item: 'J1',
+    name: 'Quick Match offers the three durations the section states',
+    file: 'src/core/modes.ts',
+    find: 'export const QUICK_DURATIONS: readonly number[] = [60, 90, 120];',
+    replace: 'export const QUICK_DURATIONS: readonly number[] = [60, 90];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J1',
+    name: 'a Quick Match is built with the clock the menu chose',
+    file: 'src/core/modes.ts',
+    find: '      configuration: { duration: choice.duration, first: OPENS_WITH },',
+    replace: '      configuration: { duration: 60, first: OPENS_WITH },',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J1',
+    name: 'the higher score is the winner and level is a draw',
+    file: 'src/core/modes.ts',
+    find: "  if (player > opponent) {\n    return 'player';\n  }",
+    replace: "  if (player >= opponent) {\n    return 'player';\n  }",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J2',
+    name: 'First to N offers the three targets the section states',
+    file: 'src/core/modes.ts',
+    find: 'export const FIRST_TO_TARGETS: readonly number[] = [3, 5, 7];',
+    replace: 'export const FIRST_TO_TARGETS: readonly number[] = [3, 5];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J2',
+    name: 'a First to N is seeded by the target the menu chose',
+    file: 'src/core/modes.ts',
+    find: "      seed: `${MATCH_SEED}:first-to:${String(choice.target)}:${choice.difficulty}`,",
+    replace: "      seed: `${MATCH_SEED}:first-to`,",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J2',
+    name: 'the goal target rides the readout the HUD is derived from',
+    file: 'src/core/match.ts',
+    find: '      reading.target = configured.target;',
+    replace: '      reading.target = undefined;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J2',
+    name: 'a mode configuration reaches the match it is meant for',
+    file: 'src/core/match.ts',
+    find: "    if (intent.kind === 'configure') {",
+    replace: "    if (intent.kind === 'configure' && false) {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'the ladder plays the six opponents in the section order',
+    file: 'src/core/modes.ts',
+    find: '  const rung = LADDER[slot];',
+    replace: '  const rung = LADDER[LADDER.length - 1 - slot];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'the rung difficulty is the column the section states',
+    file: 'src/core/modes.ts',
+    find: "export const LADDER_DIFFICULTY: readonly Difficulty[] = [\n  'casual',\n  'casual',\n  'pro',\n  'pro',\n  'ace',\n  'ace',\n];",
+    replace: "export const LADDER_DIFFICULTY: readonly Difficulty[] = [\n  'casual',\n  'casual',\n  'casual',\n  'pro',\n  'ace',\n  'ace',\n];",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'the ladder advances on a win',
+    file: 'src/core/modes.ts',
+    find: "  if (outcome === 'player') {\n    return 'advance';\n  }",
+    replace: "  if (outcome === 'player') {\n    return 'replay';\n  }",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'a loss puts the ladder back to the first opponent',
+    file: 'src/core/modes.ts',
+    find: "  if (step === 'restart') {\n    return 1;\n  }",
+    replace: "  if (step === 'restart') {\n    return at;\n  }",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'the top of the ladder has nowhere to advance to',
+    file: 'src/core/modes.ts',
+    find: '    return Math.min(at + 1, LADDER_TOTAL);',
+    replace: '    return at + 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'a ladder rung is played to the target it is given',
+    file: 'src/core/modes.ts',
+    find: 'export const LADDER_TARGET = 3;',
+    replace: 'export const LADDER_TARGET = 5;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'the progress store keeps what it is given',
+    file: 'src/core/modes.ts',
+    find: '      held = normaliseProgress(next);',
+    replace: '      void next;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J3',
+    name: 'a stored rung outside the ladder is clamped into it',
+    file: 'src/core/modes.ts',
+    find: '        ? Math.min(Math.max(Math.trunc(rung), 1), LADDER_TOTAL)',
+    replace: '        ? Math.trunc(rung)',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J4',
+    name: 'Hotseat has no opponent profile for anything to answer with',
+    file: 'src/core/modes.ts',
+    find: '    profile: undefined,\n    opponentName: PLAYER_TWO,',
+    replace: '    profile: CASUAL,\n    opponentName: PLAYER_TWO,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J4',
+    name: 'Hotseat names the side to act rather than calling it yours',
+    file: 'src/core/modes.ts',
+    find: '    playerName: PLAYER_ONE,',
+    replace: '    playerName: undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J4',
+    name: 'the turn indicator uses the name a mode gave the player side',
+    file: 'src/ui/components/hud.ts',
+    find: '        : `${playerName.toUpperCase()} IS AIMING`;',
+    replace: "        : 'YOUR TURN';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the aim guide defaults on at Casual and off above it',
+    file: 'src/core/modes.ts',
+    find: "  return difficulty === 'casual';",
+    replace: '  return true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the menu puts the guide back to the default of what was chosen',
+    file: 'src/ui/components/mode-panel.ts',
+    find: '    guide = guideOnByDefault(difficultyOf(current()));',
+    replace: '    guide = guideOnByDefault(difficultyOf(current())) || guide;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'a group the mode does not read is refused in place',
+    file: 'src/ui/components/mode-panel.ts',
+    find: "        input.setAttribute('aria-disabled', applies ? 'false' : 'true');",
+    replace: "        input.setAttribute('aria-disabled', 'false');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the prediction is bounded by the circle own inset',
+    file: 'src/core/guide.ts',
+    find: '    minX: FIELD_LEFT + radius,',
+    replace: '    minX: FIELD_LEFT,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the prediction STOPS at the first ball contact',
+    file: 'src/core/guide.ts',
+    find: '    return { path: [{ x: start.x, y: start.y }, touch], contact: touch, bounce: undefined };',
+    replace: '    return { path: [{ x: start.x, y: start.y }, touch, { x: 0, y: 0 }], contact: touch, bounce: undefined };',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the contact is the FIRST crossing and not the far one',
+    file: 'src/core/guide.ts',
+    find: '  const at = near >= 0 ? near : 0;',
+    replace: '  const at = far >= 0 ? far : 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the one bounce reflects the component the wall owns',
+    file: 'src/core/guide.ts',
+    find: "  const bouncedX = wall.wall === 'left' || wall.wall === 'right' ? -dirX : dirX;",
+    replace: '  const bouncedX = dirX;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'a direction that is not a number predicts nothing at all',
+    file: 'src/core/guide.ts',
+    find: '  if (!Number.isFinite(angleRad)) {\n    return NO_GUIDE;\n  }',
+    replace: '  if (!Number.isFinite(angleRad) && false) {\n    return NO_GUIDE;\n  }',
+    detectedBy: 'unit',
+  },
+  // This entry read UNDETECTED on PF-9's full sweep and the sweep was right:
+  // `firstWall` carried a second refusal for the same case, so the guard above
+  // could be disabled without changing one answer. Two refusals for one
+  // property means one of them is decorative whichever way the mutation lands.
+  // The dead branch is gone, `firstWall` answers a hit rather than perhaps-one,
+  // and the pair below is the pair of refusals that survives, each with a case
+  // of its own in `tests/unit/aim-guide.test.ts`.
+  {
+    item: 'J5',
+    name: 'a starting point that is not a number predicts nothing at all',
+    file: 'src/core/guide.ts',
+    find: '  if (!Number.isFinite(start.x) || !Number.isFinite(start.y)) {',
+    replace: '  if (false && (!Number.isFinite(start.x) || !Number.isFinite(start.y))) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the dotted pattern carries across the bounce',
+    file: 'src/render/guide.ts',
+    find: '      const into = phase % GUIDE_PERIOD;',
+    replace: '      const into = along % GUIDE_PERIOD;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the contact is marked where the prediction puts it',
+    file: 'src/render/guide.ts',
+    find: '    context.arc(contact.x, contact.y, GUIDE_MARKER_RADIUS, 0, TAU);',
+    replace: '    context.arc(0, 0, GUIDE_MARKER_RADIUS, 0, TAU);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J5',
+    name: 'the aim arrow starts at the circle the frame names as launching',
+    file: 'src/render/pitch.ts',
+    find: '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);',
+    replace: '    drawAimArrow(surface.context, palette, world.player, aim);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J6',
+    name: 'SPEC section 13 Change mode has an edge out of GAME_OVER',
+    file: 'src/core/match.ts',
+    find: "    if (state.kind === 'PAUSED' || state.kind === 'GAME_OVER') {",
+    replace: "    if (state.kind === 'PAUSED') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J6',
+    name: 'the next opponent is offered on a win and only on a win',
+    file: 'src/ui/components/game-over-panel.ts',
+    find: "        options.onNextOpponent !== undefined && step === 'advance' && !complete,",
+    replace: '        options.onNextOpponent !== undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J6',
+    name: 'the ladder restart is offered on a loss and at the top',
+    file: 'src/ui/components/game-over-panel.ts',
+    find: "        options.onRestartLadder !== undefined && (step === 'restart' || complete),",
+    replace: '        options.onRestartLadder !== undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J6',
+    name: 'a refused game-over action ignores a press',
+    file: 'src/ui/components/game-over-panel.ts',
+    find: "      if (button.getAttribute('aria-disabled') === 'true') {\n        return;\n      }",
+    replace: "      if (button.getAttribute('aria-disabled') === 'true' && false) {\n        return;\n      }",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J8',
+    name: 'the first-ever match holds the guide on for its first turns',
+    file: 'src/core/modes.ts',
+    find: '  if (firstEverMatch && turnsTaken < FIRST_MATCH_GUIDE_TURNS) {',
+    replace: '  if (firstEverMatch && turnsTaken < 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J8',
+    name: 'the first-ever guide runs for exactly the two turns stated',
+    file: 'src/core/modes.ts',
+    find: 'export const FIRST_MATCH_GUIDE_TURNS = 2;',
+    replace: 'export const FIRST_MATCH_GUIDE_TURNS = 3;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'J1',
+    name: 'the mode chosen at the menu is what the match is configured with',
+    file: 'src/main.ts',
+    find: "    match.dispatch({ kind: 'configure', configuration: setup.configuration });",
+    replace: '    void setup.configuration;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'J4',
+    name: 'the opponent driver answers its own seam at the root',
+    file: 'src/main.ts',
+    find: '      respond(match, profile, opponent);',
+    replace: '      void respond;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'J7',
+    name: 'a hidden tab raises the pause intent the chart answers',
+    file: 'src/main.ts',
+    find: '    if (document.hidden) {\n      pauseNow();\n    }',
+    replace: '    if (document.hidden && false) {\n      pauseNow();\n    }',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'J8',
+    name: 'How to Play is shown on a first launch',
+    file: 'src/main.ts',
+    find: '    chrome.showHowToPlay();',
+    replace: '    void chrome;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'J5',
+    name: 'the guide the root decided on reaches the frame that draws it',
+    file: 'src/main.ts',
+    find: '      options.guide = predictGuide(acting, world.ball, preview.aim.angleRad);',
+    replace: '      void predictGuide;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'J3',
+    name: 'the rung a result earned is recorded at the whistle',
+    file: 'src/main.ts',
+    find: '    recordLadder();',
+    replace: '    void recordLadder;',
+    detectedBy: 'browser',
+  },
 ];
 
 /**
@@ -4103,26 +4510,24 @@ function occurrences(haystack, needle) {
 }
 
 /**
- * Ten minutes against a suite that takes seconds, and it is a fourth safety
- * property rather than a tuning number. A mutation can leave the code in a
- * state where a test loops forever rather than failing, and a synchronous loop
- * is not something a test runner's own timeout can interrupt. Without a
- * deadline here the whole gate hangs and reports nothing; with one, the
- * detector is killed, the run is not a pass, and the entry is correctly
- * reported as detected. Every loop in the suite carries its own budget for the
- * same reason; this is the backstop for the one that does not.
+ * The deadline is a fourth safety property rather than a tuning number. A
+ * mutation can leave the code in a state where a test loops forever rather than
+ * failing, and a synchronous loop is not something a test runner's own timeout
+ * can interrupt. Without a deadline here the whole gate hangs and reports
+ * nothing; with one, the detector is killed, the run is not a pass, and the
+ * entry is correctly reported as detected. Every loop in the suite carries its
+ * own budget for the same reason; this is the backstop for the one that does
+ * not. The number itself is each detector's own, declared beside it.
  */
-const DETECTOR_TIMEOUT = 10 * 60 * 1000;
-
-function detectorPasses(name) {
+function detectorPasses(name, whole = false) {
   const detector = DETECTORS[name];
   try {
-    execFileSync(process.execPath, detector.argv(), {
+    execFileSync(process.execPath, detector.argv(whole), {
       cwd: PROJECT_ROOT,
       stdio: 'pipe',
       env: { ...process.env, CI: '1' },
       maxBuffer: 64 * 1024 * 1024,
-      timeout: DETECTOR_TIMEOUT,
+      timeout: detector.timeout,
     });
     return { passed: true, output: '' };
   } catch (error) {
@@ -4170,9 +4575,24 @@ function runAddition(entry) {
 }
 
 export function main() {
+  // The deadlines, checked before they are relied on. There is deliberately NO
+  // entry attacking a detector's timeout: the only way to witness a missing one
+  // is to run a mutation that hangs and wait for the gate not to end, so the
+  // property is unisolatable by construction and an entry for it could never
+  // fail. This refusal is what stands in its place, and it costs nothing.
+  for (const [name, detector] of Object.entries(DETECTORS)) {
+    if (!Number.isFinite(detector.timeout) || detector.timeout <= 0) {
+      console.log(
+        `  FAIL  the ${name} detector declares no usable deadline, so a hung ` +
+          'mutation would stall this gate instead of counting as detected.',
+      );
+      return 1;
+    }
+  }
+
   console.log('== baseline ==');
   for (const name of Object.keys(DETECTORS)) {
-    const result = detectorPasses(name);
+    const result = detectorPasses(name, true);
     if (!result.passed) {
       console.log(`  FAIL  ${DETECTORS[name].label} is red before any mutation`);
       console.log(result.output.split('\n').slice(-25).join('\n'));

@@ -28,6 +28,10 @@
  *
  * THE PASS ORDER is DESIGN section 7's: pitch, goal frames, effects behind,
  * entities, aim arrow, effects in front. All six live in `drawFrame` below.
+ * SPEC section 11's guide joined the aim pass at PF-9, immediately under the
+ * arrow rather than as a seventh pass of its own, because the guide and the
+ * arrow are two drawings of one aim and the order between them is the only
+ * thing that had to be decided.
  * The aim pass and the per-frame clear sat at the composition root from PF-5
  * until PF-12, because this file was off that part's surface; they moved in
  * here the moment a pass had to land IN FRONT of the arrow, which is the first
@@ -61,13 +65,15 @@ import {
   WALL_THICKNESS,
 } from '../core/config';
 import type { AimPreview } from '../core/aiming';
-import type { World } from '../core/bodies';
+import type { Body, World } from '../core/bodies';
+import type { AimGuide } from '../core/guide';
 import { BORDER, RADIUS, SPACE } from './tokens';
 import type { PitchPalette } from './tokens';
 import { applySurfaceTransform, backingRatio, type Surface } from './surface';
 import { TAU, drawEntities } from './entities';
 import type { Facing, Glyphs } from './entities';
 import { drawAimArrow } from './arrow';
+import { drawAimGuide } from './guide';
 import type { EffectsFrame, ShakeOffset } from './effects';
 
 /** A rect in design space: the corner and the extent, y up. */
@@ -352,6 +358,20 @@ export interface FrameOptions {
   readonly createLayer?: () => HTMLCanvasElement;
   /** SPEC section 5's aim of the moment, or absent when nobody is aiming. */
   readonly aim?: AimPreview;
+  /**
+   * SPEC section 11's prediction, computed by `core/guide.ts` and drawn by
+   * `render/guide.ts`. Absent when the guide is off, which is the composition
+   * root's decision and never this file's.
+   */
+  readonly guide?: AimGuide;
+  /**
+   * The circle the aim belongs to, for a mode where it is not the player's.
+   * SPEC section 9's Hotseat alternates two humans, so the second turn aims
+   * the opponent's circle; the aim arrow and the guide both start there and
+   * they must start at the SAME place, which is what this option guarantees.
+   * Absent, the aim is the player's, which is every other mode.
+   */
+  readonly launcher?: Body;
   /** SPEC section 14's motion set, absent in a composition that has none. */
   readonly effects?: EffectsFrame;
 }
@@ -390,8 +410,15 @@ export function drawFrame(
   }
   drawEntities(surface.context, palette, world, options?.facing, options?.glyphs);
   const aim = options?.aim;
+  // SPEC section 11's guide is part of the aim, so it lands inside the aim
+  // pass and under the arrow: the arrow is the shot and the guide is the
+  // advice about it, and advice does not paint over the thing it is about.
+  const guide = options?.guide;
+  if (guide !== undefined) {
+    drawAimGuide(surface.context, palette, guide);
+  }
   if (aim !== undefined) {
-    drawAimArrow(surface.context, palette, world.player, aim);
+    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);
   }
   if (effects !== undefined) {
     effects.drawInFront(surface.context, palette, world, aim ?? null);

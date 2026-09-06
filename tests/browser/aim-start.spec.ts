@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { advance, startMatch, turnText } from './support/game';
+
 /**
  * Item C1, method T, evidence `playwright/aim-start`:
  *
@@ -190,12 +192,109 @@ async function readSurface(page: Page, fill: readonly number[]): Promise<Reading
   }, fill);
 }
 
+/**
+ * A press, a drag and a release at the player's circle, with the turn readout
+ * and the aim phase sampled around them, ALL IN ONE PAGE TASK.
+ *
+ * WHY THE WHOLE ATTEMPT IS ONE TASK, from PF-9. The opponent answers its own
+ * turn now, so an opponent turn lasts SPEC section 8's pre-launch delay and
+ * then moves on by itself. A press and two whole-canvas reads taken as
+ * separate round trips take longer than that on a loaded machine, so the
+ * refusal would be graded against whatever state the machine happened to be
+ * in by the time the reads finished. Inside one task nothing advances
+ * underneath: the readout before, the three phase samples and the readout
+ * after all describe the same turn.
+ *
+ * The pixel comparison stays where it can still mean something. A canvas only
+ * redraws on the next animation frame, and a frame is exactly what this task
+ * refuses to let happen, so "nothing was drawn" is asserted here as the aim
+ * phase never leaving idle. The drawn evidence for a refused press lives in
+ * the miss test above, which runs in the player's own turn where the world is
+ * still and no clock is racing it.
+ */
+async function refusedPress(
+  page: Page,
+  fill: readonly number[],
+): Promise<{
+  turnBefore: string;
+  turnAfter: string;
+  afterDown: string;
+  afterMove: string;
+  afterEnd: string;
+}> {
+  return page.evaluate((wanted) => {
+    const canvas = document.querySelector('[data-pf="play-surface"]');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('the play surface is not in the document');
+    }
+    const readout = document.querySelector('[data-pf="turn"]');
+    if (!(readout instanceof HTMLElement)) {
+      throw new Error('the turn readout is not in the document');
+    }
+    const context = canvas.getContext('2d');
+    if (context === null) {
+      throw new Error('the play surface has no 2d context');
+    }
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const scaleX = canvas.width / 1280;
+    const scaleY = canvas.height / 720;
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (let row = 0; row < canvas.height; row += 1) {
+      for (let column = 0; column < canvas.width; column += 1) {
+        const at = (row * canvas.width + column) * 4;
+        const designX = column / scaleX;
+        if (designX <= 100) {
+          continue;
+        }
+        if (
+          Math.abs(Number(pixels[at]) - Number(wanted[0])) > 6 ||
+          Math.abs(Number(pixels[at + 1]) - Number(wanted[1])) > 6 ||
+          Math.abs(Number(pixels[at + 2]) - Number(wanted[2])) > 6
+        ) {
+          continue;
+        }
+        const designY = 720 - row / scaleY;
+        minX = Math.min(minX, designX);
+        maxX = Math.max(maxX, designX);
+        minY = Math.min(minY, designY);
+        maxY = Math.max(maxY, designY);
+      }
+    }
+    const rect = canvas.getBoundingClientRect();
+    const clientX = rect.left + (((minX + maxX) / 2) * rect.width) / 1280;
+    const clientY = rect.top + ((720 - (minY + maxY) / 2) * rect.height) / 720;
+    const across = (100 * rect.width) / 1280;
+    const fire = (type: string, x: number): void => {
+      canvas.dispatchEvent(
+        new PointerEvent(type, { pointerId: 1, clientX: x, clientY, bubbles: true }),
+      );
+    };
+    const phase = (): string => canvas.dataset['pfAim'] ?? '';
+    const turnBefore = readout.textContent ?? '';
+    fire('pointerdown', clientX);
+    const afterDown = phase();
+    fire('pointermove', clientX + across);
+    const afterMove = phase();
+    fire('pointerup', clientX + across);
+    return {
+      turnBefore,
+      turnAfter: readout.textContent ?? '',
+      afterDown,
+      afterMove,
+      afterEnd: phase(),
+    };
+  }, fill);
+}
+
 test.describe('PF-5 aiming begins, item C1', () => {
   test.beforeEach(async ({ page }) => {
     test.setTimeout(A_WHOLE_TEST);
     page.setDefaultTimeout(SETTLE.timeout);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto('/');
+    await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     await nextFrames(page, 10);
   });
@@ -302,7 +401,19 @@ test.describe('PF-5 aiming begins, item C1', () => {
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
   });
 
-  test('begins no aim once the turn has passed to the opponent', async ({ page }) => {
+  test('begins no aim once the turn has passed to the opponent', { tag: '@drive' }, async ({
+    page,
+  }) => {
+    // THE PAGE'S CLOCK IS THE TEST'S, from before the navigation. The opponent
+    // answers its own turn now, so that turn lasts SPEC section 8's pre-launch
+    // delay and then moves on by itself; driving the frames by hand and then
+    // stopping is what holds the match in the turn this test is about, on
+    // every engine and however loaded the machine is.
+    await page.clock.install({ time: 0 });
+    await startMatch(page);
+    await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    await advance(page, 4);
+
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
     const box = await surfaceBox(page);
@@ -316,24 +427,26 @@ test.describe('PF-5 aiming begins, item C1', () => {
     await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 5 });
     await page.mouse.up();
+    let reached = false;
+    for (let frame = 0; frame < 200 && !reached; frame += 1) {
+      await advance(page, 1);
+      reached = (await turnText(page)) === 'OPPONENT IS AIMING';
+    }
+    expect(reached).toBe(true);
     await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
 
     // Presence before reachability, in this phase too.
     await expect(surface).toHaveCount(1);
     await expect(surface).toHaveAttribute('data-pf-aim', 'idle');
 
-    await captureBaseline(page);
-    const settled = await readSurface(page, PLAYER_FILL);
-    const press = clientOf(box, settled.player.x, settled.player.y);
-    await page.mouse.move(press.x, press.y);
-    await page.mouse.down();
-    await page.mouse.move(press.x + 100, press.y, { steps: 5 });
-    await nextFrames(page);
-
+    // The whole attempt in one page task, so the turn the refusal is graded
+    // against is the turn that was read with it. See `refusedPress`.
+    const refused = await refusedPress(page, PLAYER_FILL);
+    expect(refused.turnBefore).toBe('OPPONENT IS AIMING');
+    expect(refused.turnAfter).toBe(refused.turnBefore);
+    expect(refused.afterDown).toBe('idle');
+    expect(refused.afterMove).toBe('idle');
+    expect(refused.afterEnd).toBe('idle');
     await expect(surface).toHaveAttribute('data-pf-aim', 'idle');
-    const refused = await readSurface(page, PLAYER_FILL);
-    expect(refused.changed).toBe(0);
-    await page.mouse.up();
-    await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
   });
 });

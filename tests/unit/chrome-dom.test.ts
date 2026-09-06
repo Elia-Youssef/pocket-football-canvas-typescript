@@ -207,10 +207,45 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     const installed = installFakeDocument();
     try {
       const host = installed.document.createElement('div');
-      mountChrome(host as unknown as HTMLElement, { match: createMatch(), onThemeChange: () => undefined });
+      // The chrome as the composition root mounts it, mode menu included,
+      // so the census describes the chrome the game actually ships. It grew
+      // at PF-9 by SPEC section 13's three further game-over actions and by
+      // SPEC section 9's menu; nothing that was here was removed or renamed.
+      mountChrome(host as unknown as HTMLElement, {
+        match: createMatch(),
+        onThemeChange: () => undefined,
+        modes: {
+          initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
+          guideOn: true,
+          onStart: () => undefined,
+          onPlayAgain: () => undefined,
+          onChangeMode: () => undefined,
+          onNextOpponent: () => undefined,
+          onRestartLadder: () => undefined,
+          onHowToDismissed: () => undefined,
+          ladderRung: () => 1,
+          gameOver: () => ({ opponentName: 'Opponent' }),
+        },
+      });
       const census = censusControls(host as unknown as FakeElement);
       expect(census).toEqual([
         'Pause',
+        'Quick Match',
+        'First to N',
+        'Ladder',
+        'Hotseat',
+        '60 seconds',
+        '90 seconds',
+        '120 seconds',
+        '3 goals',
+        '5 goals',
+        '7 goals',
+        'Casual',
+        'Pro',
+        'Ace',
+        'Aim guide',
+        'Start',
+        'How to play',
         'Resume',
         'Settings',
         'How to play',
@@ -221,6 +256,9 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         'Close',
         'Close',
         'Play Again',
+        'Change mode',
+        'Next opponent',
+        'Restart ladder',
       ]);
     } finally {
       installed.restore();
