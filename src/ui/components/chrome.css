@@ -1,0 +1,154 @@
+/*
+ * The chrome stylesheet, item M1: the HUD and the four panels as layout,
+ * around a canvas that draws the play surface and nothing else.
+ *
+ * Every value here resolves through a custom property from src/ui/tokens.css.
+ * This file carries no literal colour, size, radius or duration, because
+ * QUALITY-BAR section 15 allows literals in the token layer only, and the
+ * sweep in tests/unit/tokens.test.ts reads this file like any other under
+ * src/. A panel that hides is the `hidden` attribute; the explicit display
+ * rule below is not decoration - a display value on .pf-panel would
+ * otherwise beat the browser's own [hidden] rule and a closed overlay
+ * would still cover the pitch.
+ *
+ * The chrome layout here is the minimum the HUD needs to be screen-anchored
+ * and legible; breakpoints and the adaptive rules are PF-14's.
+ */
+
+[hidden] {
+  display: none;
+}
+
+body {
+  margin: 0;
+  background: var(--pf-ground);
+  color: var(--pf-text);
+  font-size: var(--type-base);
+  line-height: var(--leading-body);
+}
+
+.pf-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--pf-ground);
+  color: var(--pf-text);
+}
+
+.pf-score {
+  font-size: var(--type-lg);
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-centre {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.pf-clock {
+  font-size: var(--type-lg);
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-target {
+  font-size: var(--type-sm);
+  color: var(--pf-text-muted);
+  letter-spacing: var(--space-1);
+}
+
+.pf-centre-score {
+  font-size: var(--type-sm);
+  color: var(--pf-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-turn {
+  font-size: var(--type-sm);
+  color: var(--pf-accent);
+  letter-spacing: var(--space-1);
+}
+
+.pf-ladder {
+  font-size: var(--type-xs);
+  color: var(--pf-text-muted);
+}
+
+.pf-hud .pf-pause,
+.pf-panel .pf-choice-button {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--type-base);
+  color: var(--pf-text);
+  background: transparent;
+  border: var(--border-hair) solid var(--pf-text-muted);
+  border-radius: var(--radius-md);
+}
+
+.pf-hud .pf-pause[aria-disabled='true'] {
+  color: var(--pf-text-muted);
+  border-style: dashed;
+}
+
+.pf-panel {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--pf-ground);
+  color: var(--pf-text);
+}
+
+.pf-panel-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--border-thin) solid var(--pf-text-muted);
+  border-radius: var(--radius-lg);
+  background: var(--pf-ground);
+  color: var(--pf-text);
+}
+
+.pf-panel-heading {
+  margin: 0;
+  font-size: var(--type-xl);
+  line-height: var(--leading-tight);
+}
+
+.pf-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pf-panel-text {
+  margin: 0;
+  color: var(--pf-text);
+}
+
+.pf-panel-result {
+  margin: 0;
+  font-size: var(--type-lg);
+  line-height: var(--leading-tight);
+  color: var(--pf-accent);
+}
+
+.pf-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pf-choice-input {
+  inline-size: var(--target-min);
+  block-size: var(--target-min);
+  margin: 0;
+}
