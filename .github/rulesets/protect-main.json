@@ -8,7 +8,13 @@
       "exclude": []
     }
   },
-  "bypass_actors": [],
+  "bypass_actors": [
+    {
+      "actor_id": 78515123,
+      "actor_type": "User",
+      "bypass_mode": "pull_request"
+    }
+  ],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
