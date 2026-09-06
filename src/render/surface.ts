@@ -37,17 +37,135 @@ export interface Surface {
    * is that height times the device pixel ratio, and a magnitude stated
    * against one and applied in the other would carry the ratio into a chain
    * QUALITY-BAR section 7 keeps it out of.
+   *
+   * THE SHAKE CAP RIDES THIS NUMBER, and QUALITY-BAR section 4's size setting
+   * moves it. The cap is one and a half percent of the rendered height, which
+   * is 10.8 CSS pixels at the full-size fit and 21.6 at 200 percent; it stays
+   * a constant fraction of what the player sees, which is what the effects
+   * layer intends, and it stays harmless to the pointer mapping for the same
+   * reason it always was: the input lock refuses an aim while bodies move.
    */
   cssHeight: number;
 }
 
 /**
  * The CSS height that keeps the logical 1280 x 720 ratio for a CSS width.
- * The letterbox policy is PF-14's; until that part lands this ratio is the
- * whole sizing rule, applied here so no caller recomputes it.
+ * The whole sizing rule is this ratio plus the fit below: a surface is only
+ * ever described by its CSS WIDTH, and its height follows, so no caller can
+ * size the two axes independently and squash the pitch.
  */
 export function cssHeightFor(cssWidth: number): number {
   return (cssWidth * LOGICAL_HEIGHT) / LOGICAL_WIDTH;
+}
+
+/**
+ * SPEC section 17's play-surface size, as the multiplier it names.
+ *
+ * The setting is stated in percent and applied as a factor, and it is applied
+ * to the CSS box alone: QUALITY-BAR section 4 asks it to raise the
+ * logical-to-CSS scale, which `logicalScale` below computes from that box, and
+ * the logical space stays 1280 x 720 whatever it is set to. That is what keeps
+ * SPEC section 6.1's 30 px and 180 px drag constants meaning the same thing at
+ * every size: they are design units, and nothing here touches design units.
+ */
+export function surfaceFactor(sizePercent: number): number {
+  return sizePercent / 100;
+}
+
+/**
+ * The CSS width the play surface takes inside an available box.
+ *
+ * THE LETTERBOX IS THIS ONE MINIMUM. SPEC section 2.1 scales the SAME
+ * landscape pitch to fit and centres it, so the fit is the smaller of what the
+ * width allows and what the height allows, and the axis that did not bind is
+ * where the empty bands appear. A width-driven fit that ignored the height is
+ * what makes a pitch taller than the viewport it is drawn in, and it is why
+ * the height is a parameter here rather than a consequence.
+ *
+ * THE BASE IS FLOORED TO A WHOLE CSS PIXEL BEFORE THE FACTOR IS APPLIED, and
+ * the order matters twice. A box measured as an integer can be a fraction
+ * narrower than it reports, so a surface sized to the reported number can
+ * overflow its container by a fraction and raise a scrollbar over nothing;
+ * flooring first puts the surface inside the box it was measured against.
+ * Flooring BEFORE the factor rather than after is what makes the size setting
+ * exact: 200 percent is exactly twice 100 percent, where a floor taken
+ * afterwards would land a pixel either side of it and the criterion asks for
+ * the factor.
+ *
+ * The one-pixel floor is the same refusal `resizeSurface` makes: a collapsed
+ * host draws a one-pixel surface rather than a zero-sized backing store that
+ * silently loses everything drawn into it.
+ */
+export function fitCssWidth(
+  availableWidth: number,
+  availableHeight: number,
+  sizePercent: number,
+): number {
+  const byHeight = (availableHeight * LOGICAL_WIDTH) / LOGICAL_HEIGHT;
+  const base = Math.min(availableWidth, byHeight);
+  const whole = Number.isFinite(base) ? Math.floor(base) : 0;
+  return Math.max(1, whole) * surfaceFactor(sizePercent);
+}
+
+/** Which axes a surface of this CSS width is larger than its box in. */
+export interface SurfaceOverflow {
+  readonly across: boolean;
+  readonly down: boolean;
+}
+
+/**
+ * Whether a surface of this CSS width is larger than the box it sits in,
+ * PER AXIS. For every box at least one CSS pixel in each axis the answer at
+ * 100 percent is false in both, because the fit is the box's own minimum;
+ * above it the answer is what tells the frame to stop centring the surface,
+ * since a centred overflow puts its own start edge out of reach of every
+ * scroll position.
+ *
+ * TWO ANSWERS AND NOT ONE, because the two axes overflow separately: a 125
+ * percent surface in a portrait box is wider than its box and shorter than
+ * it, and pinning both axes on one boolean would collapse the band in the
+ * axis that still fits and jam the pitch against an edge. That is the common
+ * case rather than an edge case: every portrait viewport above 100 percent
+ * overflows exactly one axis.
+ */
+export function surfaceOverflow(
+  availableWidth: number,
+  availableHeight: number,
+  cssWidth: number,
+): SurfaceOverflow {
+  return {
+    across: cssWidth > availableWidth,
+    down: cssHeightFor(cssWidth) > availableHeight,
+  };
+}
+
+/**
+ * The scroll offsets that put a design point in the middle of a viewport of
+ * `viewWidth` by `viewHeight` CSS pixels over this surface.
+ *
+ * THE CONVERSION LIVES HERE BECAUSE EVERY CONVERSION DOES. DESIGN section 7
+ * gives this module the one coordinate transform, and a caller that turned a
+ * design point into a CSS offset by hand would be a second one. The y term
+ * carries the same flip the draw transform does: the design space has its
+ * origin at the bottom left and a scroll offset is measured from the top.
+ *
+ * It answers an offset that may be outside the scrollable range, and that is
+ * deliberate: a scroll container clamps what it is given, so the caller hands
+ * over the ideal and the platform decides what is reachable, which is exactly
+ * what happens at the four edges of the pitch.
+ */
+export function scrollToCentre(
+  surface: Surface,
+  designX: number,
+  designY: number,
+  viewWidth: number,
+  viewHeight: number,
+): { left: number; top: number } {
+  const cssPerUnit = surface.cssHeight / LOGICAL_HEIGHT;
+  return {
+    left: designX * cssPerUnit - viewWidth / 2,
+    top: (LOGICAL_HEIGHT - designY) * cssPerUnit - viewHeight / 2,
+  };
 }
 
 /**

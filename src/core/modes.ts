@@ -335,6 +335,16 @@ export interface Progress {
   readonly ladderRung: number;
   /** SPEC section 19: How to Play has been dismissed at least once. */
   readonly howToDismissed: boolean;
+  /**
+   * SPEC section 2.1: the portrait hint has been dismissed at least once.
+   *
+   * A FLAG OF THE SAME KIND AS THE ONE ABOVE, and it belongs beside it rather
+   * than among the settings. Nothing chooses it and nothing offers it back: it
+   * records something the player did once, it only ever goes one way, and
+   * `Settings` says in as many words that it holds SPEC section 17's settings
+   * and nothing that is not a setting.
+   */
+  readonly rotateHintDismissed: boolean;
   /** SPEC section 19: a match has been started before, so this is not the first. */
   readonly playedBefore: boolean;
 }
@@ -343,6 +353,7 @@ export interface Progress {
 export const NEW_PROGRESS: Progress = {
   ladderRung: 1,
   howToDismissed: false,
+  rotateHintDismissed: false,
   playedBefore: false,
 };
 
@@ -372,6 +383,7 @@ export function normaliseProgress(raw: unknown): Progress {
   const document = raw as Record<string, unknown>;
   const rung = document['ladderRung'];
   const dismissed = document['howToDismissed'];
+  const rotate = document['rotateHintDismissed'];
   const played = document['playedBefore'];
   return {
     ladderRung:
@@ -379,6 +391,7 @@ export function normaliseProgress(raw: unknown): Progress {
         ? Math.min(Math.max(Math.trunc(rung), 1), LADDER_TOTAL)
         : NEW_PROGRESS.ladderRung,
     howToDismissed: dismissed === true,
+    rotateHintDismissed: rotate === true,
     playedBefore: played === true,
   };
 }

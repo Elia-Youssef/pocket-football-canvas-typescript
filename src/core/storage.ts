@@ -55,7 +55,25 @@ import {
  */
 export const STORAGE_KEY = 'pocket-football:save';
 
-/** The shape the game writes today. Bumped when a stored field changes meaning. */
+/**
+ * The shape the game writes today. Bumped when a stored field changes meaning.
+ *
+ * A FIELD ADDED TO THE DOCUMENT IS NOT SUCH A CHANGE, and the portrait hint's
+ * dismissal is the first one to test the rule as written. It changes no
+ * existing field's meaning, the normalise door already answers for a field
+ * that is absent by giving it the new-player value, and a returning player who
+ * has never seen the hint has honestly never dismissed it. A bump would cost
+ * something real for nothing: `migrate` refuses a version it cannot reach
+ * WHOLE, so a document written at version 3 and then read by a build rolled
+ * back to this one would start the player again, and the step from 2 to 3
+ * would have nothing to do that the normalise door does not already do.
+ *
+ * The reserved settings above are the other half of the same rule. They were
+ * declared before their controls existed precisely so that a control landing
+ * later writes into a document that already carries its field; the field here
+ * had no such slot to be reserved in, because SPEC section 2.1's hint arrived
+ * with the layout part rather than with the settings SPEC section 17 lists.
+ */
 export const DOCUMENT_VERSION = 2;
 
 /**

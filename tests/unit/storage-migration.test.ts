@@ -102,7 +102,7 @@ describe('PF-10 saved state is one namespaced versioned document, item I1', () =
     const store = createDataStore(() => backing);
     expect(backing.keys()).toEqual([]);
 
-    store.write({ ladderRung: 3, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 3, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(backing.keys()).toEqual([STORAGE_KEY]);
 
     store.save({
@@ -117,14 +117,14 @@ describe('PF-10 saved state is one namespaced versioned document, item I1', () =
 
     store.clear();
     expect(backing.keys()).toEqual([]);
-    store.write({ ladderRung: 2, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 2, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     expect(backing.keys()).toEqual([STORAGE_KEY]);
   });
 
   it('writes the version inside the document, beside the data', () => {
     const backing = createBacking();
     const store = createDataStore(() => backing);
-    store.write({ ladderRung: 5, howToDismissed: true, playedBefore: true });
+    store.write({ ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true });
     const text = backing.getItem(STORAGE_KEY);
     expect(text).not.toBeNull();
     const written = JSON.parse(text ?? '') as Record<string, unknown>;
@@ -147,16 +147,21 @@ describe('PF-10 a version bump migrates losslessly where it can, item I1', () =>
     expect(NEW_PROGRESS).toEqual({
       ladderRung: 1,
       howToDismissed: false,
+      rotateHintDismissed: false,
       playedBefore: false,
     });
     const data = migrate(
       JSON.parse(
-        versionOne({ ladderRung: 4, howToDismissed: true, playedBefore: true }),
+        versionOne({ ladderRung: 4, howToDismissed: true, rotateHintDismissed: true, playedBefore: true }),
       ) as unknown,
     );
     expect(data.progress).toEqual({
       ladderRung: 4,
       howToDismissed: true,
+      // A version 1 document predates SPEC section 2.1's hint entirely, so
+      // the lift has nothing to carry and the normalise door supplies the
+      // new-player value: a player who never saw the hint never dismissed it.
+      rotateHintDismissed: false,
       playedBefore: true,
     });
   });
@@ -178,7 +183,7 @@ describe('PF-10 a version bump migrates losslessly where it can, item I1', () =>
 
   it('leaves a migrated document stored at the current version', () => {
     const backing = createBacking(
-      versionOne({ ladderRung: 3, howToDismissed: true, playedBefore: true }),
+      versionOne({ ladderRung: 3, howToDismissed: true, rotateHintDismissed: true, playedBefore: true }),
     );
     const store = createDataStore(() => backing);
     expect(store.read().ladderRung).toBe(3);
@@ -215,6 +220,7 @@ describe('PF-10 a version bump discards cleanly where it cannot, item I1', () =>
       'howToDismissed',
       'ladderRung',
       'playedBefore',
+      'rotateHintDismissed',
     ]);
     expect(JSON.stringify(data)).not.toContain('Cinder');
     expect(JSON.stringify(data)).not.toContain('streak');
@@ -226,7 +232,7 @@ describe('PF-10 a version bump discards cleanly where it cannot, item I1', () =>
     // only against a version 1 document cannot tell which of them did it.
     const data = migrate({
       version: DOCUMENT_VERSION,
-      progress: { ladderRung: 3, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 3, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
       lastOpponent: 'Cinder',
       streak: 11,
     });
@@ -258,7 +264,7 @@ describe('PF-10 a version bump discards cleanly where it cannot, item I1', () =>
   it('refuses a document from the future whole, rather than half reading it', () => {
     const future = {
       version: DOCUMENT_VERSION + 1,
-      progress: { ladderRung: 5, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
       settings: { ...NEW_SETTINGS, theme: 'dark', difficulty: 'ace' },
       counters: { matchesPlayed: 12, goalsFor: 40, goalsAgainst: 11 },
     };
@@ -274,7 +280,7 @@ describe('PF-10 a version bump discards cleanly where it cannot, item I1', () =>
   });
 
   it('refuses every version that names no shape at all', () => {
-    const progress = { ladderRung: 5, howToDismissed: true, playedBefore: true };
+    const progress = { ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true };
     expect(migrate({ progress })).toEqual(NEW_DATA);
     expect(migrate({ version: 0, progress })).toEqual(NEW_DATA);
     expect(migrate({ version: -1, progress })).toEqual(NEW_DATA);
@@ -298,14 +304,14 @@ describe('PF-10 a version bump discards cleanly where it cannot, item I1', () =>
     // an object, and it is why the guard names arrays explicitly.
     const dressed = Object.assign([], {
       version: DOCUMENT_VERSION,
-      progress: { ladderRung: 5, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 5, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
     });
     expect(migrate(dressed)).toEqual(NEW_DATA);
   });
 
   it('round trips its own bytes, so a written document is a readable one', () => {
     const written: GameData = {
-      progress: { ladderRung: 4, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 4, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
       settings: { ...NEW_SETTINGS, mode: 'first-to', target: 7, difficulty: 'pro' },
       records: { ...NEW_RECORDS, ladder: { goalsFor: 3, goalsAgainst: 1 } },
       counters: { matchesPlayed: 5, goalsFor: 14, goalsAgainst: 6 },
@@ -402,7 +408,7 @@ describe('PF-10 the best result per mode is a documented reading', () => {
 describe('PF-10 the stored document round trips, item I1', () => {
   it('survives a write and a read with every field intact', () => {
     const written: GameData = {
-      progress: { ladderRung: 4, howToDismissed: true, playedBefore: true },
+      progress: { ladderRung: 4, howToDismissed: true, rotateHintDismissed: true, playedBefore: true },
       settings: { ...NEW_SETTINGS, mode: 'first-to', target: 7, difficulty: 'pro' },
       records: { ...NEW_RECORDS, ladder: { goalsFor: 3, goalsAgainst: 1 } },
       counters: { matchesPlayed: 5, goalsFor: 14, goalsAgainst: 6 },

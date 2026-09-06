@@ -248,6 +248,7 @@ describe('PF-9 the persistence seam', () => {
     expect(NEW_PROGRESS).toEqual({
       ladderRung: 1,
       howToDismissed: false,
+      rotateHintDismissed: false,
       playedBefore: false,
     });
   });
@@ -255,7 +256,12 @@ describe('PF-9 the persistence seam', () => {
   it('round trips exactly what it was given', () => {
     const store = createMemoryProgress();
     expect(store.read()).toEqual(NEW_PROGRESS);
-    const next: Progress = { ladderRung: 4, howToDismissed: true, playedBefore: true };
+    const next: Progress = {
+      ladderRung: 4,
+      howToDismissed: true,
+      rotateHintDismissed: true,
+      playedBefore: true,
+    };
     store.write(next);
     expect(store.read()).toEqual(next);
     // And again, so a second write is not a second store.
@@ -267,6 +273,7 @@ describe('PF-9 the persistence seam', () => {
     const store = createMemoryProgress({
       ladderRung: 5,
       howToDismissed: true,
+      rotateHintDismissed: true,
       playedBefore: true,
     });
     expect(store.read().ladderRung).toBe(5);
@@ -289,6 +296,8 @@ describe('PF-9 the persistence seam', () => {
     expect(normaliseProgress({ ladderRung: '3' }).ladderRung).toBe(1);
     expect(normaliseProgress({ howToDismissed: 'yes' }).howToDismissed).toBe(false);
     expect(normaliseProgress({ howToDismissed: true }).howToDismissed).toBe(true);
+    expect(normaliseProgress({ rotateHintDismissed: 'yes' }).rotateHintDismissed).toBe(false);
+    expect(normaliseProgress({ rotateHintDismissed: true }).rotateHintDismissed).toBe(true);
     expect(normaliseProgress({ playedBefore: 1 }).playedBefore).toBe(false);
     expect(normaliseProgress({ playedBefore: true }).playedBefore).toBe(true);
     // An extra field is carried by nothing: the shape is this game's, not the
@@ -296,13 +305,19 @@ describe('PF-9 the persistence seam', () => {
     expect(normaliseProgress({ ladderRung: 3, extra: 'x' })).toEqual({
       ladderRung: 3,
       howToDismissed: false,
+      rotateHintDismissed: false,
       playedBefore: false,
     });
   });
 
   it('normalises on the way in as well as on the way out', () => {
     const store = createMemoryProgress();
-    store.write({ ladderRung: 99, howToDismissed: true, playedBefore: true });
+    store.write({
+      ladderRung: 99,
+      howToDismissed: true,
+      rotateHintDismissed: true,
+      playedBefore: true,
+    });
     expect(store.read().ladderRung).toBe(6);
   });
 });

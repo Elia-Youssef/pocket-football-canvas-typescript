@@ -1,6 +1,6 @@
 /**
- * The chrome wiring: the HUD and the five panels mounted around the play
- * surface, and nothing else.
+ * The chrome wiring: the HUD, SPEC section 2.1's portrait hint and the five
+ * panels mounted around the play surface, and nothing else.
  *
  * WIRING, NOT POLICY. Every control raises an intent or a callback; what
  * each one means lives with the match or with the composition root. The one
@@ -35,10 +35,19 @@
  * THE MODE WIRING IS OPTIONAL, AND ITS ABSENCE IS HONEST. A composition that
  * supplies no modes gets no menu, and the game-over panel's mode actions stay
  * refused in place: SPEC section 13's Change mode needs somewhere to change to.
+ *
+ * NO BREAKPOINT IS DECIDED HERE. QUALITY-BAR section 5's four names are
+ * resolved in `ui/breakpoints.ts` and written onto the root element by the
+ * composition root, and the stylesheet selects on the result; this wiring
+ * mounts the portrait hint unconditionally and never asks how wide anything
+ * is. Nothing under `ui/` measures a rectangle, which is what item M1 is
+ * about, and a second copy of the breakpoint rule here is exactly the drift
+ * that rule exists to prevent.
  */
 
 import type { Match } from '../core/match';
 import type { ModeChoice, ModeSetup } from '../core/modes';
+import { NEW_SETTINGS } from '../core/storage';
 import { createGameOverPanel } from './components/game-over-panel';
 import type { GameOverContext, GameOverPanelOptions } from './components/game-over-panel';
 import { createHowToPanel } from './components/how-to-panel';
@@ -46,6 +55,7 @@ import { createHud } from './components/hud';
 import { createModePanel } from './components/mode-panel';
 import type { ModePanel } from './components/mode-panel';
 import { createPausePanel } from './components/pause-panel';
+import { createPortraitHint } from './components/portrait-hint';
 import { createSettingsPanel } from './components/settings-panel';
 import type { ThemeChoice } from './components/settings-panel';
 
@@ -85,6 +95,22 @@ export interface ChromeOptions {
    */
   readonly initialTheme?: ThemeChoice;
   /**
+   * QUALITY-BAR section 4's play-surface size, raised when it is changed. The
+   * chrome owns the control and the composition root owns the fit, because a
+   * CSS box is not something anything under `ui/` may measure or set.
+   */
+  readonly onSurfaceScaleChange?: (percent: number) => void;
+  /** The stored size the control opens on. The new-player value otherwise. */
+  readonly initialSurfaceScale?: number;
+  /**
+   * SPEC section 2.1's portrait hint, as the stored document left it. A
+   * composition that stores nothing shows it, which is what a player who has
+   * never dismissed it sees.
+   */
+  readonly hintDismissed?: boolean;
+  /** Raised when the hint is put away, so the dismissal can be persisted. */
+  readonly onHintDismissed?: () => void;
+  /**
    * SPEC section 17's Reset all data, raised after the panel's own
    * confirmation. Absent in a composition that stores nothing.
    */
@@ -106,6 +132,13 @@ export interface Chrome {
 
 /** The theme a player who has never chosen one gets, and the reset's target. */
 const NEW_THEME: ThemeChoice = 'system';
+
+/**
+ * The play-surface size a player who has never chosen one gets, and the
+ * reset's target. Consumed from the stored settings rather than restated: the
+ * document owns the new-player value and this is the same one.
+ */
+const NEW_SURFACE_SCALE = NEW_SETTINGS.surfaceScale;
 
 /**
  * The stored theme setting, written where the token stylesheet reads it.
@@ -131,19 +164,34 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
     },
   });
 
+  const hint = createPortraitHint({
+    onDismiss: () => {
+      options.onHintDismissed?.();
+    },
+  });
+  hint.setDismissed(options.hintDismissed ?? false);
+
   const settings = createSettingsPanel({
     onThemeChange: (theme) => {
       applyTheme(theme);
       options.onThemeChange();
     },
-    // THE THEME GOES BACK BEFORE THE DATA GOES. The chrome's own theme policy
-    // puts the override where a new player would have it and asks the pitch to
-    // follow, and only then is the stored data cleared, so the clear is the
-    // last word rather than something a default written over the top of it.
+    onSurfaceScaleChange: (percent) => {
+      options.onSurfaceScaleChange?.(percent);
+    },
+    // THE CHROME'S OWN DEFAULTS GO BACK BEFORE THE DATA GOES. The chrome owns
+    // the theme, the size control and the hint, so each is put where a new
+    // player would have it and the pitch is asked to follow, and only then is
+    // the stored data cleared, so the clear is the last word rather than
+    // something a default written over the top of it. The hint needs no write
+    // of its own: the clear is what puts its stored dismissal back.
     onReset: () => {
       applyTheme(NEW_THEME);
       settings.select(NEW_THEME);
+      settings.selectSurfaceScale(NEW_SURFACE_SCALE);
+      hint.setDismissed(false);
       options.onThemeChange();
+      options.onSurfaceScaleChange?.(NEW_SURFACE_SCALE);
       options.onResetData?.();
     },
     onClose: () => settings.hide(),
@@ -152,6 +200,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   const theme = options.initialTheme ?? NEW_THEME;
   applyTheme(theme);
   settings.select(theme);
+  settings.selectSurfaceScale(options.initialSurfaceScale ?? NEW_SURFACE_SCALE);
 
   const howTo = createHowToPanel({
     onClose: () => dismissHowTo(),
@@ -296,11 +345,18 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   // order; the panels close the document, and paint above the canvas as
   // fixed overlays without depending on where the surface sits in the tree.
   //
+  // THE HINT TAKES THE ROW BETWEEN THE HUD AND THE PITCH, which is what makes
+  // "covers no control" a fact about the layout rather than a measurement: it
+  // is in the flow, so it displaces rather than overlaps. It is inserted
+  // first and the HUD ahead of it, because a stand-in document need only
+  // answer `firstChild` for that and never a sibling walk.
+  //
   // THE MENU IS THE BOTTOM OVERLAY, and its place in the source order is what
   // says so: every other panel opens OVER it, and How to Play opens over it on
   // first launch (SPEC section 19), so a menu appended last would take the
   // presses meant for the overlay above it.
-  host.insertBefore(hud.root, host.firstChild);
+  host.insertBefore(hint.root, host.firstChild);
+  host.insertBefore(hud.root, hint.root);
   if (mode !== undefined) {
     host.append(mode.root);
   }

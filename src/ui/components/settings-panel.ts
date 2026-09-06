@@ -1,16 +1,26 @@
 /**
  * The settings panel, SPEC section 17, as far as this part owns it.
  *
- * The theme control is the one setting whose machinery exists today: the
- * token stylesheet already answers `data-theme` on the root element, both
- * ways round, so the control writes that attribute and nothing else. It
+ * The theme control is the one setting whose machinery existed at the chrome
+ * part: the token stylesheet already answers `data-theme` on the root element,
+ * both ways round, so the control writes that attribute and nothing else. It
  * wraps the platform read rather than replacing it - System clears the
  * attribute, and the pitch palette follows through the composition root,
  * which still asks the stylesheet's media query for the variant whenever no
  * override is in force. The settings whose owners have not landed yet
- * (modes, match length, sound, the play-surface size) are absent rather than
- * stubbed: a control that only pretends to work is the defect this part
- * exists to keep off the canvas.
+ * (modes, match length, sound) are absent rather than stubbed: a control that
+ * only pretends to work is the defect this part exists to keep off the canvas.
+ *
+ * THE PLAY-SURFACE SIZE IS THE SECOND CONTROL WITH REAL MACHINERY BEHIND IT.
+ * QUALITY-BAR section 4 gives it 100 / 125 / 150 / 200 percent and SPEC
+ * section 17 says why it is not a duplicate of browser zoom: zoom shrinks the
+ * canvas CSS box along with the viewport, so the pitch redraws at the same
+ * physical size and magnifies nothing, while this raises the logical-to-CSS
+ * scale and is therefore the only path the pitch has to being larger. The
+ * offered values are `core/storage.ts`'s, because the stored settings own them
+ * and a second list here would be a second place for them to disagree; what
+ * this panel raises is the chosen number, and the composition root applies it
+ * to the fit and writes it to the document.
  *
  * RESET ALL DATA IS CONFIRMED IN PLACE, IN THE DOCUMENT. SPEC section 17 asks
  * for a confirmation and QUALITY-BAR section 3 decides what one may be: not
@@ -32,7 +42,7 @@
  * game.
  */
 
-import { THEME_SETTINGS } from '../../core/storage';
+import { SURFACE_SCALES, THEME_SETTINGS } from '../../core/storage';
 import type { ThemeSetting } from '../../core/storage';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
@@ -65,6 +75,8 @@ const RESET_DONE = 'All saved data cleared.';
 
 export interface SettingsPanelOptions {
   readonly onThemeChange: (theme: ThemeChoice) => void;
+  /** QUALITY-BAR section 4's play-surface size, in percent. */
+  readonly onSurfaceScaleChange: (percent: number) => void;
   /** SPEC section 17's Reset all data, raised only after the confirmation. */
   readonly onReset: () => void;
   readonly onClose: () => void;
@@ -74,6 +86,8 @@ export interface SettingsPanelOptions {
 export interface SettingsPanel extends Panel {
   /** Checks the radio for `theme` without raising a change. */
   select(theme: ThemeChoice): void;
+  /** Checks the radio for `percent` without raising a change. */
+  selectSurfaceScale(percent: number): void;
 }
 
 export function createSettingsPanel(options: SettingsPanelOptions): SettingsPanel {
@@ -100,6 +114,26 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
       }
     });
     radios.set(choice, radio);
+    panel.addControl(radio);
+  }
+
+  panel.addText('Play surface size');
+
+  const sizes = new Map<number, HTMLInputElement>();
+  for (const percent of SURFACE_SCALES) {
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.setAttribute('name', 'pf-surface-scale');
+    radio.value = String(percent);
+    radio.setAttribute('aria-label', `${String(percent)}%`);
+    radio.className = 'pf-choice-input';
+    radio.dataset['pf'] = `surface-scale-${String(percent)}`;
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        options.onSurfaceScaleChange(percent);
+      }
+    });
+    sizes.set(percent, radio);
     panel.addControl(radio);
   }
 
@@ -205,6 +239,12 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     select(theme: ThemeChoice): void {
       for (const [choice, radio] of radios) {
         radio.checked = choice === theme;
+      }
+    },
+
+    selectSurfaceScale(percent: number): void {
+      for (const [offered, radio] of sizes) {
+        radio.checked = offered === percent;
       }
     },
   };

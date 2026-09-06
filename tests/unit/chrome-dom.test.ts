@@ -210,9 +210,11 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       // The chrome as the composition root mounts it, mode menu included,
       // so the census describes the chrome the game actually ships. It grew
       // at PF-9 by SPEC section 13's three further game-over actions and by
-      // SPEC section 9's menu, and at PF-10 by SPEC section 17's Reset all
-      // data and the two halves of its in-place confirmation; nothing that
-      // was here was removed or renamed.
+      // SPEC section 9's menu, at PF-10 by SPEC section 17's Reset all
+      // data and the two halves of its in-place confirmation, and at PF-14 by
+      // SPEC section 2.1's portrait hint and the four play-surface sizes
+      // QUALITY-BAR section 4 offers; nothing that was here was removed or
+      // renamed at any of them.
       mountChrome(host as unknown as HTMLElement, {
         match: createMatch(),
         onThemeChange: () => undefined,
@@ -232,6 +234,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       const census = censusControls(host as unknown as FakeElement);
       expect(census).toEqual([
         'Pause',
+        'Dismiss',
         'Quick Match',
         'First to N',
         'Ladder',
@@ -255,6 +258,10 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         'System',
         'Light',
         'Dark',
+        '100%',
+        '125%',
+        '150%',
+        '200%',
         'Reset all data',
         'Confirm reset',
         'Cancel reset',
@@ -413,8 +420,21 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         },
       });
       const root = host as unknown as FakeElement;
-      const radios = findAllByTag(root, 'INPUT');
-      expect(radios).toHaveLength(3);
+      const inputs = findAllByTag(root, 'INPUT');
+      // Seven from PF-14: the three theme radios, then the four play-surface
+      // sizes. The theme group is still the first three and is named here, so
+      // an index below cannot quietly land on a different control.
+      expect(inputs).toHaveLength(7);
+      expect(inputs.map((input) => input.getAttribute('aria-label'))).toEqual([
+        'System',
+        'Light',
+        'Dark',
+        '100%',
+        '125%',
+        '150%',
+        '200%',
+      ]);
+      const radios = inputs.slice(0, 3);
 
       // A browser checks the radio before its change event arrives; the
       // dispatch below follows the same order.
