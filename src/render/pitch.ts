@@ -27,9 +27,22 @@
  * rail, so nothing that carries a contrast guarantee is tinted by it.
  *
  * THE PASS ORDER is DESIGN section 7's: pitch, goal frames, effects behind,
- * entities, aim arrow, effects in front. Two of those passes belong to later
- * parts and are named in `drawFrame` at the exact point they slot in, so the
- * order is settled now rather than negotiated then.
+ * entities, aim arrow, effects in front. All six live in `drawFrame` below.
+ * The aim pass and the per-frame clear sat at the composition root from PF-5
+ * until PF-12, because this file was off that part's surface; they moved in
+ * here the moment a pass had to land IN FRONT of the arrow, which is the first
+ * moment the difference between "after the frame" and "after the entities"
+ * exists at all.
+ *
+ * THE FRAME STARTS EMPTY, and the clear belongs to this composition rather
+ * than to its caller. The cached pitch layer is opaque over the pitch and
+ * transparent everywhere else, so blitting it leaves whatever was outside the
+ * pitch on the previous frame exactly where it was: a circle resting against a
+ * wall aims up to a hundred and eighty units past it, and every one of those
+ * pixels would otherwise stay on the surface for the rest of the session. The
+ * clear runs in device space over the whole backing store and BEFORE the shake
+ * offset is applied, because a shifted clear leaves the strip the shift
+ * uncovers carrying the previous frame.
  */
 
 import {
@@ -47,12 +60,15 @@ import {
   GOAL_OPENING_LOW,
   WALL_THICKNESS,
 } from '../core/config';
+import type { AimPreview } from '../core/aiming';
 import type { World } from '../core/bodies';
 import { BORDER, RADIUS, SPACE } from './tokens';
 import type { PitchPalette } from './tokens';
-import { applySurfaceTransform, type Surface } from './surface';
+import { applySurfaceTransform, backingRatio, type Surface } from './surface';
 import { TAU, drawEntities } from './entities';
 import type { Facing, Glyphs } from './entities';
+import { drawAimArrow } from './arrow';
+import type { EffectsFrame, ShakeOffset } from './effects';
 
 /** A rect in design space: the corner and the extent, y up. */
 interface Rect {
@@ -301,16 +317,27 @@ export function renderStaticPitch(
   return { canvas, scale: surface.scale, palette };
 }
 
+/** No shake, which is every frame that is not answering a hard collision. */
+const STILL: ShakeOffset = Object.freeze({ x: 0, y: 0 });
+
 /**
- * The frame's first pass: the cached pitch and goal frames, one drawImage.
- * The blit runs in device space, because the cache is already at backing-
- * store scale, and puts the surface transform straight back so the passes
- * after it draw in design units without knowing the blit happened.
+ * The frame's first pass: the whole backing store cleared, then the cached
+ * pitch and goal frames, one drawImage. Both run in device space, because the
+ * cache is already at backing-store scale, and the surface transform goes
+ * straight back so the passes after it draw in design units without knowing
+ * the blit happened.
+ *
+ * SPEC section 14's shake enters HERE and nowhere else: it offsets the blit
+ * and the design transform together, so the whole scene moves as one on the
+ * backing store while the canvas element, the frame around it and the DOM
+ * chrome stay exactly where they were (DESIGN section 7).
  */
-function blitPitch(surface: Surface, layer: PitchLayer): void {
+function blitPitch(surface: Surface, layer: PitchLayer, shake: ShakeOffset): void {
   surface.context.setTransform(1, 0, 0, 1, 0, 0);
+  surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
+  surface.context.setTransform(1, 0, 0, 1, shake.x, shake.y);
   surface.context.drawImage(layer.canvas, 0, 0);
-  applySurfaceTransform(surface.context, surface.scale);
+  applySurfaceTransform(surface.context, surface.scale, shake.x, shake.y);
 }
 
 /** Where a headless build gets no say: the layer canvas is a DOM canvas. */
@@ -318,16 +345,21 @@ function defaultLayerCanvas(): HTMLCanvasElement {
   return document.createElement('canvas');
 }
 
-/** What a frame needs beyond the world: the two per-scene render inputs. */
+/** What a frame needs beyond the world: the per-scene render inputs. */
 export interface FrameOptions {
   readonly facing?: Facing;
   readonly glyphs?: Glyphs;
   readonly createLayer?: () => HTMLCanvasElement;
+  /** SPEC section 5's aim of the moment, or absent when nobody is aiming. */
+  readonly aim?: AimPreview;
+  /** SPEC section 14's motion set, absent in a composition that has none. */
+  readonly effects?: EffectsFrame;
 }
 
 /**
- * One frame. The cache cell is the caller's, so the layer survives across
- * frames and the composition stays a pure function of the world.
+ * One frame, in DESIGN section 7's order. The cache cell is the caller's, so
+ * the layer survives across frames and the composition stays a pure function
+ * of the world, the aim and the effects state.
  */
 export function drawFrame(
   surface: Surface,
@@ -336,6 +368,13 @@ export function drawFrame(
   palette: PitchPalette,
   options?: FrameOptions,
 ): void {
+  const effects = options?.effects;
+  // SPEC section 14's shake arrives in CSS pixels, against the height the
+  // surface renders at, and is converted to the backing store here: the one
+  // module that owns the device pixel ratio is the one that applies it.
+  const offset = effects === undefined ? STILL : effects.shake(surface.cssHeight);
+  const ratio = backingRatio(surface);
+  const shake: ShakeOffset = { x: offset.x * ratio, y: offset.y * ratio };
   let layer = cache.current;
   if (layer === null || !pitchLayerIsCurrent(layer, surface, palette)) {
     layer = renderStaticPitch(
@@ -345,8 +384,16 @@ export function drawFrame(
     );
     cache.current = layer;
   }
-  blitPitch(surface, layer);
-  // Effects behind the entities: PF-12 slots its pass in here.
+  blitPitch(surface, layer, shake);
+  if (effects !== undefined) {
+    effects.drawBehind(surface.context, palette);
+  }
   drawEntities(surface.context, palette, world, options?.facing, options?.glyphs);
-  // The aim arrow: PF-5 slots its pass in here. Effects in front: PF-12.
+  const aim = options?.aim;
+  if (aim !== undefined) {
+    drawAimArrow(surface.context, palette, world.player, aim);
+  }
+  if (effects !== undefined) {
+    effects.drawInFront(surface.context, palette, world, aim ?? null);
+  }
 }

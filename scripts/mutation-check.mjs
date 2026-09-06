@@ -2002,11 +2002,17 @@ export const EDITS = [
   // or how often it is drawn, and the census pins all three.
 
   {
+    // RE-POINTED at PF-12: the one transform grew SPEC section 14's shake as
+    // two offset parameters, so the line this entry quotes was reworded. The
+    // mutation is the same one, the y flip turned off, and the property it
+    // protects is unchanged.
     item: 'E3',
     name: 'the one transform maps design space y up, flipped',
     file: 'src/render/surface.ts',
-    find: 'context.setTransform(scale, 0, 0, -scale, 0, LOGICAL_HEIGHT * scale);',
-    replace: 'context.setTransform(scale, 0, 0, scale, 0, LOGICAL_HEIGHT * scale);',
+    find:
+      'context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
+    replace:
+      'context.setTransform(scale, 0, 0, scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
     detectedBy: 'unit',
   },
   {
@@ -2090,10 +2096,14 @@ export const EDITS = [
     detectedBy: 'unit',
   },
   {
+    // RE-POINTED at PF-12: the blit now carries the shake offset, so the call
+    // this entry quotes takes two more arguments. Same mutation, same
+    // property: leave the surface in device space and the whole scene after
+    // the blit is drawn at backing-store coordinates.
     item: 'E3',
     name: 'the blit returns the surface to design space',
     file: 'src/render/pitch.ts',
-    find: 'applySurfaceTransform(surface.context, surface.scale);',
+    find: 'applySurfaceTransform(surface.context, surface.scale, shake.x, shake.y);',
     replace: 'surface.context.setTransform(1, 0, 0, 1, 0, 0);',
     detectedBy: 'unit',
   },
@@ -2666,11 +2676,14 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     detectedBy: 'browser',
   },
   {
+    // RE-POINTED at PF-12: the aim pass moved from the composition root into
+    // the frame composition, which is the handover the PF-5 close named. The
+    // mutation and the property are unchanged: no arrow is drawn.
     item: 'C3',
-    name: 'the composition root draws the aim pass over the frame',
-    file: 'src/main.ts',
-    find: '      drawAimArrow(surface.context, palette, world.player, preview);',
-    replace: '      void drawAimArrow;',
+    name: 'the frame composition draws the aim pass over the entities',
+    file: 'src/render/pitch.ts',
+    find: '    drawAimArrow(surface.context, palette, world.player, aim);',
+    replace: '    void drawAimArrow;',
     detectedBy: 'browser',
   },
   {
@@ -3318,6 +3331,645 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: 'src/ui/components/chrome.css',
     find: '  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);',
     replace: '  outline-color: var(--focus-ring-color);',
+    detectedBy: 'browser',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-12. SPEC section 14's motion set, and the one function that removes
+  // it. The entries fall into four groups.
+  //
+  //   E5, the constants. One per number in section 14's tunable block and
+  //   one per number the section states about the shake, because a feel
+  //   constant that has drifted looks exactly like a feel constant that has
+  //   not, and only a literal in a test can tell them apart.
+  //
+  //   E5, the derivations. The trail's length, the two contact detections
+  //   and the rate limiter are derived from the world rather than handed to
+  //   the renderer, so each gate gets an entry that removes the thing the
+  //   derivation rests on: the separation signature, the one-frame reach,
+  //   the wall's normal reversal and the goal opening's transparency.
+  //
+  //   E6, the policy. Every lifetime resolves through `effectSeconds`, and
+  //   the entries here replace one of those calls with the unconditional
+  //   constant, which is the shape reduced motion has to remove. Two of
+  //   them attack the trap directly by skipping work in one mode only: the
+  //   detection and the burst's draws.
+  //
+  //   The composition. The clear, the blit, the two effects passes and the
+  //   aim pass all live in `drawFrame` from this part, so the order and the
+  //   shake's arrival are attacked there; the three that name the browser
+  //   suite attack the composition root's own wiring, where no unit test
+  //   can see whether the policy was ever read.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'E5',
+    name: 'the ball trail lasts the window SPEC section 14 states',
+    file: 'src/render/effects.ts',
+    find: '  ballTrail: 0.18,',
+    replace: '  ballTrail: 0.5,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the impact flash lasts the window the section states',
+    file: 'src/render/effects.ts',
+    find: '  impactFlash: 0.12,',
+    replace: '  impactFlash: 0.4,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the wall-segment flash lasts the window the section states',
+    file: 'src/render/effects.ts',
+    find: '  wallFlash: 0.15,',
+    replace: '  wallFlash: 0.4,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake decays over the window the section states',
+    file: 'src/render/effects.ts',
+    find: '  screenShake: 0.2,',
+    replace: '  screenShake: 0.5,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the celebration is the goal hold, not a second spelling of it',
+    file: 'src/render/effects.ts',
+    find: '  goalCelebration: GOAL_HOLD,',
+    replace: '  goalCelebration: 0.3,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake scales with impact energy at the section\'s rate',
+    file: 'src/render/effects.ts',
+    find: 'export const SHAKE_ENERGY_SCALE = 0.004;',
+    replace: 'export const SHAKE_ENERGY_SCALE = 0.04;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake caps at the section\'s share of the surface',
+    file: 'src/render/effects.ts',
+    find: 'export const SHAKE_HEIGHT_FRACTION = 0.015;',
+    replace: 'export const SHAKE_HEIGHT_FRACTION = 0.15;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the cap is a ceiling and not a floor',
+    file: 'src/render/effects.ts',
+    find: '  return Math.min(cap, fromEnergy);',
+    replace: '  return Math.max(cap, fromEnergy);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the cap is a fraction of the RENDERED height, not of the design space',
+    file: 'src/render/effects.ts',
+    find:
+      '  const cap = Number.isFinite(renderedHeight)\n' +
+      '    ? Math.max(0, renderedHeight) * SHAKE_HEIGHT_FRACTION\n' +
+      '    : 0;',
+    replace:
+      '  const cap = Number.isFinite(renderedHeight)\n' +
+      '    ? 720 * SHAKE_HEIGHT_FRACTION\n' +
+      '    : 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the decay constant leaves a hundredth of the peak at the window',
+    file: 'src/render/effects.ts',
+    find: 'export const SHAKE_DECAY_PER_SECOND = 1e-10;',
+    replace: 'export const SHAKE_DECAY_PER_SECOND = 1e-1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake decays per second and never per frame',
+    file: 'src/render/effects.ts',
+    find: '        shakeEnergy *= SHAKE_DECAY_PER_SECOND ** seconds;',
+    replace: '        shakeEnergy *= SHAKE_DECAY_PER_SECOND;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake oscillates on a period a frame can sample',
+    file: 'src/render/effects.ts',
+    find: 'const SHAKE_PERIOD_SECONDS = duration(2, false) / MILLISECONDS_PER_SECOND;',
+    replace: 'const SHAKE_PERIOD_SECONDS = duration(1, false) / MILLISECONDS_PER_SECOND;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'only a collision harder than the weakest legal shot is a hard one',
+    file: 'src/render/effects.ts',
+    find: 'export const HARD_IMPACT_ENERGY = MIN_LAUNCH_SPEED;',
+    replace: 'export const HARD_IMPACT_ENERGY = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'impact energy is the velocity CHANGE and not the speed',
+    file: 'src/render/effects.ts',
+    find: '  return Math.hypot(afterX - beforeX, afterY - beforeY);',
+    replace: '  return Math.hypot(afterX, afterY);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'no more than three flashes reach one region in a second',
+    file: 'src/render/effects.ts',
+    find: 'export const FLASHES_PER_WINDOW = 3;',
+    replace: 'export const FLASHES_PER_WINDOW = 99;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the limiter\'s window is the second the criterion states',
+    file: 'src/render/effects.ts',
+    find: 'export const FLASH_WINDOW_SECONDS = 1;',
+    replace: 'export const FLASH_WINDOW_SECONDS = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the limiter counts in columns across the pitch',
+    file: 'src/render/effects.ts',
+    find: 'const REGION_COLUMNS = 8;',
+    replace: 'const REGION_COLUMNS = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the limiter counts in rows up the pitch',
+    file: 'src/render/effects.ts',
+    find: 'const REGION_ROWS = 4;',
+    replace: 'const REGION_ROWS = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the trail is the distance the ball actually covered',
+    file: 'src/render/effects.ts',
+    find: '    total += Math.hypot(to.x - from.x, to.y - from.y);',
+    replace: '    total += 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a trail sample older than the window is dropped',
+    file: 'src/render/effects.ts',
+    find: '    expire(trail);',
+    replace: '    ;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a pair that never separated never met',
+    file: 'src/render/effects.ts',
+    find:
+      '  if (separating <= 0) {\n' +
+      '    return null;\n' +
+      '  }',
+    replace:
+      '  if (separating < -1e9) {\n' +
+      '    return null;\n' +
+      '  }',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a wall bounce turns the normal component round',
+    file: 'src/render/effects.ts',
+    find:
+      '    before.vy > 0 &&\n' +
+      '    moving.y <= 0 &&',
+    replace:
+      '    before.vy > 0 &&\n' +
+      '    moving.y <= 1e9 &&',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a ball through a goal opening is not a bounce off the wall',
+    file: 'src/render/effects.ts',
+    find: '  const throughTheOpening = ballFitsOpening(body);',
+    replace: '  const throughTheOpening = false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the wall flash is one spacing step of the struck band',
+    file: 'src/render/effects.ts',
+    find: 'const WALL_SEGMENT_SPAN = SPACE[8];',
+    replace: 'const WALL_SEGMENT_SPAN = SPACE[7];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a goal celebrates once, and not once per frame of the hold',
+    file: 'src/render/effects.ts',
+    find: '    if (scoring.goals > seenGoals) {',
+    replace: '    if (scoring.goals > 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the burst is made of the count the celebration states',
+    file: 'src/render/effects.ts',
+    find: 'const BURST_PARTICLES = 12;',
+    replace: 'const BURST_PARTICLES = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the burst draws from its own stream, not the shake\'s',
+    file: 'src/render/effects.ts',
+    find: '  const burstStream: Rng = root.split(BURST_STREAM);',
+    replace: '  const burstStream: Rng = shakeStream;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the frame that pulses is the mouth that was scored in',
+    file: 'src/render/effects.ts',
+    find: '    x: mouth === \'left\' ? FIELD_LEFT - GOAL_FRAME_DEPTH : FIELD_RIGHT,',
+    replace: '    x: mouth === \'left\' ? FIELD_RIGHT : FIELD_LEFT - GOAL_FRAME_DEPTH,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the goal frame pulses under SC 2.3.1\'s three a second',
+    file: 'src/render/effects.ts',
+    find: 'const SLOW_PULSE_STEPS = 2;',
+    replace: 'const SLOW_PULSE_STEPS = 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the arrow pulses at MAXIMUM strength and at no other',
+    file: 'src/render/effects.ts',
+    find: '  if (aim === null || period <= 0 || !aim.launchable || aim.aim.power01 < 1) {',
+    replace: '  if (aim === null || period <= 0 || !aim.launchable || aim.aim.power01 < 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the trail opens at its own weight',
+    file: 'src/render/effects.ts',
+    find: 'const TRAIL_PEAK_ALPHA = 0.45;',
+    replace: 'const TRAIL_PEAK_ALPHA = 0.9;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a flash opens at its own weight',
+    file: 'src/render/effects.ts',
+    find: 'const FLASH_PEAK_ALPHA = 0.7;',
+    replace: 'const FLASH_PEAK_ALPHA = 0.35;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the celebration opens at its own weight',
+    file: 'src/render/effects.ts',
+    find: 'const CELEBRATION_PEAK_ALPHA = 0.8;',
+    replace: 'const CELEBRATION_PEAK_ALPHA = 0.4;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the arrow pulse peaks at its own weight',
+    file: 'src/render/effects.ts',
+    find: 'const PULSE_PEAK_ALPHA = 0.55;',
+    replace: 'const PULSE_PEAK_ALPHA = 0.9;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'reduced motion resolves every game-feel lifetime to zero',
+    file: 'src/render/effects.ts',
+    find: '  return reducedMotion ? 0 : EFFECT_SECONDS[step];',
+    replace: '  return EFFECT_SECONDS[step];',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the shake\'s window is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find: '    shakeLife = effectSeconds(\'screenShake\', reducedMotion);',
+    replace: '    shakeLife = EFFECT_SECONDS.screenShake;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the trail\'s window is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find: '        life: effectSeconds(\'ballTrail\', reducedMotion),',
+    replace: '        life: EFFECT_SECONDS.ballTrail,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the wall flash\'s window is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find: '          life: effectSeconds(\'wallFlash\', reducedMotion),',
+    replace: '          life: EFFECT_SECONDS.wallFlash,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the impact flash\'s window is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find: '          life: effectSeconds(\'impactFlash\', reducedMotion),',
+    replace: '          life: EFFECT_SECONDS.impactFlash,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the celebration\'s window is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find: '    const life = effectSeconds(\'goalCelebration\', reducedMotion);',
+    replace: '    const life = EFFECT_SECONDS.goalCelebration;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the arrow pulse\'s period is resolved against the policy',
+    file: 'src/render/effects.ts',
+    find:
+      '        (duration(4, reducedMotion) * SLOW_PULSE_STEPS) / MILLISECONDS_PER_SECOND;',
+    replace:
+      '        (duration(4, false) * SLOW_PULSE_STEPS) / MILLISECONDS_PER_SECOND;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'a shake with no window left is over on the frame it started',
+    file: 'src/render/effects.ts',
+    find: '    if (now - shakeAt >= shakeLife) {',
+    replace: '    if (shakeLife > 0 && now - shakeAt >= shakeLife) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the detection runs whatever the motion policy is',
+    file: 'src/render/effects.ts',
+    find: '      if (samples.length > 0 && seconds > 0 && !teleported) {',
+    replace:
+      '      if (samples.length > 0 && seconds > 0 && !teleported && !reducedMotion) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the burst takes the same draws whatever the motion policy is',
+    file: 'src/render/effects.ts',
+    find: '    for (let made = 0; made < BURST_PARTICLES; made += 1) {',
+    replace: '    for (let made = 0; made < (life > 0 ? BURST_PARTICLES : 0); made += 1) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the frame is cleared over the whole backing store',
+    file: 'src/render/pitch.ts',
+    find: '  surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);',
+    replace: '  surface.context.clearRect(0, 0, 1, 1);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the clear is taken before the shake offsets anything',
+    file: 'src/render/pitch.ts',
+    find:
+      '  surface.context.setTransform(1, 0, 0, 1, 0, 0);\n' +
+      '  surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);',
+    replace:
+      '  surface.context.setTransform(1, 0, 0, 1, shake.x, shake.y);\n' +
+      '  surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the blit carries the shake',
+    file: 'src/render/pitch.ts',
+    find: '  surface.context.setTransform(1, 0, 0, 1, shake.x, shake.y);',
+    replace: '  surface.context.setTransform(1, 0, 0, 1, 0, 0);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the design transform carries the shake too',
+    file: 'src/render/pitch.ts',
+    find: '  applySurfaceTransform(surface.context, surface.scale, shake.x, shake.y);',
+    replace: '  applySurfaceTransform(surface.context, surface.scale);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the one transform takes the shake as an offset',
+    file: 'src/render/surface.ts',
+    find: '  context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
+    replace: '  context.setTransform(scale, 0, 0, -scale, 0, LOGICAL_HEIGHT * scale);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake is asked about the height the surface renders at',
+    file: 'src/render/pitch.ts',
+    find: '  const offset = effects === undefined ? STILL : effects.shake(surface.cssHeight);',
+    replace: '  const offset = effects === undefined ? STILL : effects.shake(720);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the effects-behind pass runs before the entities',
+    file: 'src/render/pitch.ts',
+    find:
+      '  if (effects !== undefined) {\n' +
+      '    effects.drawBehind(surface.context, palette);\n' +
+      '  }\n' +
+      '  drawEntities(surface.context, palette, world, options?.facing, options?.glyphs);',
+    replace:
+      '  drawEntities(surface.context, palette, world, options?.facing, options?.glyphs);\n' +
+      '  if (effects !== undefined) {\n' +
+      '    effects.drawBehind(surface.context, palette);\n' +
+      '  }',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the effects-in-front pass runs after the aim arrow',
+    file: 'src/render/pitch.ts',
+    find:
+      '  const aim = options?.aim;\n' +
+      '  if (aim !== undefined) {\n' +
+      '    drawAimArrow(surface.context, palette, world.player, aim);\n' +
+      '  }\n' +
+      '  if (effects !== undefined) {\n' +
+      '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
+      '  }',
+    replace:
+      '  const aim = options?.aim;\n' +
+      '  if (effects !== undefined) {\n' +
+      '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
+      '  }\n' +
+      '  if (aim !== undefined) {\n' +
+      '    drawAimArrow(surface.context, palette, world.player, aim);\n' +
+      '  }',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a wall band is clipped to the wall the pitch actually drew',
+    file: 'src/render/effects.ts',
+    find:
+      '    const from = Math.max(low, pieceLow);\n' +
+      '    const to = Math.min(high, pieceHigh);',
+    replace: '    const from = low;\n' + '    const to = high;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the opening is what splits the side wall into two drawn pieces',
+    file: 'src/render/effects.ts',
+    find:
+      '    [FIELD_BOTTOM - WALL_THICKNESS, GOAL_OPENING_LOW],\n' +
+      '    [GOAL_OPENING_HIGH, FIELD_TOP + WALL_THICKNESS],',
+    replace:
+      '    [FIELD_BOTTOM - WALL_THICKNESS, FIELD_TOP + WALL_THICKNESS],\n' +
+      '    [GOAL_OPENING_HIGH, GOAL_OPENING_HIGH],',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a pair that never came within the radii never met',
+    file: 'src/render/effects.ts',
+    find:
+      '    if (nearest > one.radius + other.radius + CONTACT_SLACK) {\n' +
+      '      return null;\n' +
+      '    }',
+    replace: '    if (nearest > 1e9) {\n' + '      return null;\n' + '    }',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the closest approach is taken across the frame, not at its start',
+    file: 'src/render/effects.ts',
+    find: '      spanOf(seconds),',
+    replace: '      0,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a frame advances the world by up to one fixed step more than its delta',
+    file: 'src/render/effects.ts',
+    find: '  return seconds + FIXED_STEP;',
+    replace: '  return seconds;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a body that was placed rather than moved derives nothing',
+    file: 'src/render/effects.ts',
+    find: '      if (moved > could) {',
+    replace: '      if (moved > 1e9) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'a placement cuts the trail instead of streaking it across the pitch',
+    file: 'src/render/effects.ts',
+    find:
+      '      if (teleported) {\n' +
+      '        trail.length = 0;\n' +
+      '      }',
+    replace:
+      '      if (teleported && false) {\n' +
+      '        trail.length = 0;\n' +
+      '      }',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the one-second period SC 2.3.1 states is closed at both ends',
+    file: 'src/render/effects.ts',
+    find: '    while (times.length > 0 && now - (times[0] ?? 0) > FLASH_WINDOW_SECONDS) {',
+    replace: '    while (times.length > 0 && now - (times[0] ?? 0) >= FLASH_WINDOW_SECONDS) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the surface records the height it renders at, in CSS pixels',
+    file: 'src/render/surface.ts',
+    find: '  surface.cssHeight = cssHeightFor(cssWidth);',
+    replace: '  surface.cssHeight = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the device pixel ratio is recovered where the shake is applied',
+    file: 'src/render/surface.ts',
+    find: '  return surface.cssHeight > 0 ? surface.canvas.height / surface.cssHeight : 1;',
+    replace: '  return 1;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shake in CSS pixels is converted to the backing store once',
+    file: 'src/render/pitch.ts',
+    find: '  const shake: ShakeOffset = { x: offset.x * ratio, y: offset.y * ratio };',
+    replace: '  const shake: ShakeOffset = { x: offset.x, y: offset.y };',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the hooks register under the key a capture script reads',
+    file: 'src/render/effects.ts',
+    find: 'export const MOTION_CAPTURE_KEY = \'__pfMotion\';',
+    replace: 'export const MOTION_CAPTURE_KEY = \'__pfSomethingElse\';',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the shipping entry never names the motion capture hooks',
+    file: 'src/main.ts',
+    find: 'import { createEffects } from \'./render/effects\';',
+    replace:
+      'import { createEffects, installMotionHooks } from \'./render/effects\';\n' +
+      'void installMotionHooks;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E6',
+    name: 'the composition root reads the platform\'s own preference',
+    file: 'src/main.ts',
+    find: 'const MOTION_QUERY = \'(prefers-reduced-motion: reduce)\';',
+    replace: 'const MOTION_QUERY = \'(prefers-reduced-motion: no-preference)\';',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'E6',
+    name: 'the policy the root read reaches the effects layer',
+    file: 'src/main.ts',
+    find: '      reducedMotion: reducedMotionInForce(),',
+    replace: '      reducedMotion: false,',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'E5',
+    name: 'the frame\'s own elapsed seconds reach the effects layer',
+    file: 'src/main.ts',
+    find:
+      '      scoring: match.readout().scoring,\n' +
+      '      elapsed,',
+    replace:
+      '      scoring: match.readout().scoring,\n' +
+      '      elapsed: 0,',
     detectedBy: 'browser',
   },
 ];

@@ -30,8 +30,10 @@ import type { AimPreview, AimState } from './core/aiming';
 import type { World } from './core/bodies';
 import { createMatch } from './core/match';
 import type { Match } from './core/match';
-import { drawAimArrow } from './render/arrow';
+import { createEffects } from './render/effects';
+import type { Effects } from './render/effects';
 import { kickoffFacing } from './render/entities';
+import type { Facing } from './render/entities';
 import { attachAimInput } from './render/input';
 import { createSurface, resizeSurface, watchDeviceRatio } from './render/surface';
 import { drawFrame } from './render/pitch';
@@ -45,6 +47,23 @@ export const GAME_ID = 'pocket-football';
 
 /** SPEC section 18: the chrome theme chooses the pitch's brightness variant. */
 const THEME_QUERY = '(prefers-color-scheme: dark)';
+
+/**
+ * QUALITY-BAR section 4 and SPEC section 14: the motion policy, read HERE and
+ * passed down, because nothing under `render/` may decide it. The stylesheet
+ * answers the same query for the chrome, so the canvas and the DOM are in one
+ * motion mode rather than two.
+ *
+ * THE PLATFORM AND NOTHING ELSE, deliberately. SPEC section 17 gives reduced
+ * motion a system-or-always setting, and the theme's stored override is the
+ * shape it will take; the difference is that the theme's override is answered
+ * by `data-theme` blocks in the token stylesheet as well as here, and there is
+ * no `data-motion` block to answer a motion one. An override read only here
+ * would stop the canvas animating and leave every chrome duration where it
+ * was, which is two motion modes at once and not what item E6 asks for. The
+ * setting lands with the part that owns both halves.
+ */
+const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 /**
  * SPEC section 5.1: the play surface is a single focusable element with an
@@ -80,15 +99,30 @@ function themeInForce(): Theme {
   return window.matchMedia(THEME_QUERY).matches ? 'dark' : 'light';
 }
 
+/**
+ * Whether motion is reduced. The query object is built once and asked every
+ * frame: a `MediaQueryList` is live, so its `matches` follows a preference
+ * changed mid-session, and building one per frame would put an allocation and
+ * a platform call in the hot path QUALITY-BAR section 6 budgets.
+ */
+let motionQuery: MediaQueryList | null = null;
+
+function reducedMotionInForce(): boolean {
+  motionQuery ??= window.matchMedia(MOTION_QUERY);
+  return motionQuery.matches;
+}
+
 export function boot(): void {
   document.documentElement.dataset['game'] = GAME_ID;
 }
 
 /**
- * The per-scene render inputs an aim supplies. The player's circle looks
- * where it is about to shoot, which is the facing `entities.ts` left as a
- * parameter for exactly this; the opponent keeps the derived kickoff facing,
- * because nothing in this part gives it an aim of its own.
+ * The per-scene render inputs. The player's circle looks where it is about to
+ * shoot, which is the facing `entities.ts` left as a parameter for exactly
+ * this; the opponent keeps the derived kickoff facing, because nothing in this
+ * part gives it an aim of its own. The aim itself and the effects state go the
+ * same way, because DESIGN section 7's pass order is `drawFrame`'s and this
+ * root's job is to hand it what each pass draws.
  *
  * An absent option is absent rather than undefined, which is what
  * `exactOptionalPropertyTypes` asks of a pass-through.
@@ -96,19 +130,26 @@ export function boot(): void {
 function frameOptionsFor(
   world: World,
   preview: AimPreview | null,
-): FrameOptions | undefined {
-  // A press that has not moved is an aim with no length and therefore no
-  // direction, so the circle keeps the facing it already had rather than
-  // snapping to whatever an atan2 of nothing happens to return.
-  if (preview === null || preview.reach <= 0) {
-    return undefined;
+  effects: Effects,
+): FrameOptions {
+  const options: {
+    facing?: Facing;
+    aim?: AimPreview;
+    effects: Effects;
+  } = { effects };
+  if (preview !== null) {
+    options.aim = preview;
+    // A press that has not moved is an aim with no length and therefore no
+    // direction, so the circle keeps the facing it already had rather than
+    // snapping to whatever an atan2 of nothing happens to return.
+    if (preview.reach > 0) {
+      options.facing = {
+        player: preview.aim.angleRad,
+        opponent: kickoffFacing(world).opponent,
+      };
+    }
   }
-  return {
-    facing: {
-      player: preview.aim.angleRad,
-      opponent: kickoffFacing(world).opponent,
-    },
-  };
+  return options;
 }
 
 /**
@@ -146,13 +187,12 @@ function startFrameDriver(step: (delta: number) => void): void {
  * The palette is read per frame rather than at mount, so a theme override from
  * the settings control re-renders the pitch in the variant the chrome has just
  * adopted; with no override the read lands on the same query the stylesheet
- * answers.
+ * answers. The motion policy is read the same way and for the same reason.
  *
- * THE AIM PASS SITS WHERE DESIGN SECTION 7 PUTS IT, after the entities, and it
- * is appended by this root rather than inserted into `drawFrame`. The order is
- * the section's either way; the part that adds the effects in front of the
- * entities owns moving it inside, because that is the first moment the
- * difference between "after the frame" and "after the entities" exists.
+ * EVERY PASS IS `drawFrame`'S, DESIGN section 7's order included. This root
+ * decides the two policies the renderer may not decide for itself, the theme
+ * and whether motion is reduced, hands the effects layer the world once a
+ * frame, and draws once.
  */
 function mountPlaySurface(
   host: HTMLElement,
@@ -170,6 +210,10 @@ function mountPlaySurface(
   const surface = createSurface(frame);
   const world = match.world;
   const cache: PitchCacheCell = { current: null };
+  // SPEC section 14's motion set, created once with the surface it draws on.
+  // It reads the world and writes nothing, which is what keeps the simulation
+  // timing identical whatever the motion policy is.
+  const effects = createEffects();
   const input = attachAimInput({
     canvas: surface.canvas,
     world,
@@ -210,23 +254,13 @@ function mountPlaySurface(
       return;
     }
     const palette = pitchFor(themeInForce());
-    const preview = input.preview();
-    // THE FRAME STARTS EMPTY. The cached pitch layer is opaque over the pitch
-    // and transparent everywhere else, so blitting it leaves whatever was
-    // outside the pitch on the previous frame exactly where it was. Nothing
-    // drew out there until the aim arrow did: a circle resting against a wall
-    // aims up to a hundred and eighty units past it, and every one of those
-    // pixels would otherwise stay on the surface for the rest of the session.
-    // Clearing belongs inside the frame composition, and the part that moves
-    // the aim pass in there owns moving this with it.
-    surface.context.save();
-    surface.context.setTransform(1, 0, 0, 1, 0, 0);
-    surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
-    surface.context.restore();
-    drawFrame(surface, cache, world, palette, frameOptionsFor(world, preview));
-    if (preview !== null) {
-      drawAimArrow(surface.context, palette, world.player, preview);
-    }
+    drawFrame(
+      surface,
+      cache,
+      world,
+      palette,
+      frameOptionsFor(world, input.preview(), effects),
+    );
   };
 
   const refit = (): void => {
@@ -239,10 +273,20 @@ function mountPlaySurface(
    * own elapsed seconds, then the controls brought in line with the aim that
    * produced. The elapsed time is the browser's own and never a frame count,
    * because SPEC section 5.1's hold rates are stated in real seconds.
+   *
+   * The effects layer is observed here rather than in `render`, because it has
+   * to see the world exactly once per update and `render` is also called by a
+   * resize and by a theme change, which advance no time at all.
    */
   const refresh = (elapsed: number): void => {
     input.refresh(elapsed);
     controls.sync(elapsed, input.preview(), input.allowed());
+    effects.observe({
+      world,
+      scoring: match.readout().scoring,
+      elapsed,
+      reducedMotion: reducedMotionInForce(),
+    });
   };
 
   refit();

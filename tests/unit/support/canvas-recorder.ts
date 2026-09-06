@@ -59,6 +59,7 @@ export class CanvasRecorder {
       clip: call('clip'),
       translate: call('translate'),
       scale: call('scale'),
+      clearRect: call('clearRect'),
       fillRect: call('fillRect'),
       strokeRect: call('strokeRect'),
       fillText: call('fillText'),

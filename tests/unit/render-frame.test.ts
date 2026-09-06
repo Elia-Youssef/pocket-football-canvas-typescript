@@ -47,19 +47,29 @@ describe('PF-11 the frame composition', () => {
   it('blits the cached pitch, then draws the entities in design space', () => {
     const { recorder, surface, layer } = freshFixture();
     const cache: PitchCacheCell = { current: layer };
+    // A backing store with a height, so the clear below is asserted against
+    // literals rather than against the symbols that produced it.
+    surface.canvas.height = 720;
+    layer.canvas.height = 720;
     drawFrame(surface, cache, createWorld(), PLAY_SURFACE.floodlit);
-    // The blit leaves device space and comes straight back: identity
-    // transform, one drawImage, the surface transform reapplied.
+    // The frame starts empty, in device space, over the whole backing store.
+    // Moved into the composition at PF-12 with the aim pass below it.
     expect(recorder.ops[0]?.name).toBe('setTransform');
     expect(recorder.ops[0]?.args).toEqual([1, 0, 0, 1, 0, 0]);
-    expect(recorder.ops[1]?.name).toBe('drawImage');
-    expect(recorder.ops[1]?.args[0]).toBe(layer.canvas);
+    expect(recorder.ops[1]?.name).toBe('clearRect');
+    expect(recorder.ops[1]?.args).toEqual([0, 0, 1280, 720]);
+    // The blit leaves device space and comes straight back: identity
+    // transform, one drawImage, the surface transform reapplied.
     expect(recorder.ops[2]?.name).toBe('setTransform');
-    expect(recorder.ops[2]?.args).toEqual([1, 0, 0, -1, 0, LOGICAL_HEIGHT]);
+    expect(recorder.ops[2]?.args).toEqual([1, 0, 0, 1, 0, 0]);
+    expect(recorder.ops[3]?.name).toBe('drawImage');
+    expect(recorder.ops[3]?.args[0]).toBe(layer.canvas);
+    expect(recorder.ops[4]?.name).toBe('setTransform');
+    expect(recorder.ops[4]?.args).toEqual([1, 0, 0, -1, 0, LOGICAL_HEIGHT]);
     // The entity pass opens on the player fill, in design units, after the
     // transform is back: the state set, then the path.
-    expect(recorder.ops[3]?.name).toBe('fillStyle');
-    expect(recorder.ops[4]?.name).toBe('beginPath');
+    expect(recorder.ops[5]?.name).toBe('fillStyle');
+    expect(recorder.ops[6]?.name).toBe('beginPath');
     expect(recorder.values('fillStyle')[0]).toBe(PLAY_SURFACE.floodlit.teamPlayer);
   });
 
