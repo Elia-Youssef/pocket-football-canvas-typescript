@@ -25,7 +25,7 @@
  * item, it is the GITHUB section that states it, so that `GH7` reads as
  * "section 7, the authorship of the repository record".
  *
- * Three safety properties, because a harness that edits live source files has
+ * Four safety properties, because a harness that edits live source files has
  * to be trustworthy before it is useful:
  *
  *   Staleness guard.  Each `find` must match its file EXACTLY once. A mutation
@@ -36,9 +36,37 @@
  *                     refused if the path already exists and removed afterwards.
  *   Baseline first.   Both detectors must be green before anything is mutated.
  *                     Against a red tree every mutation looks detected.
+ *   Port reclaimed.   The browser detector owns the preview port either side of
+ *                     every run it makes. See the section below.
+ *
+ * THE BROWSER DETECTOR REAPS ITS OWN PREVIEW SERVER. Its Playwright
+ * configuration starts `vite preview` as a web server, which arrives as a
+ * GRANDCHILD of this process: the detector is a node process and the preview is
+ * a child of that. When a detector run is killed, on this platform the direct
+ * child dies and the grandchild does not, and the orphan then holds the port
+ * the next browser invocation needs. `strictPort` means that invocation cannot
+ * start at all, and the entry it was measuring is reported against a detector
+ * that never ran. Three orphans in a single part were measured that way. So the
+ * port is reclaimed BEFORE every browser run and again in a `finally` AFTER it,
+ * by process id read out of the platform's own socket listing rather than by
+ * walking a parent chain that a dead parent has already broken. The two are not
+ * redundant: the `finally` covers a detector this harness itself timed out, and
+ * the before-run reclaim covers an orphan left by a run that was killed so hard
+ * that no `finally` of ours could have run at all.
+ *
+ * THE RECLAIM SAYS WHEN IT COULD NOT LOOK. A socket listing that could not be
+ * produced at all is not an empty one, and collapsing the two would report a
+ * port free that nothing ever inspected; the reclaim answers `looked: false`
+ * there and says so in the log. It also refuses by number the two process ids
+ * that can never be a preview server, because a harness about to kill a process
+ * TREE should decline the ones it can name in advance. What it does not do is
+ * ask what the process is: anything holding this port stops the browser gate
+ * from starting at all under `strictPort`, so anything holding it has to go,
+ * and the log names every id it stopped.
  *
  * Import-inert: main() runs only when this file is the entry point, so a test
- * may import the entry lists without editing anybody's source.
+ * may import the entry lists, or the reclaim helpers, without editing anybody's
+ * source.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -79,6 +107,162 @@ function binaryFor(packageName, fallback) {
  */
 const MINUTES = 60 * 1000;
 
+/**
+ * The port `vite preview` serves the built bundle on, and therefore the port
+ * the browser detector's own web server takes.
+ *
+ * RESTATED HERE AND THEN CHECKED, because this file is plain node and cannot
+ * import the TypeScript configuration that owns the number. `configuredPort`
+ * reads that configuration's own literal and `main` refuses to run if the two
+ * have drifted apart, which is the same staleness discipline every `find`
+ * below is held to: a reclaim aimed at the wrong port would free nothing and
+ * say so in the same breath as reporting a detector that could not start.
+ */
+const PREVIEW_PORT = 4273;
+
+/** Process ids no reclaim may ever touch: the idle process and the system one. */
+const SYSTEM_PIDS = 4;
+
+/** The port `vite.config.ts` itself declares, or null if it no longer says. */
+function configuredPort() {
+  try {
+    const source = readFileSync(path.join(PROJECT_ROOT, 'vite.config.ts'), 'utf8');
+    const found = /export const PREVIEW_PORT = (\d+);/.exec(source);
+    return found === null ? null : Number(found[1]);
+  } catch (error) {
+    console.log(`  note  could not read the preview port: ${String(error)}`);
+    return null;
+  }
+}
+
+/** A synchronous wait, for a socket that outlives the process that held it. */
+function pause(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+/**
+ * The platform's own listing of listening sockets. A tool that exits non-zero
+ * because nothing matched has still told us the answer, so its output is used
+ * rather than its status.
+ *
+ * NO PROTOCOL FILTER ON WIN32, AND THAT IS THE WHOLE OF IT. `netstat -p tcp`
+ * lists IPv4 only, and the preview server binds `localhost`, which resolves to
+ * `[::1]` here: a reclaim built on the filtered listing finds nothing, reports
+ * the port free, and leaves the orphan holding it. Measured against a live
+ * preview while building this. The unfiltered listing carries both families
+ * under the same `TCP` proto, and the UDP rows it also carries are refused by
+ * the state column the parser requires.
+ */
+function socketListing(port) {
+  const [command, args] =
+    process.platform === 'win32'
+      ? ['netstat', ['-ano']]
+      : ['lsof', ['-nP', `-iTCP:${String(port)}`, '-sTCP:LISTEN']];
+  try {
+    return execFileSync(command, args, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (error) {
+    // A tool that RAN and exited non-zero has still answered: lsof does that
+    // whenever nothing matched. A tool that could not run at all has not, and
+    // the two must not collapse into the same empty string, because "nobody is
+    // listening" and "I could not look" would then be one answer and the
+    // reclaim would report a port free that it never saw.
+    if (error && error.status !== undefined && error.status !== null) {
+      return String(error.stdout ?? '');
+    }
+    console.log(`  note  could not read the socket listing: ${String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * The process ids listening on `port`, parsed out of a socket listing. Kept
+ * separate from the call that produces the listing so the parsing is a pure
+ * function of text: the win32 rows are `TCP <local> <remote> LISTENING <pid>`
+ * and lsof's are `COMMAND PID ...` already filtered to the port.
+ */
+export function parseListeners(listing, port, platform = process.platform) {
+  const found = new Set();
+  for (const line of String(listing).split('\n')) {
+    const fields = line.trim().split(/\s+/);
+    if (platform === 'win32') {
+      if (fields.length < 5 || fields[0] !== 'TCP' || fields[3] !== 'LISTENING') {
+        continue;
+      }
+      if (!String(fields[1]).endsWith(`:${String(port)}`)) {
+        continue;
+      }
+      const pid = Number(fields[4]);
+      // 0 is the idle process and 4 is the system process. Neither can be a
+      // preview server, and a harness that is about to kill a process tree
+      // should refuse the two it can name in advance.
+      if (Number.isInteger(pid) && pid > SYSTEM_PIDS) {
+        found.add(pid);
+      }
+      continue;
+    }
+    if (fields.length < 2 || fields[1] === 'PID') {
+      continue;
+    }
+    const pid = Number(fields[1]);
+    if (Number.isInteger(pid) && pid > 0) {
+      found.add(pid);
+    }
+  }
+  return [...found].sort((left, right) => left - right);
+}
+
+/** Whoever is holding the preview port right now, or null if nobody looked. */
+export function previewListeners(port = PREVIEW_PORT) {
+  const listing = socketListing(port);
+  return listing === null ? null : parseListeners(listing, port);
+}
+
+function stopTree(pid) {
+  try {
+    if (process.platform === 'win32') {
+      // The tree, because the preview may itself have started a child.
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'pipe' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+    return true;
+  } catch (error) {
+    console.log(`  note  could not stop process ${String(pid)}: ${String(error)}`);
+    return false;
+  }
+}
+
+/**
+ * Free the preview port and say what it took. A socket outlives the process
+ * that held it by a moment, so the port is re-read until it is genuinely free
+ * or the budget runs out; a reclaim that could not free it says so rather than
+ * letting the next run fail for a reason nobody wrote down.
+ */
+export function reapPreview(port = PREVIEW_PORT) {
+  const holders = previewListeners(port);
+  if (holders === null) {
+    return { killed: [], free: false, looked: false };
+  }
+  if (holders.length === 0) {
+    return { killed: [], free: true, looked: true };
+  }
+  for (const pid of holders) {
+    stopTree(pid);
+  }
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const now = previewListeners(port);
+    if (now !== null && now.length === 0) {
+      return { killed: holders, free: true, looked: true };
+    }
+    pause(200);
+  }
+  return { killed: holders, free: false, looked: true };
+}
+
 const DETECTORS = {
   unit: {
     label: 'unit suite',
@@ -108,17 +292,28 @@ const DETECTORS = {
   // cheaper can witness the property.
   browser: {
     label: 'browser suite',
+    // The one detector that starts a server, and therefore the one that has a
+    // port to give back. See the preview-reap section in the header.
+    owns: 'preview',
     // Thirty minutes against a suite measured between 12.1 and 14.0 minutes
     // across five full runs at four workers, which is where PF-9 left it at 234
     // tests on three engines. Playwright bounds every test it runs, so a suite
     // that has not answered inside twice its worst measured run is hung rather
     // than slow.
     timeout: 30 * MINUTES,
+    // THE BUILD CARRIES ITS OWN DEADLINE, and it has to. `argv` runs the build
+    // as an ARGUMENT to the call that carries the detector's deadline, so the
+    // deadline is not in force yet while the build runs. A mutation that makes
+    // the build spin would otherwise stall the whole gate with no output,
+    // which is precisely what the refusal in `main` exists to prevent, for the
+    // one detector that builds anything. Five minutes against a build measured
+    // under a second.
+    buildTimeout: 5 * MINUTES,
     argv: (whole) => {
       execFileSync(
         process.execPath,
         [binaryFor('vite', 'node_modules/vite/bin/vite.js'), 'build'],
-        { cwd: PROJECT_ROOT, stdio: 'pipe' },
+        { cwd: PROJECT_ROOT, stdio: 'pipe', timeout: DETECTORS.browser.buildTimeout },
       );
       // THE BASELINE RUNS THE WHOLE SUITE AND A MUTATION RUN DOES NOT, and the
       // two are asking different questions. The baseline asks whether this tree
@@ -4372,12 +4567,453 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     detectedBy: 'browser',
   },
   {
+    // RE-POINTED at PF-10, with the protection unchanged. The whistle recorder
+    // in the composition root grew SPEC section 16's best result and lifetime
+    // counters beside the ladder rung it already wrote, and was renamed from
+    // `recordLadder` to `recordMatch` in the same change; this entry still
+    // removes the one call the frame driver makes to it, and item J3's ladder
+    // specs still catch it. Was: find '    recordLadder();' with replace
+    // '    void recordLadder;'.
     item: 'J3',
     name: 'the rung a result earned is recorded at the whistle',
     file: 'src/main.ts',
-    find: '    recordLadder();',
-    replace: '    void recordLadder;',
+    find: '    recordMatch();',
+    replace: '    void recordMatch;',
     detectedBy: 'browser',
+  },
+
+  // -------------------------------------------------------------------------
+  // PF-10, SPEC section 16's saved state.
+  //
+  // Items I1, I2 and I3 are answered by the unit suite over `core/storage.ts`,
+  // which is where every decision about a stored document lives. Items I4 and
+  // I5 name the browser detector instead, and the reason is the one that
+  // brought that detector into being: what they protect is composition wiring
+  // no unit test reaches, which store the root holds, what a start and a
+  // whistle write, and what the chrome does with a stored theme.
+  // -------------------------------------------------------------------------
+  {
+    item: 'I1',
+    name: 'the saved document lives under one key namespaced by the game',
+    file: 'src/core/storage.ts',
+    find: "export const STORAGE_KEY = 'pocket-football:save';",
+    replace: "export const STORAGE_KEY = 'save';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'the version written is the version this build reads back',
+    file: 'src/core/storage.ts',
+    find: '  return JSON.stringify({ version: DOCUMENT_VERSION, ...data });',
+    replace: '  return JSON.stringify({ version: DOCUMENT_VERSION + 1, ...data });',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'a document from a version this build cannot reach is refused whole',
+    file: 'src/core/storage.ts',
+    find: '  if (version < FIRST_VERSION || version > DOCUMENT_VERSION) {',
+    replace: '  if (version < FIRST_VERSION) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'a version that is not a whole number names no shape at all',
+    file: 'src/core/storage.ts',
+    find: "  if (typeof version !== 'number' || !Number.isInteger(version)) {",
+    replace: "  if (typeof version !== 'number') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'a version one document is lifted rather than read as the current one',
+    file: 'src/core/storage.ts',
+    find: '  if (version === FIRST_VERSION) {',
+    replace: '  if (version === DOCUMENT_VERSION) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'the lift carries the ladder rung across the bump',
+    file: 'src/core/storage.ts',
+    find: "      ladderRung: document['ladderRung'],",
+    replace: '      ladderRung: undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'the lift carries the how-to-play flag across the bump',
+    file: 'src/core/storage.ts',
+    find: "      howToDismissed: document['howToDismissed'],",
+    replace: '      howToDismissed: undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'the lift carries the played-before flag across the bump',
+    file: 'src/core/storage.ts',
+    find: "      playedBefore: document['playedBefore'],",
+    replace: '      playedBefore: undefined,',
+    detectedBy: 'unit',
+  },
+  {
+    // Aimed at the normalise door rather than at the lift, and the reason is a
+    // finding: BOTH of them drop an unknown key, so no single edit to the lift
+    // can be witnessed. The door is the layer that enforces it for every
+    // document at every version, so that is where the entry sits.
+    item: 'I1',
+    name: 'a key the shape has no home for is dropped rather than carried',
+    file: 'src/core/storage.ts',
+    find: `  const document = raw as Record<string, unknown>;
+  return {
+    progress: normaliseProgress(document['progress']),`,
+    replace: `  const document = raw as Record<string, unknown>;
+  return {
+    ...document,
+    progress: normaliseProgress(document['progress']),`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I1',
+    name: 'a stored array is not a document',
+    file: 'src/core/storage.ts',
+    find: "  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {",
+    replace: "  if (raw === null || typeof raw !== 'object') {",
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'I2',
+    name: 'text that will not parse falls back instead of throwing',
+    file: 'src/core/storage.ts',
+    find: `      failure = describeFailure('parsing the saved document', error);
+      return null;`,
+    replace: '      throw error;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'the progress of a valid document is read from where it is stored',
+    file: 'src/core/storage.ts',
+    find: "    progress: normaliseProgress(document['progress']),",
+    replace: '    progress: normaliseProgress(document),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'a stored setting is checked against the values its section offers',
+    file: 'src/core/storage.ts',
+    find: '    if (option === value) {',
+    replace: '    if (option !== value) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'a lifetime counter is never carried back as a negative number',
+    file: 'src/core/storage.ts',
+    find: "  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {",
+    replace: "  if (typeof value !== 'number' || !Number.isFinite(value)) {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'a lifetime counter is a whole number of matches and goals',
+    file: 'src/core/storage.ts',
+    find: '  return Math.trunc(value);',
+    replace: '  return value;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'a stored volume out of range is clamped rather than taken',
+    file: 'src/core/storage.ts',
+    find: '  return Math.min(Math.max(value, 0), 1);',
+    replace: '  return value;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I2',
+    name: 'a half-written best result is no result rather than half of one',
+    file: 'src/core/storage.ts',
+    find:
+      "  if (typeof conceded !== 'number' || !Number.isFinite(conceded) || conceded < 0) {",
+    replace: "  if (typeof conceded === 'string') {",
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'I3',
+    name: 'the platform store is opened inside a try',
+    file: 'src/core/storage.ts',
+    find: `  try {
+    backing = open();
+  } catch (error) {
+    failure = describeFailure('opening the platform store', error);
+  }`,
+    replace: '  backing = open();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a refused platform store is recorded and not swallowed',
+    file: 'src/core/storage.ts',
+    find: "    failure = describeFailure('opening the platform store', error);",
+    replace: '    failure = null;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a store that refused to open reports itself as not persistent',
+    file: 'src/core/storage.ts',
+    find: '      return backing !== null;',
+    replace: '      return true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'the recorded failure names the error the platform threw',
+    file: 'src/core/storage.ts',
+    find:
+      '  const named = error instanceof Error ? `${error.name}: ${error.message}` : String(error);',
+    replace: "  const named = 'a platform failure';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a getItem that throws is caught rather than ending the session',
+    file: 'src/core/storage.ts',
+    find: `      failure = describeFailure('reading the saved document', error);
+      return null;`,
+    replace: '      throw error;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a setItem that throws is caught rather than interrupting the match',
+    file: 'src/core/storage.ts',
+    find: "      failure = describeFailure('writing the saved document', error);",
+    replace: '      throw error;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a removeItem that throws is caught rather than ending the reset',
+    file: 'src/core/storage.ts',
+    find: "      failure = describeFailure('clearing the saved document', error);",
+    replace: '      throw error;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'the in-memory value leads the store instead of following it',
+    file: 'src/core/storage.ts',
+    find: `    held = normaliseData(next);
+    writeText(serialiseData(held));`,
+    replace: `    writeText(serialiseData(normaliseData(next)));
+    held = migrate(parseText(readText()));`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a reset puts the session back to the new-player data',
+    file: 'src/core/storage.ts',
+    find: `      held = NEW_DATA;
+      if (!removeText()) {`,
+    replace: '      if (!removeText()) {',
+    detectedBy: 'unit',
+  },
+  {
+    // The unit tests model the property access as a throwing `open`, so the
+    // model is worth exactly what the shipped expression is: this entry breaks
+    // the pin that ties the two together.
+    item: 'I3',
+    name: 'the composition root opens storage as one property access',
+    file: 'src/main.ts',
+    find: '  return window.localStorage;',
+    replace: `  const store = window.localStorage;
+  return store;`,
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'I4',
+    name: 'an unarmed confirmation refuses the click a platform still delivers',
+    file: 'src/ui/components/settings-panel.ts',
+    find: `  confirmReset.addEventListener('click', () => {
+    if (refused(confirmReset)) {
+      return;
+    }`,
+    replace: "  confirmReset.addEventListener('click', () => {",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I4',
+    name: 'a confirmed reset raises the reset the composition root answers',
+    file: 'src/ui/components/settings-panel.ts',
+    find: '    options.onReset();',
+    replace: '    void options;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I4',
+    name: 'settings state where progress is stored',
+    file: 'src/ui/components/settings-panel.ts',
+    find: '  notice.textContent = STORAGE_NOTICE;',
+    replace: "  notice.textContent = '';",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I4',
+    name: 'a reset clears the stored document and not only the session',
+    file: 'src/main.ts',
+    find: '      store.clear();',
+    replace: '      void store;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I4',
+    name: 'a reset puts the theme back to the one a new player gets',
+    file: 'src/ui/layout.ts',
+    find: `      applyTheme(NEW_THEME);
+      settings.select(NEW_THEME);`,
+    replace: '      settings.select(NEW_THEME);',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I4',
+    name: 'the stored theme is applied to the document at mount',
+    file: 'src/ui/layout.ts',
+    find: `  applyTheme(theme);
+  settings.select(theme);`,
+    replace: '  settings.select(theme);',
+    detectedBy: 'browser',
+  },
+
+  {
+    item: 'I5',
+    name: 'the menu opens on the mode the stored settings name',
+    file: 'src/main.ts',
+    find: '      initial: startingChoice,',
+    replace: "      initial: { kind: 'quick', duration: 60, difficulty: 'casual' },",
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'a start records the settings it was started with',
+    file: 'src/main.ts',
+    find: '      settings: settingsAfter(stored.settings, setup.choice, guideEnabled),',
+    replace: '      settings: stored.settings,',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'the aim guide the menu opens with is the stored setting',
+    file: 'src/main.ts',
+    find: '  let guideEnabled = store.data().settings.guide;',
+    replace: '  let guideEnabled = setup.guideDefault;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'a theme change is written down as well as drawn',
+    file: 'src/main.ts',
+    find:
+      '      store.save({ ...stored, settings: { ...stored.settings, theme: themeSetting() } });',
+    replace: '      void stored;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'the whistle records the best result and the lifetime counters',
+    file: 'src/main.ts',
+    find: `      recordResult(
+        { ...stored, progress: advanced },
+        setup.choice.kind,
+        scoring.player,
+        scoring.opponent,
+      ),`,
+    replace: '      { ...stored, progress: advanced },',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'nothing is recorded until the match is over',
+    file: 'src/main.ts',
+    find: "    if (recorded || match.readout().state.kind !== 'GAME_OVER') {",
+    replace: '    if (recorded) {',
+    detectedBy: 'browser',
+  },
+
+  {
+    item: 'I2',
+    name: 'a best result with an unusable goals scored is no result either',
+    file: 'src/core/storage.ts',
+    find: "  if (typeof scored !== 'number' || !Number.isFinite(scored) || scored < 0) {",
+    replace: "  if (typeof scored === 'string') {",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I3',
+    name: 'a refused remove falls back to writing the new-player document',
+    file: 'src/core/storage.ts',
+    find: `      if (!removeText()) {
+        writeText(serialiseData(held));
+      }`,
+    replace: '      removeText();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I4',
+    name: 'a reset ends the claim the match in progress has on the document',
+    file: 'src/main.ts',
+    find: `      store.clear();
+      recorded = true;`,
+    replace: '      store.clear();',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'I5',
+    name: 'a first result in a mode is kept whatever it was',
+    file: 'src/core/storage.ts',
+    find: `  if (held === null) {
+    return played;
+  }`,
+    replace: `  if (held === null) {
+    return { goalsFor: 0, goalsAgainst: 0 };
+  }`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I5',
+    name: 'the better goal margin is the one kept',
+    file: 'src/core/storage.ts',
+    find: '  if (playedMargin > heldMargin) {',
+    replace: '  if (playedMargin < heldMargin) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I5',
+    name: 'an equal margin is broken by the goals scored',
+    file: 'src/core/storage.ts',
+    find: '  if (playedMargin === heldMargin && played.goalsFor > held.goalsFor) {',
+    replace: '  if (playedMargin === heldMargin && played.goalsFor < held.goalsFor) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I5',
+    name: 'a result is recorded against the mode it was played in and no other',
+    file: 'src/core/storage.ts',
+    find: '      kind === mode ? bestOf(data.records[kind], played) : data.records[kind],',
+    replace: '      bestOf(data.records[kind], played),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'I5',
+    name: 'the lifetime counters take every match that finished',
+    file: 'src/core/storage.ts',
+    find: '      matchesPlayed: data.counters.matchesPlayed + 1,',
+    replace: '      matchesPlayed: data.counters.matchesPlayed,',
+    detectedBy: 'unit',
   },
 ];
 
@@ -4519,8 +5155,33 @@ function occurrences(haystack, needle) {
  * own budget for the same reason; this is the backstop for the one that does
  * not. The number itself is each detector's own, declared beside it.
  */
+function reclaim(detector, when) {
+  if (detector.owns !== 'preview') {
+    return;
+  }
+  const result = reapPreview();
+  if (!result.looked) {
+    console.log(
+      `  note  could not tell whether port ${String(PREVIEW_PORT)} is free ${when}: ` +
+        'the platform gave no socket listing, so a leftover preview would ' +
+        'survive this reclaim unseen.',
+    );
+    return;
+  }
+  if (result.killed.length > 0) {
+    console.log(
+      `  note  stopped ${String(result.killed.length)} process(es) holding port ` +
+        `${String(PREVIEW_PORT)} ${when}: ${result.killed.join(', ')}`,
+    );
+  }
+  if (!result.free) {
+    console.log(`  note  port ${String(PREVIEW_PORT)} is STILL held ${when}`);
+  }
+}
+
 function detectorPasses(name, whole = false) {
   const detector = DETECTORS[name];
+  reclaim(detector, `before the ${detector.label}`);
   try {
     execFileSync(process.execPath, detector.argv(whole), {
       cwd: PROJECT_ROOT,
@@ -4534,6 +5195,10 @@ function detectorPasses(name, whole = false) {
     const stdout = error && error.stdout ? String(error.stdout) : '';
     const stderr = error && error.stderr ? String(error.stderr) : '';
     return { passed: false, output: `${stdout}${stderr}`.trim() };
+  } finally {
+    // A detector this harness timed out has left its preview behind, and the
+    // next browser run cannot start while it holds the port.
+    reclaim(detector, `after the ${detector.label}`);
   }
 }
 
@@ -4588,6 +5253,30 @@ export function main() {
       );
       return 1;
     }
+    // A detector that builds before it runs has a second thing to bound, and
+    // it is outside the deadline above by construction.
+    if (
+      detector.buildTimeout !== undefined &&
+      (!Number.isFinite(detector.buildTimeout) || detector.buildTimeout <= 0)
+    ) {
+      console.log(
+        `  FAIL  the ${name} detector builds with no usable deadline, so a ` +
+          'mutation that hangs the build would stall this gate.',
+      );
+      return 1;
+    }
+  }
+
+  // The reclaim's own staleness guard. A number that has drifted apart from
+  // the configuration would free nothing, and the browser detector would then
+  // fail to start for a reason no line of output explained.
+  const declared = configuredPort();
+  if (declared !== PREVIEW_PORT) {
+    console.log(
+      `  FAIL  this harness reclaims port ${String(PREVIEW_PORT)} but vite.config.ts ` +
+        `declares ${String(declared)}, so a leftover preview would never be stopped.`,
+    );
+    return 1;
   }
 
   console.log('== baseline ==');

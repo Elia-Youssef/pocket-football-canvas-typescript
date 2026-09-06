@@ -534,10 +534,14 @@ test.describe('PF-6 input parity and the no-drag path, item C11', () => {
     await expect(at(page, 'panel-pause')).toBeVisible();
 
     // Settings is the second button of the pause panel; opening it and
-    // closing it again is two more touch-reached controls.
+    // closing it again is two more touch-reached controls. Its Close carries
+    // a marker of its own from PF-10, when SPEC section 17's Reset all data
+    // and the two halves of its confirmation joined the panel ahead of it: a
+    // control selected by position is one that quietly starts naming a
+    // different control the day another is added in front of it.
     await touchTap(page, '[data-pf="panel-pause"] button:nth-of-type(2)');
     await expect(at(page, 'panel-settings')).toBeVisible();
-    await touchTap(page, '[data-pf="panel-settings"] button');
+    await touchTap(page, '[data-pf="settings-close"]');
     await expect(at(page, 'panel-settings')).toBeHidden();
 
     await touchTap(page, '[data-pf="panel-pause"] button:nth-of-type(1)');

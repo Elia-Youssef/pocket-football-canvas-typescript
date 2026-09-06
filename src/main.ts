@@ -34,8 +34,6 @@ import { predictGuide } from './core/guide';
 import { createMatch } from './core/match';
 import type { Match, MatchState } from './core/match';
 import {
-  DEFAULT_MODE,
-  createMemoryProgress,
   guideShown,
   ladderComplete,
   ladderRungAfter,
@@ -46,6 +44,8 @@ import {
 import type { ModeChoice, ModeSetup, ProgressStore } from './core/modes';
 import { createRng } from './core/rng';
 import type { Rng } from './core/rng';
+import { choiceOf, createDataStore, recordResult, settingsAfter } from './core/storage';
+import type { DataStore, KeyValueStore, ThemeSetting } from './core/storage';
 import { createEffects } from './render/effects';
 import type { Effects } from './render/effects';
 import { kickoffFacing } from './render/entities';
@@ -126,6 +126,18 @@ function themeInForce(): Theme {
 }
 
 /**
+ * The theme the chrome currently has in force, read back off the attribute the
+ * chrome itself wrote. SPEC section 17 stores the setting and `ui/layout.ts`
+ * owns the policy; this is the root reading the one place that policy lives,
+ * which is the same attribute `themeInForce` above already consults, rather
+ * than keeping a second copy of a value the chrome decides.
+ */
+function themeSetting(): ThemeSetting {
+  const override = document.documentElement.dataset['theme'];
+  return override === 'dark' || override === 'light' ? override : 'system';
+}
+
+/**
  * Whether motion is reduced. The query object is built once and asked every
  * frame: a `MediaQueryList` is live, so its `matches` follows a preference
  * changed mid-session, and building one per frame would put an allocation and
@@ -136,6 +148,18 @@ let motionQuery: MediaQueryList | null = null;
 function reducedMotionInForce(): boolean {
   motionQuery ??= window.matchMedia(MOTION_QUERY);
   return motionQuery.matches;
+}
+
+/**
+ * QUALITY-BAR section 8's dangerous half: `window.localStorage` can throw a
+ * SecurityError on PROPERTY ACCESS, before any method is called, in a
+ * partitioned or cookie-blocked context. This is the one expression that
+ * touches the platform; `core/storage.ts` calls it inside its own try and
+ * falls back to an in-memory store for the session, so the refusal is decided
+ * where it can be tested headlessly rather than here where it cannot.
+ */
+function openStorage(): KeyValueStore {
+  return window.localStorage;
 }
 
 export function boot(): void {
@@ -375,16 +399,29 @@ function mountPlaySurface(
  * for the one activation that resumes.
  */
 function mount(host: HTMLElement): void {
-  // SPEC sections 9 and 19 need two facts to outlive a match. The seam is
-  // `core/modes.ts`'s and PF-10 lands SPEC section 16's stored document behind
-  // it; this is the implementation that exists today, and it is a real store
-  // rather than a stub, so everything above it is already written against the
-  // interface storage will arrive through.
-  const progress: ProgressStore = createMemoryProgress();
+  // SPEC section 16's stored document, behind `core/modes.ts`'s progress seam.
+  // Constructing it cannot fail: a platform that refuses storage outright, a
+  // document that will not parse and a value out of range all resolve to the
+  // new-player data inside the module, which is what makes "saved state cannot
+  // stop the game starting" a property of the type rather than a promise.
+  const store: DataStore = createDataStore(openStorage);
+  // Everything that only wants the ladder rung or the onboarding flag keeps
+  // talking to the narrow seam, so the widening below is visible where it is
+  // used rather than everywhere.
+  const progress: ProgressStore = store;
   const match = createMatch({ onNonFinite: 'repair' });
 
-  let setup: ModeSetup = setupFor(DEFAULT_MODE);
-  let guideEnabled = setup.guideDefault;
+  // SPEC section 17: the menu opens on the settings the last start left, and
+  // the ladder's rung is progress rather than a setting, so it arrives beside
+  // them. A new player gets SPEC section 9's own defaults, because that is what
+  // the stored settings are initialised to.
+  const startingChoice: ModeChoice = choiceOf(
+    store.data().settings,
+    store.data().progress.ladderRung,
+  );
+
+  let setup: ModeSetup = setupFor(startingChoice);
+  let guideEnabled = store.data().settings.guide;
   let opponent: Rng | undefined;
   let effects: Effects | undefined;
   let turnsTaken = 0;
@@ -460,11 +497,17 @@ function mount(host: HTMLElement): void {
     // for the match it starts, and a ladder step that never passes through the
     // menu takes the new rung's default instead.
     guideEnabled = guide ?? setup.guideDefault;
-    const stored = progress.read();
-    firstEverMatch = !stored.playedBefore;
-    if (firstEverMatch) {
-      progress.write({ ...stored, playedBefore: true });
-    }
+    // SPEC section 16: a start is where the settings are written, and the only
+    // moment before the whistle that anything is written at all. The read is
+    // taken FIRST, because `playedBefore` is a fact about the session that is
+    // beginning and the write below is what ends it being true.
+    const stored = store.data();
+    firstEverMatch = !stored.progress.playedBefore;
+    store.save({
+      ...stored,
+      progress: { ...stored.progress, playedBefore: true },
+      settings: settingsAfter(stored.settings, setup.choice, guideEnabled),
+    });
     beginMatch();
     match.dispatch({ kind: 'configure', configuration: setup.configuration });
     chrome.applyMode(setup);
@@ -502,27 +545,43 @@ function mount(host: HTMLElement): void {
   }
 
   /**
-   * SPEC section 9: the ladder advances on a win and restarts on a loss, and
-   * the record is written ONCE, the first frame the rung is over. Writing it
-   * from the readout rather than from the button that follows is what makes
-   * the progress a fact about the match played rather than about which action
-   * the player happened to press afterwards.
+   * SPEC sections 9 and 16 at the whistle: the ladder advances on a win and
+   * restarts on a loss, the mode's best result is offered this scoreline, and
+   * the lifetime counters take it. Written ONCE, the first frame the match is
+   * over, and from the readout rather than from the button that follows, which
+   * is what makes the record a fact about the match played rather than about
+   * which action the player happened to press afterwards.
+   *
+   * THE ONE WRITE COVERS BOTH, deliberately. A ladder rung and a result are
+   * two facts about the same finished match, and two writes would leave a
+   * window in which the document held one of them.
    */
-  function recordLadder(): void {
+  function recordMatch(): void {
     if (recorded || match.readout().state.kind !== 'GAME_OVER') {
       return;
     }
     recorded = true;
-    const ladder = setup.ladder;
-    if (ladder === undefined) {
-      return;
-    }
     const scoring = match.readout().scoring;
-    const step = ladderStepFor(outcomeOf(scoring.player, scoring.opponent));
-    progress.write({
-      ...progress.read(),
-      ladderRung: ladderRungAfter(ladder.position, step),
-    });
+    const stored = store.data();
+    const ladder = setup.ladder;
+    const advanced =
+      ladder === undefined
+        ? stored.progress
+        : {
+            ...stored.progress,
+            ladderRung: ladderRungAfter(
+              ladder.position,
+              ladderStepFor(outcomeOf(scoring.player, scoring.opponent)),
+            ),
+          };
+    store.save(
+      recordResult(
+        { ...stored, progress: advanced },
+        setup.choice.kind,
+        scoring.player,
+        scoring.opponent,
+      ),
+    );
   }
 
   /** What the mode says about the match that has just finished. */
@@ -544,9 +603,35 @@ function mount(host: HTMLElement): void {
 
   const chrome = mountChrome(host, {
     match,
-    onThemeChange: play.render,
+    // SPEC section 17: the theme is a stored setting, so a change is written
+    // as well as drawn. The value is read back off the attribute the chrome
+    // has just written, which keeps the policy in the one module that owns it.
+    onThemeChange: () => {
+      const stored = store.data();
+      store.save({ ...stored, settings: { ...stored.settings, theme: themeSetting() } });
+      play.render();
+    },
+    initialTheme: store.data().settings.theme,
+    // SPEC section 17's Reset all data, after the panel's own confirmation.
+    // The document goes, the session goes back to the new-player state, and
+    // every readout follows from the store the way it always does: the menu
+    // reads the rung when it opens, and the guide setting is put back here
+    // because it is the one the root holds for the match in force.
+    // THE MATCH IN PROGRESS LOSES ITS RIGHT TO RECORD ITSELF, and that is the
+    // whole of "clears every persisted value". Settings is reached from the
+    // pause overlay, so EVERY reset is taken with a match live and this root
+    // still holding that match's mode: the whistle would otherwise write the
+    // ladder rung it was playing, and its result and counters with it, back
+    // over the document the player had just erased. Marking it recorded is
+    // what stops that, and the next match begins recorded false as always.
+    onResetData: () => {
+      store.clear();
+      recorded = true;
+      guideEnabled = store.data().settings.guide;
+      chrome.setGuide(guideEnabled);
+    },
     modes: {
-      initial: DEFAULT_MODE,
+      initial: startingChoice,
       guideOn: guideEnabled,
       onStart: (choice, guide) => {
         startMode(choice, guide);
@@ -585,7 +670,7 @@ function mount(host: HTMLElement): void {
     if (profile !== undefined && opponent !== undefined) {
       respond(match, profile, opponent);
     }
-    recordLadder();
+    recordMatch();
     // The lock, once a frame, before anything reads the aim: the match may
     // have left the player's turn since the last pointer event, and an aim
     // that outlives its own turn is what item C8 forbids.
