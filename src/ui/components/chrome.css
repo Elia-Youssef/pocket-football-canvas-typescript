@@ -96,7 +96,7 @@ body {
   border-style: dashed;
 }
 
-.pf-panel {
+.pf-panel:not([hidden]) {
   position: fixed;
   inset: 0;
   display: grid;
