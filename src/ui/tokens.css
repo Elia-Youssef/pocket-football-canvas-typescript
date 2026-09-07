@@ -4,7 +4,7 @@
  * Two sources, and neither of them is this file. The numeric scales are
  * QUALITY-BAR section 15 and are shared with the other game; the palette is
  * SPEC section 18 and is this game's alone. Every value here is copied from one
- * of them, tests/reference/design-contract.md holds the copy a test can read,
+ * of them, tests/reference/design-contract.json holds the copy a test can read,
  * and tests/unit/tokens.test.ts fails if this file, the renderer record in
  * src/render/tokens.ts and that contract disagree about anything.
  *
