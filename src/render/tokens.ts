@@ -10,7 +10,7 @@
  * THIS FILE READS NOTHING. It does not parse the stylesheet, and the stylesheet
  * does not read it: a shared source that one of them derives from would make
  * the other's copy unfalsifiable, and the point of the arrangement is that a
- * third document, tests/reference/design-contract.md, can disagree with either.
+ * third document, tests/reference/design-contract.json, can disagree with either.
  * It also asks the platform nothing. Whether motion is reduced is a policy
  * decision read once, outside this layer, and passed in.
  *

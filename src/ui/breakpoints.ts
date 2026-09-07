@@ -7,7 +7,7 @@
  * the document that owns the number, so a breakpoint that drifted would drift
  * silently. Here the numbers are exported values, `tests/unit/layout-
  * breakpoints.test.ts` reads them against the copy of QUALITY-BAR section 5's
- * own table in `tests/reference/design-contract.md`, and the composition root
+ * own table in `tests/reference/design-contract.json`, and the composition root
  * writes the answer onto the root element where the stylesheet can select on
  * it. The stylesheet then carries arrangement and no thresholds at all.
  *

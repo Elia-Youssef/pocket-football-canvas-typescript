@@ -1,0 +1,57 @@
+{
+  "1. Numeric scales": [
+    {
+      "headers": ["Token", "Value"],
+      "rows": [
+        ["--type-xs", "0.694rem"], ["--type-sm", "0.833rem"], ["--type-base", "1rem"], ["--type-md", "1.2rem"], ["--type-lg", "1.44rem"], ["--type-xl", "1.728rem"], ["--type-2xl", "2.074rem"],
+        ["--leading-body", "1.5"], ["--leading-tight", "1.25"], ["--space-1", "4px"], ["--space-2", "8px"], ["--space-3", "12px"], ["--space-4", "16px"], ["--space-5", "24px"], ["--space-6", "32px"], ["--space-7", "48px"], ["--space-8", "64px"],
+        ["--radius-sm", "4px"], ["--radius-md", "8px"], ["--radius-lg", "14px"], ["--radius-pill", "999px"], ["--border-hair", "1px"], ["--border-thin", "2px"], ["--border-thick", "3px"], ["--focus-ring-width", "2px"], ["--focus-ring-style", "solid"], ["--focus-ring-offset", "2px"], ["--focus-ring-color", "var(--pf-accent)"], ["--target-min", "44px"], ["--target-clearance", "var(--space-2)"],
+        ["--dur-0", "0ms"], ["--dur-1", "80ms"], ["--dur-2", "140ms"], ["--dur-3", "220ms"], ["--dur-4", "320ms"], ["--ease-out", "cubic-bezier(0.2, 0, 0, 1)"], ["--ease-in-out", "cubic-bezier(0.4, 0, 0.2, 1)"]
+      ]
+    },
+    {
+      "headers": ["Token", "The sentence it comes from"],
+      "rows": [
+        ["--leading-body", "Line height is 1.5 for body"], ["--leading-tight", "and 1.25 at --type-lg and above"], ["--target-min", "Touch targets are 44 x 44 CSS px minimum"], ["--target-clearance", "with 8 px clearance, which is --space-2"], ["--focus-ring-style", "The focus ring row reads 2px solid, 2px offset"]
+      ]
+    }
+  ],
+  "2. Chrome palette": [{
+    "headers": ["Token", "Dark", "Ratio on dark ground", "Light", "Ratio on light ground"],
+    "rows": [["--pf-ground", "#0A1410", "-", "#EDF2EE", "-"], ["--pf-text", "#EAF2EC", "16.43", "#16211B", "14.62"], ["--pf-text-muted", "#9FB0A6", "8.24", "#4A5A50", "6.46"], ["--pf-accent", "#F5C542", "11.56", "#7A5A06", "5.63"]]
+  }],
+  "3. Play surface palette": [{
+    "headers": ["Token", "Floodlit", "Daylight"],
+    "rows": [["--pitch-stripe-a", "#2A7336", "#359045"], ["--pitch-stripe-b", "#2F7D3C", "#3C9A4D"], ["--pf-line", "#F2F7F3", "#F2F7F3"], ["--pf-rail", "#C8CFCB", "#DDE3DF"], ["--team-player", "#5590CE", "#5590CE"], ["--team-opponent", "#6E1712", "#6E1712"], ["--glyph-on-player", "#0A1A2B", "#0A1A2B"], ["--glyph-on-opponent", "#F2F7F3", "#F2F7F3"], ["--ball-body", "#FAFAF8", "#FAFAF8"], ["--ball-panel", "#1A1A1A", "#1A1A1A"]]
+  }],
+  "4. The eleventh colour the play surface uses": [{
+    "headers": ["Token", "Floodlit", "Daylight"],
+    "rows": [["--pf-accent", "#F5C542", "#7A5A06"]]
+  }],
+  "5. Measured pairs": [{
+    "headers": ["Pair", "Foreground", "Background", "Floodlit", "Daylight", "Needs"],
+    "rows": [["Markings on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Markings on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"], ["Entity ring on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Entity ring on player fill", "--pf-line", "--team-player", "3.09", "3.09", "3"], ["Entity ring on opponent fill", "--pf-line", "--team-opponent", "10.80", "10.80", "3"], ["Player fill against opponent fill", "--team-player", "--team-opponent", "3.49", "3.49", "3"], ["Glyph on player", "--glyph-on-player", "--team-player", "5.24", "5.24", "4.5"], ["Glyph on opponent", "--glyph-on-opponent", "--team-opponent", "10.80", "10.80", "4.5"], ["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "3"], ["Ball on player fill", "--ball-body", "--team-player", "3.21", "3.21", "3"], ["Rail on pitch", "--pf-rail", "--pitch-stripe-a", "3.67", "3.09", "3"], ["Rail on ground", "--pf-rail", "--pf-ground", "11.82", "1.15", "3"], ["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Aim arrow strong end on pitch", "--pf-accent", "--pitch-stripe-a", "3.59", "1.59", "3"]]
+  }],
+  "6. Identity separation, in relative luminance": [{
+    "headers": ["Token", "Relative luminance"],
+    "rows": [["--team-player", "0.26"], ["--team-opponent", "0.04"]]
+  }],
+  "7. The retracted claim": [{
+    "headers": ["Pair", "Foreground", "Background", "Measured", "Stays below"],
+    "rows": [["Player fill on the floodlit pitch", "--team-player", "--pitch-stripe-a", "1.74", "3"], ["Opponent fill on the floodlit pitch", "--team-opponent", "--pitch-stripe-a", "2.01", "3"]]
+  }],
+  "8. Cells the threshold does not govern": [{
+    "headers": ["Pair", "Variant", "Measured", "Stays below", "Carried by"],
+    "rows": [["Rail on ground", "Daylight", "1.15", "3", "Rail on pitch, both variants"], ["Aim arrow strong end on pitch", "Daylight", "1.59", "3", "The arrow outline, both variants"]]
+  }],
+  "9. Responsive layout": [
+    {
+      "headers": ["Name", "Range", "Notes"],
+      "rows": [["wide", "width >= 1024 px", "The design-space reference layout"], ["medium", "width 768 to 1023 px", "Chrome compresses, play surface holds its aspect"], ["compact", "width < 768 px, landscape", "Chrome collapses to essentials"], ["portrait", "width < 768 px, portrait", "Per-game arrangement"]]
+    },
+    {
+      "headers": ["Figure", "Value", "Stated as"],
+      "rows": [["Smallest supported width", "320", "No two-dimensional scrolling at 320 x 256 CSS pixels"], ["Smallest supported height", "256", "No two-dimensional scrolling at 320 x 256 CSS pixels"], ["Sticky bars unstick below", "400", "must collapse or unstick below a 400 px viewport height"]]
+    }
+  ]
+}
