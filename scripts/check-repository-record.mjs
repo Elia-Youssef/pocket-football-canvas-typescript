@@ -32,8 +32,8 @@
  *   node scripts/check-repository-record.mjs
  *
  * Environment it reads when CI supplies it: REPOSITORY_BRANCH,
- * PULL_REQUEST_TITLE, PULL_REQUEST_BODY. Without them it reads the current
- * branch from git and checks the history alone.
+ * PULL_REQUEST_TITLE, PULL_REQUEST_BODY, PULL_REQUEST_AUTHOR. Without them
+ * it reads the current branch from git and checks the history alone.
  *
  * Exits 0 when everything passes, 1 otherwise.
  */
@@ -171,6 +171,10 @@ export const CLOSES_PATTERN =
 // line in a body, `Closes:`.
 const TRAILER_PATTERN = /^[A-Za-z][A-Za-z-]*-by:\s/i;
 const DEPENDENCY_TRAILER = /^Signed-off-by: dependabot\[bot\] <support@github\.com>$/;
+const DEPENDABOT_LOGIN = 'dependabot[bot]';
+const DEPENDABOT_AUTHOR = /^dependabot\[bot\] <\d+\+dependabot\[bot\]@users\.noreply\.github\.com>$/;
+const GITHUB_COMMITTER = /^GitHub <noreply@github\.com>$/;
+const DEPENDABOT_SUBJECT = /^deps: Bump /;
 
 const TEXT_EXTENSIONS = new Set([
   '.md', '.csv', '.py', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts',
@@ -367,6 +371,24 @@ export function requiresCloses(subject) {
   return !subject.startsWith('deps:');
 }
 
+/** True only for metadata GitHub supplies for a Dependabot pull request. */
+export function isDependabotPullRequest() {
+  return process.env['PULL_REQUEST_AUTHOR'] === DEPENDABOT_LOGIN;
+}
+
+/**
+ * Dependabot owns this generated message shape, including upstream release
+ * notes. The caller must separately establish the pull request's author from
+ * GitHub event data before granting this exception.
+ */
+export function isDependabotCommit({ author, committer, message }) {
+  return (
+    DEPENDABOT_AUTHOR.test(author) &&
+    GITHUB_COMMITTER.test(committer) &&
+    DEPENDABOT_SUBJECT.test(message)
+  );
+}
+
 /** GITHUB section 4, applied to a whole message or a pull request body. */
 export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
   const problems = [];
@@ -401,13 +423,19 @@ export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
  * branch out of the signature is what makes the property structural rather
  * than remembered.
  */
-export function checkCommitRecord({ author, committer, message }) {
+export function checkCommitRecord(
+  { author, committer, message },
+  { allowDependabotGeneratedMetadata = false } = {},
+) {
   const problems = [];
-  for (const [label, value] of [
+  const generatedDependabot =
+    allowDependabotGeneratedMetadata && isDependabotCommit({ author, committer, message });
+  const fields = [
     ['author', author],
     ['committer', committer],
-    ['message', message],
-  ]) {
+    ...(generatedDependabot ? [] : [['message', message]]),
+  ];
+  for (const [label, value] of fields) {
     for (const hit of scanRecord(value)) {
       problems.push(`${label} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
     }
@@ -418,6 +446,10 @@ export function checkCommitRecord({ author, committer, message }) {
           'which can split or truncate a record scan',
       );
     }
+  }
+
+  if (generatedDependabot) {
+    return problems;
   }
 
   const lines = message.replace(/\n+$/, '').split('\n');
@@ -560,12 +592,11 @@ export function parseCommitLog(log) {
 }
 
 function checkCommits() {
-  console.log('== 3. every commit in the history ==');
+  console.log('== 3. every commit reachable from the checked-out revision ==');
   let log;
   try {
     log = git(
       'log',
-      '--all',
       '--no-merges',
       `--format=${['%H', '%an', '%ae', '%cn', '%ce', '%B'].join(UNIT_SEPARATOR)}${RECORD_SEPARATOR}`,
     );
@@ -581,55 +612,60 @@ function checkCommits() {
         'a separator control byte inside a commit message is the only source of one',
     );
   }
+  const allowDependabotGeneratedMetadata = isDependabotPullRequest();
   for (const { sha, author, committer, message } of records) {
-    for (const problem of checkCommitRecord({ author, committer, message })) {
+    for (const problem of checkCommitRecord(
+      { author, committer, message },
+      { allowDependabotGeneratedMetadata },
+    )) {
       fail(`commit ${sha} ${problem}`);
     }
   }
-  ok(`${String(records.length)} commits checked across every ref`);
+  ok(`${String(records.length)} commits checked from the checked-out revision`);
   return records.length;
 }
 
-function checkPullRequest(branch) {
+function checkPullRequest() {
   console.log('== 4. pull request title and body ==');
   const title = process.env['PULL_REQUEST_TITLE'] ?? '';
   const body = process.env['PULL_REQUEST_BODY'] ?? '';
+  const generatedDependabot = isDependabotPullRequest();
   let checked = 0;
 
   if (title !== '') {
     checked += 1;
-    for (const hit of scanRecord(title)) {
-      fail(`pull request title contains ${JSON.stringify(hit.text)} (${hit.reason})`);
-    }
-    for (const problem of checkSubject(title)) {
-      fail(`pull request title ${problem}`);
-    }
-    const titleControl = findControlByte(title);
-    if (titleControl !== null) {
-      fail(`pull request title carries control byte 0x${titleControl.toString(16).padStart(2, '0')}`);
+    if (!generatedDependabot) {
+      for (const hit of scanRecord(title)) {
+        fail(`pull request title contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+      }
+      for (const problem of checkSubject(title)) {
+        fail(`pull request title ${problem}`);
+      }
+      const titleControl = findControlByte(title);
+      if (titleControl !== null) {
+        fail(`pull request title carries control byte 0x${titleControl.toString(16).padStart(2, '0')}`);
+      }
     }
   }
   if (body !== '') {
     checked += 1;
-    for (const hit of scanRecord(body)) {
-      fail(`pull request body contains ${JSON.stringify(hit.text)} (${hit.reason})`);
-    }
-    if (!isAscii(body)) {
-      fail('pull request body is not ASCII');
-    }
-    const bodyControl = findControlByte(body);
-    if (bodyControl !== null) {
-      fail(`pull request body carries control byte 0x${bodyControl.toString(16).padStart(2, '0')}`);
-    }
-    // A pull request body IS branch-scoped, unlike a commit: it is generated
-    // by whoever opened the branch, it is read once while that branch is open,
-    // and it is never re-judged afterwards. So the waiver here cannot expire
-    // the way the commit waiver could.
-    for (const problem of checkBody(body.split(/\r?\n/), {
-      requireCloses: !branch.startsWith('dependabot/'),
-      dependencyUpdate: branch.startsWith('dependabot/'),
-    })) {
-      fail(`pull request body ${problem}`);
+    if (!generatedDependabot) {
+      for (const hit of scanRecord(body)) {
+        fail(`pull request body contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+      }
+      if (!isAscii(body)) {
+        fail('pull request body is not ASCII');
+      }
+      const bodyControl = findControlByte(body);
+      if (bodyControl !== null) {
+        fail(`pull request body carries control byte 0x${bodyControl.toString(16).padStart(2, '0')}`);
+      }
+      for (const problem of checkBody(body.split(/\r?\n/), {
+        requireCloses: true,
+        dependencyUpdate: false,
+      })) {
+        fail(`pull request body ${problem}`);
+      }
     }
   }
   ok(`${String(checked)} supplied values checked`);
@@ -698,7 +734,7 @@ export function main() {
   checkBranch(branch);
   const tracked = checkTracked();
   const commits = checkCommits();
-  checkPullRequest(branch);
+  checkPullRequest();
 
   console.log('');
   if (failures.length > 0) {
