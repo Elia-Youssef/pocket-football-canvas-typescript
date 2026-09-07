@@ -18,7 +18,7 @@ import type { Breakpoint } from '../../src/ui/breakpoints';
  * Items F1 and F7, the half automation can reach without a browser: the four
  * breakpoints of QUALITY-BAR section 5 and the sticky-bar threshold, resolved
  * in code and held against the copy of that section's own table in
- * tests/reference/design-contract.md.
+ * tests/reference/design-contract.json.
  *
  * WHY THE FIXTURE IS PARSED RATHER THAN QUOTED. A breakpoint written as a
  * media query carries its numbers where nothing can read them back, so a
@@ -35,56 +35,23 @@ import type { Breakpoint } from '../../src/ui/breakpoints';
  */
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
-const CONTRACT = path.join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.md');
-const contractText = readFileSync(CONTRACT, 'utf8');
+const CONTRACT = path.join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.json');
 
 interface Table {
   readonly headers: readonly string[];
   readonly rows: readonly (readonly string[])[];
 }
 
+const contract = JSON.parse(readFileSync(CONTRACT, 'utf8')) as Record<string, Table[]>;
+
 /**
  * The contract's tables under one heading, in order. Written out here rather
- * than shared with tokens.test.ts: that file's parser is part of what IT
- * pins, and a shared helper would mean one edit could blind both.
+ * than shared with tokens.test.ts so each suite guards its own lookup.
  */
 function tablesUnder(heading: string): Table[] {
-  const lines = contractText.split('\n');
-  const start = lines.indexOf(`## ${heading}`);
-  if (start === -1) {
+  const found = contract[heading];
+  if (found === undefined) {
     throw new Error(`the contract has no section headed ${JSON.stringify(heading)}`);
-  }
-  const found: Table[] = [];
-  let headers: string[] | null = null;
-  let rows: string[][] = [];
-  const cells = (line: string): string[] =>
-    line
-      .split('|')
-      .slice(1, -1)
-      .map((text) => text.replace(/[`*]/g, '').trim());
-  const separator = (row: readonly string[]): boolean =>
-    row.length > 0 && row.every((text) => /^:?-{3,}:?$/.test(text));
-  for (const line of lines.slice(start + 1)) {
-    if (/^#{2,6} /.test(line)) {
-      break;
-    }
-    if (line.startsWith('|')) {
-      const row = cells(line);
-      if (headers === null) {
-        headers = row;
-      } else if (!separator(row)) {
-        rows.push(row);
-      }
-      continue;
-    }
-    if (headers !== null) {
-      found.push({ headers, rows });
-      headers = null;
-      rows = [];
-    }
-  }
-  if (headers !== null) {
-    found.push({ headers, rows });
   }
   return found;
 }

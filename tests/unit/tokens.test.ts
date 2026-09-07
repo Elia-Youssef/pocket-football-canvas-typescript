@@ -27,9 +27,9 @@ import type { Brightness, DurationStep, Theme } from '../../src/render/tokens';
  *   src/ui/tokens.css              what the chrome reads
  *   src/render/tokens.ts           the same values as data, because a canvas
  *                                  context takes a colour string and not a var()
- *   tests/reference/design-contract.md
+ *   tests/reference/design-contract.json
  *                                  a hand copy of QUALITY-BAR section 15 and
- *                                  SPEC section 18, which this file parses
+ *                                  SPEC section 18, which this file reads
  *
  * The two shipped forms are checked against the contract and against each
  * other. Nothing here checks the contract against the two outside documents,
@@ -49,14 +49,14 @@ import type { Brightness, DurationStep, Theme } from '../../src/render/tokens';
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const SOURCE_ROOT = path.join(PROJECT_ROOT, 'src');
 const STYLESHEET = path.join(PROJECT_ROOT, 'src', 'ui', 'tokens.css');
-const CONTRACT = path.join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.md');
+const CONTRACT = path.join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.json');
 const ENTRY = path.join(PROJECT_ROOT, 'src', 'main.ts');
 
 /** Relative, POSIX, so a path reads the same in a message on either platform. */
 const TOKEN_LAYER = ['src/ui/tokens.css', 'src/render/tokens.ts'];
 
 const stylesheetText = readFileSync(STYLESHEET, 'utf8');
-const contractText = readFileSync(CONTRACT, 'utf8');
+const contract = JSON.parse(readFileSync(CONTRACT, 'utf8')) as Record<string, Table[]>;
 
 // ---------------------------------------------------------------------------
 // Relative luminance and contrast, WCAG 2.x, written out on purpose.
@@ -89,8 +89,7 @@ function round2(value: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// The contract, parsed. Every table is located by its heading and every column
-// by its header, so a reordered column cannot silently change what is compared.
+// The contract's tables, read by section and column name.
 // ---------------------------------------------------------------------------
 
 interface Table {
@@ -98,50 +97,10 @@ interface Table {
   readonly rows: readonly (readonly string[])[];
 }
 
-function cells(line: string): string[] {
-  return line
-    .split('|')
-    .slice(1, -1)
-    .map((text) => text.replace(/[`*]/g, '').trim());
-}
-
-function isSeparator(row: readonly string[]): boolean {
-  return row.length > 0 && row.every((text) => /^:?-{3,}:?$/.test(text));
-}
-
-/** Every pipe table under one heading, in order, stopping at the next heading. */
 function tablesUnder(heading: string): Table[] {
-  const lines = contractText.split('\n');
-  const start = lines.findIndex(
-    (line) => line === `## ${heading}` || line === `### ${heading}`,
-  );
-  if (start === -1) {
+  const found = contract[heading];
+  if (found === undefined) {
     throw new Error(`the contract has no section headed ${JSON.stringify(heading)}`);
-  }
-  const found: Table[] = [];
-  let headers: string[] | null = null;
-  let rows: string[][] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (/^#{2,6} /.test(line)) {
-      break;
-    }
-    if (line.startsWith('|')) {
-      const row = cells(line);
-      if (headers === null) {
-        headers = row;
-      } else if (!isSeparator(row)) {
-        rows.push(row);
-      }
-      continue;
-    }
-    if (headers !== null) {
-      found.push({ headers, rows });
-      headers = null;
-      rows = [];
-    }
-  }
-  if (headers !== null) {
-    found.push({ headers, rows });
   }
   return found;
 }
