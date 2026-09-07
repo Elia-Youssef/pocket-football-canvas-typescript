@@ -32,8 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # fetch-depth 0 because the record check walks every commit in the
-      # history, not the diff. A shallow clone would pass by seeing nothing.
+      # fetch-depth 0 because the record check walks the complete ancestry of
+      # the checked-out revision, not only the diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -51,6 +51,7 @@ jobs:
           REPOSITORY_BRANCH: ${{ github.head_ref || github.ref_name }}
           PULL_REQUEST_TITLE: ${{ github.event.pull_request.title }}
           PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+          PULL_REQUEST_AUTHOR: ${{ github.event.pull_request.user.login }}
 
   pocket-football:
     name: Pocket Football gates

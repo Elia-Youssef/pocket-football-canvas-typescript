@@ -10,6 +10,8 @@ import {
   checkBody,
   checkCommitRecord,
   checkSubject,
+  isDependabotCommit,
+  isDependabotPullRequest,
   isGameContextLine,
   isReservedBasename,
   isTextPath,
@@ -208,13 +210,13 @@ describe('PF-0 repository record gate', () => {
 
   describe('the dependency waiver is a property of the commit', () => {
     const DEPENDENCY_COMMIT = {
-      author: 'dependabot[bot] <support@github.com>',
+      author: 'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>',
       committer: 'GitHub <noreply@github.com>',
       // The real message shape, sign-off included: dependabot appends it to
       // every commit it creates, so a model without it tests a commit that
       // will never exist.
       message:
-        'deps: bump actions/checkout from 7.0.1 to 7.0.2\n\nBumps actions/checkout.\n\n' +
+        `deps: Bump actions/checkout from 7.0.1 to 7.0.2\n\n${PRODUCT}\n\n` +
         'Signed-off-by: dependabot[bot] <support@github.com>',
     };
     const HUMAN_CI_COMMIT = {
@@ -230,8 +232,20 @@ describe('PF-0 repository record gate', () => {
       expect(requiresCloses('docs: record the reorder')).toBe(true);
     });
 
-    it('passes the commit exactly as dependabot writes it, sign-off and all', () => {
-      expect(checkCommitRecord(DEPENDENCY_COMMIT)).toEqual([]);
+    it('allows generated bot metadata only with the explicit event-backed exception', () => {
+      expect(isDependabotCommit(DEPENDENCY_COMMIT)).toBe(true);
+      expect(checkCommitRecord(DEPENDENCY_COMMIT).length).toBeGreaterThan(0);
+      expect(
+        checkCommitRecord(DEPENDENCY_COMMIT, { allowDependabotGeneratedMetadata: true }),
+      ).toEqual([]);
+    });
+
+    it('requires the GitHub-supplied pull request author before enabling the exception', () => {
+      process.env['PULL_REQUEST_AUTHOR'] = 'someone-else';
+      expect(isDependabotPullRequest()).toBe(false);
+      process.env['PULL_REQUEST_AUTHOR'] = 'dependabot[bot]';
+      expect(isDependabotPullRequest()).toBe(true);
+      delete process.env['PULL_REQUEST_AUTHOR'];
     });
 
     it('refuses the dependency sign-off on anything that is not a dependency update', () => {
@@ -250,14 +264,14 @@ describe('PF-0 repository record gate', () => {
       expect(checkCommitRecord(HUMAN_CI_COMMIT).length).toBe(1);
     });
 
-    it('reaches the same verdict whatever branch the check runs from', () => {
-      // The repro this replaced: the same commit passed on its dependabot
-      // branch and then failed the whole-history walk forever once it was
-      // squash-merged. The signature below takes no branch, so it cannot.
+    it('keeps the exception independent of branch names', () => {
       const branches = ['dependabot/github_actions/actions/checkout-7', 'main', 'pf-1-tokens'];
       for (const branch of branches) {
         process.env['REPOSITORY_BRANCH'] = branch;
-        expect(checkCommitRecord(DEPENDENCY_COMMIT), branch).toEqual([]);
+        expect(
+          checkCommitRecord(DEPENDENCY_COMMIT, { allowDependabotGeneratedMetadata: true }),
+          branch,
+        ).toEqual([]);
         expect(checkCommitRecord(HUMAN_CI_COMMIT).length, branch).toBe(1);
       }
       delete process.env['REPOSITORY_BRANCH'];

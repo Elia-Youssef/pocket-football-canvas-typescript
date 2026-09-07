@@ -30,11 +30,16 @@ export declare function isAscii(value: string): boolean;
 export declare function findControlByte(value: string): number | null;
 export declare function checkSubject(subject: string): string[];
 export declare function requiresCloses(subject: string): boolean;
+export declare function isDependabotPullRequest(): boolean;
+export declare function isDependabotCommit(commit: CommitRecord): boolean;
 export declare function checkBody(
   lines: string[],
   options: { requireCloses: boolean; dependencyUpdate?: boolean },
 ): string[];
-export declare function checkCommitRecord(commit: CommitRecord): string[];
+export declare function checkCommitRecord(
+  commit: CommitRecord,
+  options?: { allowDependabotGeneratedMetadata?: boolean },
+): string[];
 
 export interface ParsedCommit {
   sha: string;
