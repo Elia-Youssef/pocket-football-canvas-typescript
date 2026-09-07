@@ -255,7 +255,16 @@ test.describe('PF-5 the input lock, item C8', () => {
     await nextFrames(page, 10);
   });
 
-  test('refuses aiming while any body is moving', async ({ page }) => {
+  test('refuses aiming while any body is moving', { tag: '@drive' }, async ({ page }) => {
+    // Drive this run from a clock installed before its navigation.  Waiting on
+    // real frames here can let a busy runner consume the Quick Match clock
+    // before the launched body settles, which turns this into a full-time
+    // assertion instead of an input-lock assertion.
+    await page.clock.install({ time: 0 });
+    await startMatch(page);
+    await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    await advance(page, 4);
+
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
 
@@ -280,7 +289,12 @@ test.describe('PF-5 the input lock, item C8', () => {
     expect(refused.afterMove).toBe('idle');
     expect(refused.afterEnd).toBe('idle');
     // And the turn ran its own course: the refused press launched nothing.
-    await expect(turn).toHaveText('OPPONENT IS AIMING', SETTLE);
+    let reached = false;
+    for (let frame = 0; frame < 200 && !reached; frame += 1) {
+      await advance(page, 1);
+      reached = (await turnText(page)) === 'OPPONENT IS AIMING';
+    }
+    expect(reached).toBe(true);
   });
 
   test("refuses aiming during the opponent's turn", { tag: '@drive' }, async ({ page }) => {
