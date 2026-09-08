@@ -167,11 +167,19 @@ test.describe('PF-9 Quick Match, item J1', () => {
     expect(await at(page, 'final-score')).toBe(
       `${String(board.player)} : ${String(board.opponent)}`,
     );
-    // Non-vacuous: the match was PLAYED rather than sat out. The player left
-    // its kickoff spot and the ball left the centre, so the scoreboard the
-    // implication was checked against is the scoreboard of a real match.
+    // Non-vacuous: the match was PLAYED rather than sat out, on either of the
+    // two witnesses a played match can leave. A displaced scene is one - the
+    // player away from its kickoff spot, or the ball away from the centre.
+    // But SPEC section 6.4 returns both circles and the ball to their
+    // starting positions after a goal, so a whistle falling shortly after one
+    // leaves the scene AT kickoff with the match played and the scoreboard
+    // proving it; the guard reads the one quantity a goal erases. A non-zero
+    // scoreboard is the witness the reset cannot touch. Both absent is a
+    // genuinely vacuous run and still fails.
     const scene = await centres(page);
-    expect(Math.abs(scene.player.x - 300) + Math.abs(scene.ball.x - 640)).toBeGreaterThan(50);
+    const displaced =
+      Math.abs(scene.player.x - 300) + Math.abs(scene.ball.x - 640) > 50;
+    expect(board.player + board.opponent > 0 || displaced).toBe(true);
     await expect(page.locator('[data-pf="clock"]')).toHaveText('00:00', SETTLE);
   });
 });

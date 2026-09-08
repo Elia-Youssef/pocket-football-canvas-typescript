@@ -23,20 +23,36 @@
  * reachable side closest to the ideal one, and holds every choice at or above
  * MIN_STRIKE_SOLIDITY so the fallback cannot degrade into a graze.
  *
- * STRIKE SOLIDITY IS THE SPEC'S FORMULA, READ AT THE APPROACH. SPEC section
- * 8.1 defines it as dot(n, -side) at the moment of contact, with n the unit
- * normal from the striker's centre to the ball's. A striker that barely moves
- * before contact has n along its own approach, so solidity(side) is
- * dot(approach, side): 1 for a dead-centre strike on the ideal line, 0 at a
- * tangential graze. Aiming at the contact point bends the arrival toward the
- * strike axis, so the reading below is the conservative end of what the
- * physics produces, which is what a floor is for.
+ * THE LAUNCH AIMS AT THE TOUCHING DISTANCE, which is the point section 8.1's
+ * own reachability test is written for. Aim the striker's CENTRE at
+ * `ball + TOUCHING * side`. The centre path meets the contact disc where
+ * `|offset + t * step| = TOUCHING`, and the two roots of that quadratic
+ * multiply to `gap^2 - TOUCHING^2`, so the aim point is the FIRST of them
+ * exactly when `dot(offset, side) >= TOUCHING` - the reachable test above,
+ * derivable at no other aim distance. Reaching it, the contact normal is
+ * -side exactly and the ball departs along -side as section 8.1 states. The
+ * ball's own surface point, 18 px along the side, enters the disc earlier and
+ * at a normal pulled toward the striker's approach. Both readings are
+ * measured over the same population in tests/unit/ai-aim.test.ts, the 96
+ * layouts of its playfield grid: the departure sits 1.89 degrees off the
+ * chosen side on average aimed here, and 36.44 off aimed at the surface
+ * point, which the harness entry named for that aim distance restores in one
+ * edit. Section 8.1 forbids a margin the other way as well, and the entry
+ * beside it takes the 2 px the section names.
  *
- * THE LAUNCH AIMS AT THE CONTACT POINT ITSELF, the point on the ball's
- * surface the chosen side names, with no safety margin: at a near-tangential
- * clamp, aiming 2 px past the touching distance turns the strike into a
- * whiff, while the surface point sits well inside the contact disc, so the
- * launch cannot skip past it.
+ * STRIKE SOLIDITY IS THE SPEED TRANSFER OF THAT LAUNCH. Section 8.1 reads it
+ * as dot(n, -side) at the moment of contact, with n the unit normal from the
+ * striker's centre to the ball's, and names its two ends: 1.0 for a
+ * dead-centre strike along the ideal line, 0 for a tangential graze. Aimed at
+ * the touching point the normal is -side identically, so the quantity that
+ * carries those two ends is the share of the arrival speed the equal-mass
+ * elastic exchange of section 6.3 hands the ball,
+ * `(a - TOUCHING) / sqrt(gap^2 - 2 * TOUCHING * a + TOUCHING^2)` with
+ * `a = dot(offset, side)`: 1 when the striker stands on the side's own axis,
+ * 0 at `a = TOUCHING`, and positive exactly on the reachable sides. Holding
+ * it at or above MIN_STRIKE_SOLIDITY is one bound on the approach cosine,
+ * `coneBound` below, and that bound exceeds the bare reachability cosine at
+ * every gap past the touching distance, so one test carries both rules.
  *
  * THE SEAM. Nothing here steps the match or reads a clock. A frame driver
  * polls `readout().opponentReady`, and when the seam is raised, calls
@@ -97,8 +113,12 @@ export const MIN_STRIKE_SOLIDITY = 0.25;
  */
 export const OPPONENT_STREAM = 'opponent';
 
-/** SPEC section 8: a whiff offsets the aim by this multiple of the touching distance. */
-const WHIFF_OFFSET = 1.15;
+/**
+ * SPEC section 8: a whiff offsets the aim by this multiple of the touching
+ * distance. Exported because a constant the specification states by value is
+ * pinned against that literal, in tests/unit/ai-difficulty.test.ts.
+ */
+export const WHIFF_OFFSET = 1.15;
 
 /**
  * A derived shot asks for this multiple of the travel it needs, so the
@@ -206,11 +226,72 @@ export const LADDER: readonly LadderOpponent[] = [
 export interface StrikeChoice {
   readonly x: number;
   readonly y: number;
-  /** True when the ideal side failed the reachable test and was clamped. */
+  /** True when the ideal side was inadmissible and the cone clamp chose. */
   readonly clamped: boolean;
-  /** dot(approach, side), at or above MIN_STRIKE_SOLIDITY for every choice. */
+  /** The launch's speed transfer, at or above MIN_STRIKE_SOLIDITY for every choice. */
   readonly solidity: number;
 }
+
+/**
+ * The share of its arrival speed a launch aimed at the touching point of a
+ * side hands the ball, for a striker `gap` away whose offset projects `along
+ * * gap` onto that side. The one degenerate input is a striker standing on
+ * the touching point already, which has no path left to arrive along and is
+ * dead centre by construction; every other input is a plain cosine.
+ */
+function strikeSolidity(gap: number, along: number): number {
+  const reach = along * gap;
+  // The path length squared, written as a sum of two non-negative terms
+  // rather than as `gap^2 - 2 * TOUCHING * reach + TOUCHING^2`. The two are
+  // the same quantity, expanded either way, but the difference form cancels
+  // to nothing as the gap approaches the touching distance and takes every
+  // digit of the answer with it: at a gap of 52.00000000001 it reports a
+  // dead-centre strike as a graze. This form keeps the two ends exact - a
+  // dead-centre strike divides the same subtraction by itself and is 1 - and
+  // never subtracts one large quantity from another.
+  const leg = (gap - TOUCHING) * (gap - TOUCHING) + 2 * TOUCHING * gap * (1 - along);
+  if (!(leg > 0)) {
+    return 1;
+  }
+  return (reach - TOUCHING) / Math.sqrt(leg);
+}
+
+/**
+ * The lower bound MIN_STRIKE_SOLIDITY puts on dot(approach, side), inverted
+ * from the transfer above: `a >= TOUCHING (1 - f^2) + f sqrt(gap^2 -
+ * TOUCHING^2 (1 - f^2))`, divided by the gap to read as a cosine. It is 1 at
+ * the touching distance and falls toward MIN_STRIKE_SOLIDITY as the gap
+ * grows, and it is above TOUCHING / gap at every gap past the touching
+ * distance, so a side that clears this bound is reachable in section 8.1's
+ * sense as well as solid.
+ */
+function coneBound(gap: number): number {
+  const spread = 1 - MIN_STRIKE_SOLIDITY * MIN_STRIKE_SOLIDITY;
+  const inner = gap * gap - TOUCHING * TOUCHING * spread;
+  return (TOUCHING * spread + MIN_STRIKE_SOLIDITY * Math.sqrt(inner)) / gap;
+}
+
+/**
+ * A unit vector along (x, y), or the fallback direction when the input has
+ * none to give: a zero length, or a coordinate that is not a number. Every
+ * direction this module normalises goes through here, so a degenerate input
+ * leaves with a stated direction rather than with NaN.
+ */
+function unitOr(x: number, y: number, fallback: Vec2): Vec2 {
+  const length = Math.hypot(x, y);
+  if (!(length > 0) || !Number.isFinite(length)) {
+    return { x: fallback.x, y: fallback.y };
+  }
+  return { x: x / length, y: y / length };
+}
+
+/**
+ * SPEC section 6.3's own answer for a normal that cannot be computed: the
+ * coincident case falls back to (1, 0), fixed rather than random so the case
+ * stays deterministic. The same constant serves every degenerate direction
+ * here, for the same reason.
+ */
+const FIXED_FALLBACK: Vec2 = { x: 1, y: 0 };
 
 /**
  * SPEC section 8.1's rule, on its own for the sweep to walk the playfield
@@ -219,70 +300,78 @@ export interface StrikeChoice {
  * along minus the side, so the strike point sits on the far side from the
  * goal.
  *
- * The clamp is the projection the geometry gives: the reachable sides are
- * those within arccos(max(TOUCHING / gap, MIN_STRIKE_SOLIDITY)) of the
- * approach, so the closest reachable side to an unreachable ideal is the cone
- * boundary point along the ideal's own perpendicular, which is what falls out
- * below. A striker already inside the contact distance has no cone at all; it
- * pushes straight out along its approach, which sends the ball away from it
- * and never backward through it.
+ * The clamp is the projection the geometry gives: the admissible sides are
+ * those within arccos(coneBound(gap)) of the approach, so the closest
+ * admissible side to an inadmissible ideal is the cone boundary point along
+ * the ideal's own perpendicular, which is what falls out below.
+ *
+ * THE FLOOR BINDS EVERY CHOSEN SIDE, not the clamped ones alone. Section
+ * 8.1's sentence puts the 0.25 on the fallback, "so the fallback cannot
+ * degrade into a graze", and item D3's criterion puts it on the outcome:
+ * every chosen direction reaches the ball with meaningful speed transfer. A
+ * reachable ideal whose transfer is under the floor is a graze by the same
+ * measurement, so it is clamped like an unreachable one and the criterion's
+ * "every" is honoured; the two readings differ only for a glancing ideal, and
+ * tests/unit/ai-aim.test.ts pins the difference by literal coordinates.
+ *
+ * A striker already inside the contact distance has no cone at all; it pushes
+ * straight out along its approach, which sends the ball away from it and
+ * never backward through it.
  */
 export function chooseStrikeSide(
   striker: Vec2,
   ball: Vec2,
   target: Vec2,
 ): StrikeChoice {
-  const idealX = ball.x - target.x;
-  const idealY = ball.y - target.y;
-  const idealLength = Math.hypot(idealX, idealY);
-  const ix = idealX / idealLength;
-  const iy = idealY / idealLength;
+  const approach = unitOr(striker.x - ball.x, striker.y - ball.y, FIXED_FALLBACK);
+  const ideal = unitOr(ball.x - target.x, ball.y - target.y, approach);
 
-  const offsetX = striker.x - ball.x;
-  const offsetY = striker.y - ball.y;
-  const gap = Math.hypot(offsetX, offsetY);
-  const ux = offsetX / gap;
-  const uy = offsetY / gap;
-
-  if (!(gap >= TOUCHING)) {
+  const gap = Math.hypot(striker.x - ball.x, striker.y - ball.y);
+  const bound = coneBound(gap);
+  if (!(gap >= TOUCHING) || !Number.isFinite(bound)) {
     // Inside the contact disc there is no reachable side; the straight-out
     // push is the only strike that cannot drive the ball back through the
-    // striker, and it is dead centre by construction.
-    const x = gap > 0 ? ux : ix;
-    const y = gap > 0 ? uy : iy;
-    return { x, y, clamped: true, solidity: 1 };
+    // striker, and it is dead centre by construction. Two other inputs leave
+    // by this same door with the same answer: a gap that is not a number, and
+    // one so large that the cone arithmetic overflows, which is 1.3e154 px
+    // against a pitch whose widest separation is 1160.31.
+    return { x: approach.x, y: approach.y, clamped: true, solidity: 1 };
   }
 
-  // Both bounds are lower bounds on dot(approach, side): the reachable test
-  // in pixels reads as the cosine TOUCHING / gap, and the solidity floor is
-  // the cosine it is named for.
-  const floor = Math.max(TOUCHING / gap, MIN_STRIKE_SOLIDITY);
-  const along = ux * ix + uy * iy;
+  const along = approach.x * ideal.x + approach.y * ideal.y;
 
-  if (along >= floor) {
-    return { x: ix, y: iy, clamped: false, solidity: along };
+  if (along >= bound) {
+    return {
+      x: ideal.x,
+      y: ideal.y,
+      clamped: false,
+      solidity: strikeSolidity(gap, along),
+    };
   }
 
   // The unit perpendicular component of the ideal, which points from the
   // approach axis toward the ideal side; the degenerate case is the striker
   // exactly opposite the strike point, where either wall of the cone is
   // equally close and the fixed rotation keeps the choice deterministic.
-  let perpX = ix - ux * along;
-  let perpY = iy - uy * along;
-  const perpLength = Math.hypot(perpX, perpY);
-  if (perpLength < 1e-9) {
-    perpX = -uy;
-    perpY = ux;
-  } else {
-    perpX /= perpLength;
-    perpY /= perpLength;
-  }
-  const spread = Math.sqrt(1 - floor * floor);
+  const perpendicular = unitOr(
+    ideal.x - approach.x * along,
+    ideal.y - approach.y * along,
+    { x: -approach.y, y: approach.x },
+  );
+  const spread = Math.sqrt(Math.max(0, 1 - bound * bound));
   return {
-    x: ux * floor + perpX * spread,
-    y: uy * floor + perpY * spread,
+    x: approach.x * bound + perpendicular.x * spread,
+    y: approach.y * bound + perpendicular.y * spread,
     clamped: true,
-    solidity: floor,
+    // The floor itself, which is what the bound was inverted from, rather
+    // than the transfer recomputed from it: the two agree to fifteen places
+    // at every gap the pitch produces and the recomputation loses all of them
+    // as the gap approaches the touching distance, where `gap^2 - 104 a +
+    // 2704` and `a - TOUCHING` both go to zero. The test in
+    // tests/unit/ai-aim.test.ts measures the constructed side's transfer
+    // against the reference instead, which is the check this line would
+    // otherwise be pretending to be.
+    solidity: MIN_STRIKE_SOLIDITY,
   };
 }
 
@@ -300,9 +389,13 @@ function ownGoalOf(side: Side): Vec2 {
     : { x: LEFT_GOAL_LINE, y: MOUTH_CENTRE_Y };
 }
 
-/** The point on the ball's surface the chosen side names, which the launch aims at. */
+/**
+ * SPEC section 8.1's contact point: where the striker's CENTRE stands at the
+ * moment it touches the chosen side, which is the touching distance along that
+ * side and is the point the launch aims at.
+ */
 function contactPoint(ball: Vec2, side: StrikeChoice): Vec2 {
-  return { x: ball.x + side.x * BALL_RADIUS, y: ball.y + side.y * BALL_RADIUS };
+  return { x: ball.x + side.x * TOUCHING, y: ball.y + side.y * TOUCHING };
 }
 
 /**
@@ -438,14 +531,33 @@ export interface ShotPlan {
   readonly power: number;
   /** True when the blocking target replaced the strike. */
   readonly defensive: boolean;
-  /** True when the whiff roll fired and the aim was offset off the ball. */
+  /**
+   * True when the whiff roll fired, which SPEC section 8 counts over turns.
+   * The whiff transform belongs to strikes: a turn that rolled the whiff and
+   * the block together carries this flag and the block's own aim.
+   */
   readonly whiffed: boolean;
-  /** True when the ideal side was unreachable and the cone clamp chose. */
+  /** True when the ideal side was inadmissible and the cone clamp chose. */
   readonly clamped: boolean;
   /** True when the winning candidate arrived by a wall bounce. */
   readonly wallShot: boolean;
-  /** The drawn angular error, radians, already applied to the angle. */
+  /**
+   * The drawn angular error, radians, applied to the angle on every path but
+   * the whiff. SPEC section 8 gives the whiff a stated purpose - the launch
+   * passes the ball cleanly - and an error of up to 12 degrees laid on top of
+   * the offset defeats it at most gaps, so on a whiffed turn the draw chooses
+   * which side of the ball the launch passes and the offset carries the miss.
+   * The difficulty table's error clause is graded on this value, which is
+   * drawn identically on every turn.
+   */
   readonly errorRad: number;
+  /**
+   * True when the defensive roll fired, whether or not the block was taken.
+   * SPEC section 8 states `defensiveBias` as a probability, so the roll is
+   * what a test measures that probability against; `defensive` is the outcome,
+   * which the refused-lane fall-through can differ from.
+   */
+  readonly rolled: boolean;
   /** The chosen strike's solidity, 1 for a shot that strikes nothing. */
   readonly solidity: number;
 }
@@ -457,17 +569,23 @@ export interface ShotPlan {
  * that it is taken. The whiff flag is the roll, on every action; the whiff
  * transform, which lays the aim off the ball, belongs to strikes.
  *
- * THE BACKWARDS DISCIPLINE, which is the goal this part exists for. A launch
- * departs the ball along the contact normal, and for an approaching striker
- * that normal points from the striker to the ball. When it carries no
- * component toward the target - the striker stands between the ball and the
- * goal it attacks - no side the reachable cone can offer changes it: the
- * strike is a solid drive toward the striker's own goal, and no clamp, floor
- * or contact point repairs that, because the geometry of the contact fixes
- * the direction whatever the side says. Those turns are played as defensive
- * ones instead: the body takes the blocking target and the ball is left
- * alone. The drive that section 8.1 measured at 41.3 percent of layouts is
- * not re-aimed away from the net; it is not taken at all.
+ * THE BLOCK IS THE PROFILE'S ROLL AND NOTHING ELSE. SPEC section 8 defines
+ * `defensiveBias` as THE probability of substituting the blocking target for
+ * the strike, and gives it as 0.0, 0.15 and 0.30; a second, geometric reason
+ * to substitute would make the effective probability the sum of the two and
+ * would give Casual, whose stated probability is zero, a block on about a
+ * third of its turns. The layouts section 8.1 names - the striker standing
+ * between the ball and the goal it attacks - are answered by the clamp, which
+ * is what section 8.1 states the remedy to be: the departure is held within
+ * arccos(coneBound) of the axis away from the striker, so the closest
+ * admissible side is the most goal-ward strike that layout has. The earlier
+ * reading here, that no side the cone can offer helps, is false wherever the
+ * angle from the axis away from the striker to the target is inside
+ * arccos(coneBound) of it, which is most of the class once the aim sits at
+ * the touching distance. What genuinely cannot be answered is the rest: the
+ * layouts whose whole admissible fan reaches the mouth the striker defends,
+ * which the soak in tests/unit/ai-aim.test.ts counts as a class and holds
+ * every own goal it concedes inside.
  */
 export function planShot(
   world: World,
@@ -488,17 +606,10 @@ export function planShot(
 
   const choice = chooseStrikeSide(striker.position, ball.position, target);
 
-  // The strike's departure, the contact normal of an approaching striker,
-  // read against the target direction: negative, and the strike drives the
-  // ball away from the goal it is meant to reach. Both lengths are positive,
-  // so the sign of the plain product is the sign of the cosine.
   const towardX = ball.position.x - striker.position.x;
   const towardY = ball.position.y - striker.position.y;
-  const targetX = target.x - ball.position.x;
-  const targetY = target.y - ball.position.y;
-  const backwards = towardX * targetX + towardY * targetY < 0;
 
-  if (defensiveRoll || backwards) {
+  if (defensiveRoll) {
     // SPEC section 8: the blocking target, the midpoint of the ball-to-own-
     // goal line, is substituted for the strike, and the striker's body is
     // what travels. The substitution is honest only while the trip cannot
@@ -518,38 +629,50 @@ export function planShot(
         clamped: false,
         wallShot: false,
         errorRad,
+        rolled: true,
         solidity: 1,
       };
     }
-    // A backwards turn whose lane trip is blocked is the residue this
-    // routine cannot decline: the striker is square behind the ball, every
-    // straight line to the block point plays it, and the clamped strike
-    // below is what remains. The soak measures what the class costs.
+    // A rolled block whose lane trip would play the ball is refused: the
+    // striker is square behind the ball, every straight line to the block
+    // point runs through it, and the strike below is what remains. The share
+    // of rolls this takes is measured and pinned in
+    // tests/unit/ai-difficulty.test.ts, because a refusal nobody counts is a
+    // second substitution rule in disguise.
   }
-
 
   if (whiffed) {
     // SPEC section 8: a whiff offsets the aim point by 1.15 of the touching
-    // distance along the tangent, so the launch passes the ball cleanly
-    // rather than grazing it. The tangent that delivers that is the one to
-    // the approach axis, and the anchor is the ball itself: laid off the
-    // ball, the launch clears it whichever side of it the striker is on,
-    // which an anchor on the contact point cannot guarantee once the side
-    // has been clamped. The sign rides on the error draw, which keeps the
-    // pattern at four draws and the choice deterministic.
+    // distance along the tangent, SO THE LAUNCH PASSES THE BALL CLEANLY
+    // rather than grazing it. The quantity that purpose names is the launch
+    // LINE's distance from the ball centre, which is what the launch either
+    // clears the ball by or does not; an aim point laid off the ball centre
+    // carries the offset only in the far field and collapses to
+    // offset * gap / hypot(gap, offset) close in, which is under the touching
+    // distance for a gap below 105.3 px, so that reading struck the ball at
+    // every gap up to 104, measured 2026-09-08. So the launch leaves at the
+    // angle whose LINE stands the offset off the ball centre: a line at
+    // asin(clearance / gap) from the direction to the ball clears it by
+    // exactly `clearance`, and that is the offset itself wherever the gap
+    // admits the tangent, which is the same aim point the far field gave.
+    // A striker inside the offset circle has no such tangent and no line
+    // through it can clear more than the gap, so the clearance is
+    // the gap and the launch is the perpendicular. The sign rides on the
+    // error draw, which keeps the pattern at four draws and the choice
+    // deterministic.
     const reach = Math.max(Math.hypot(towardX, towardY), 1e-9);
     const sign = errorRad < 0 ? -1 : 1;
     const offset = WHIFF_OFFSET * TOUCHING;
-    const aimX = ball.position.x + (sign * -towardY * offset) / reach;
-    const aimY = ball.position.y + (sign * towardX * offset) / reach;
+    const clearance = Math.min(offset, reach);
     return {
-      angle: Math.atan2(aimY - striker.position.y, aimX - striker.position.x),
+      angle: Math.atan2(towardY, towardX) + sign * Math.asin(clearance / reach),
       power: drawnPower,
       defensive: false,
       whiffed: true,
       clamped: choice.clamped,
       wallShot: false,
       errorRad,
+      rolled: defensiveRoll,
       solidity: choice.solidity,
     };
   }
@@ -577,6 +700,7 @@ export function planShot(
       clamped: choice.clamped,
       wallShot: best.wall,
       errorRad,
+      rolled: defensiveRoll,
       solidity: choice.solidity,
     };
   }
@@ -594,6 +718,7 @@ export function planShot(
     clamped: choice.clamped,
     wallShot: false,
     errorRad,
+    rolled: defensiveRoll,
     solidity: choice.solidity,
   };
 }

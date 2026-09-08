@@ -5,6 +5,7 @@ import type { OpponentProfile } from '../../src/core/ai'; // the opponent's prof
 import { createWorld, everyBodyStopped, launch } from '../../src/core/bodies';
 import {
   BALL_RADIUS,
+  CIRCLE_RADIUS,
   DAMPING,
   FIELD_BOTTOM,
   FIELD_LEFT,
@@ -46,7 +47,7 @@ import type { Vec2 } from '../../src/core/vec2';
  * the shot.
  */
 
-const TOUCHING = 34 + 18;
+const TOUCHING = CIRCLE_RADIUS + BALL_RADIUS;
 
 /** Seeded turns over the whole playfield, one plan per turn. */
 function sample(profile: OpponentProfile, name: string, count: number): number[] {
@@ -188,13 +189,25 @@ describe('PF-8 the aggression bias, item D5', () => {
     // and a mid-range shot lands inside the band, where the derivation is
     // exposed: the power inverts the damped travel at the trip margin the
     // routine promises, pinned here against the literal 1.4.
+    //
+    // THE TRIP IS THE TRIP THE LAUNCH ACTUALLY MAKES. SPEC section 8.1 aims
+    // the strike at the contact point, where the striker's centre stands when
+    // it touches the ball, which is the touching distance along the chosen
+    // side and not the ball's own surface: 388 px here rather than 422, so
+    // the derived power is 0.6333 rather than the 0.7056 this expectation
+    // carried while the aim was 34 px short, measured 2026-09-08. The
+    // expectation is derived from the constants, so it moves with the aim
+    // rather than recording it.
     const striker = { x: 1080, y: 360 };
     const midBall = { x: 640, y: 360 };
     const mid = planAt(striker, midBall, ACE, createRng('ace-mid').split(OPPONENT_STREAM));
     const decay = -Math.log(DAMPING);
-    const trip = distance(striker, { x: midBall.x + BALL_RADIUS, y: midBall.y });
+    const trip = distance(striker, { x: midBall.x + TOUCHING, y: midBall.y });
+    expect(trip).toBe(388);
+    expect(TOUCHING).toBe(CIRCLE_RADIUS + BALL_RADIUS);
     const expected = (STOP_SPEED + 1.4 * trip * decay - MIN_LAUNCH_SPEED) /
       (MAX_LAUNCH_SPEED - MIN_LAUNCH_SPEED);
+    expect(expected).toBeCloseTo(0.6332542702, 9);
     expect(expected).toBeGreaterThan(0.55);
     expect(expected).toBeLessThan(1);
     expect(mid.power).toBeCloseTo(expected, 9);
