@@ -2095,17 +2095,29 @@ export const EDITS = [
   // solidity floor, the exact contact point - because a clamp that reads
   // the whole plane, a clamp without its floor and an aim with a safety
   // margin are three different defects that fail in different places. The
-  // backwards discipline gets the entry that separates a bounded own-goal
-  // soak from an unbounded one, and the difficulty entries attack the
-  // draws the table states rather than the profile constants anybody can
-  // check by eye.
+  // aim distance gets an entry in BOTH directions, past the contact point
+  // and short of it, because the short one is the defect that shipped. The
+  // difficulty entries attack the draws the table states rather than the
+  // profile constants anybody can check by eye.
+  //
+  // RE-POINTED AND RETIRED at the 2026-09-08 aim fix, which rewrote the
+  // lines three of these anchored on and removed the property a fourth
+  // named. The three keep their mutation and their property exactly: the
+  // cone test moved from `floor` to `bound`, the floor moved from the
+  // Math.max onto the bound the transfer inverts to, and the aim moved to
+  // the touching distance. The retired one, "the routine declines the
+  // strike that drives the ball backwards", named a geometric decline SPEC
+  // section 8 does not have: `defensiveBias` is THE probability of
+  // substituting the block, so the decline was removed and its entry is
+  // replaced one for one by "the block is substituted at the profile's
+  // probability and no other", which attacks the rule that took its place.
   // ---------------------------------------------------------------------
 
   {
     item: 'D3',
     name: 'the clamp reads the reachable cone and not the whole plane',
     file: 'src/core/ai.ts', // the opponent routine
-    find: '  if (along >= floor) {',
+    find: '  if (along >= bound) {',
     replace: '  if (true) {',
     detectedBy: 'unit',
   },
@@ -2113,25 +2125,51 @@ export const EDITS = [
     item: 'D3',
     name: 'the floor holds the clamped side above a graze',
     file: 'src/core/ai.ts', // the opponent routine
-    find: '  const floor = Math.max(TOUCHING / gap, MIN_STRIKE_SOLIDITY);',
-    replace: '  const floor = TOUCHING / gap;',
+    // The bare reachability bound of SPEC section 8.1 read as a cosine,
+    // which admits a side whose speed transfer is a graze: the reading the
+    // floor exists to refuse.
+    find: '  return (TOUCHING * spread + MIN_STRIKE_SOLIDITY * Math.sqrt(inner)) / gap;',
+    replace: '  return TOUCHING / gap;',
     detectedBy: 'unit',
   },
   {
     item: 'D3',
     name: 'the launch aims at the contact point and not past it',
     file: 'src/core/ai.ts', // the opponent routine
-    find: '  return { x: ball.x + side.x * BALL_RADIUS, y: ball.y + side.y * BALL_RADIUS };',
+    // SPEC section 8.1's own sentence: 2 px beyond the touching distance
+    // turns a solid hit into a whiff.
+    find: '  return { x: ball.x + side.x * TOUCHING, y: ball.y + side.y * TOUCHING };',
     replace:
-      '  return { x: ball.x + side.x * (BALL_RADIUS + 2), y: ball.y + side.y * (BALL_RADIUS + 2) };',
+      '  return { x: ball.x + side.x * (TOUCHING + 2), y: ball.y + side.y * (TOUCHING + 2) };',
     detectedBy: 'unit',
   },
   {
     item: 'D3',
-    name: 'the routine declines the strike that drives the ball backwards',
+    name: 'the launch aims at the touching distance and not the ball surface',
     file: 'src/core/ai.ts', // the opponent routine
-    find: '  const backwards = towardX * targetX + towardY * targetY < 0;',
-    replace: '  const backwards = false;',
+    // The other direction, and the defect that actually shipped: the aim
+    // at the ball's own surface, 34 px inside the contact disc, which the
+    // reachability test is not derived for and which leaves the ball 20 to
+    // 25 degrees off the side the clamp chose.
+    find: '  return { x: ball.x + side.x * TOUCHING, y: ball.y + side.y * TOUCHING };',
+    replace:
+      '  return { x: ball.x + side.x * BALL_RADIUS, y: ball.y + side.y * BALL_RADIUS };',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'a degenerate direction leaves on the stated fallback and not as NaN',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  if (!(length > 0) || !Number.isFinite(length)) {',
+    replace: '  if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'a gap the cone arithmetic cannot hold leaves by the stated door',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  if (!(gap >= TOUCHING) || !Number.isFinite(bound)) {',
+    replace: '  if (!(gap >= TOUCHING)) {',
     detectedBy: 'unit',
   },
   {
@@ -2167,6 +2205,42 @@ export const EDITS = [
     detectedBy: 'unit',
   },
   {
+    item: 'D4',
+    name: 'the whiff offset is the stated multiple',
+    file: 'src/core/ai.ts', // the opponent routine
+    // A neighbouring value, because the entry above only proves the offset
+    // is non-zero and SPEC section 8 states this one by value.
+    find: 'export const WHIFF_OFFSET = 1.15;',
+    replace: 'export const WHIFF_OFFSET = 1.16;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'a whiff clears the ball at short range',
+    file: 'src/core/ai.ts', // the opponent routine
+    // The replacement is the reading that shipped: the offset laid off the
+    // ball centre as an aim POINT, whose launch line carries only
+    // offset * gap / hypot(gap, offset) of it and grazes the ball below a
+    // gap of 105.3 px. The gap sweep in tests/unit/ai-difficulty.test.ts
+    // catches it at the short end.
+    find: '    const clearance = Math.min(offset, reach);',
+    replace:
+      '    const clearance = (offset * reach) / Math.hypot(reach, offset);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'the block is substituted at the profile probability and no other',
+    file: 'src/core/ai.ts', // the opponent routine
+    // Replaces the entry the geometric decline used to carry. SPEC section
+    // 8 gives 0.0, 0.15 and 0.30; an inflated roll gives Casual a block on
+    // a quarter of its turns, which is the shape of the defect the audit
+    // found and which the measured rate now refuses.
+    find: '  const defensiveRoll = rng.nextFloat() < profile.defensiveBias;',
+    replace: '  const defensiveRoll = rng.nextFloat() < profile.defensiveBias + 0.25;',
+    detectedBy: 'unit',
+  },
+  {
     item: 'D5',
     name: 'the power draw follows the stated aggression transform',
     file: 'src/core/ai.ts', // the opponent routine
@@ -2188,6 +2262,91 @@ export const EDITS = [
     file: 'src/core/ai.ts', // the opponent routine
     find: '  const [low, high] = profile.powerBand;',
     replace: '  const [low, high] = [0, 1];',
+    detectedBy: 'unit',
+  },
+  // The reference implementation is a graded artifact of the same fix: it
+  // is where item D3's expected sides, angles and departures come from, so
+  // an entry proves it is measured against rather than merely imported, and
+  // a second proves the scan that keeps it independent can still see an
+  // import. Both edits are single edits to a file the suite reads, which is
+  // the same shape as the design-contract fixture entries above.
+
+  {
+    item: 'D3',
+    name: 'the expected geometry comes from the reference and not from the routine',
+    file: 'tests/unit/reference/strike-geometry.ts', // the SPEC-first strike geometry
+    find: 'export const TOUCHING = STRIKER_RADIUS + BALL_RADIUS;',
+    replace: 'export const TOUCHING = BALL_RADIUS;',
+    detectedBy: 'unit',
+  },
+  {
+    // RE-POINTED inside the same change: the scan grew from a path check to a
+    // specifier walk that also refuses the package alias and a helper next
+    // door, so the line it anchors on was rewritten. Same mutation, same
+    // property: a matcher that never matches.
+    item: 'D3',
+    name: 'the independence scan can still recognise an import of the game',
+    file: 'tests/unit/reference-independence.test.ts', // the reference independence scan
+    find: "  return !(specifier.startsWith('./') && !specifier.includes('..'));",
+    replace: '  return false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the solidity is the transfer of the launch and not the approach cosine',
+    file: 'src/core/ai.ts', // the opponent routine
+    // The reading the routine carried before the aim was corrected, restored
+    // in one edit: `along` IS dot(approach, side), the approach cosine, which
+    // this function's own argument list already holds. At a gap of 200 the
+    // cone boundary transfers 0.25 and its approach cosine is 0.48570, so the
+    // two readings are distinct wherever the clamp is doing any work.
+    find: '  return (reach - TOUCHING) / Math.sqrt(leg);',
+    replace: '  return along;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the clamp breaks its tie on the stated perpendicular',
+    file: 'src/core/ai.ts', // the opponent routine
+    // The other wall of the cone, which is equally close and equally
+    // admissible: the choice has to be the stated one or a seeded match
+    // stops replaying.
+    find: '    { x: -approach.y, y: approach.x },',
+    replace: '    { x: approach.y, y: -approach.x },',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D3',
+    name: 'the degenerate ideal falls back to the approach and not to its reverse',
+    file: 'src/core/ai.ts', // the opponent routine
+    // A target coincident with the ball leaves no ideal side, and the stated
+    // fallback is the approach, which sends the ball away from the striker.
+    // The reverse is the direction that drives it back through the striker,
+    // and it is finite, unit and clamps to the floor, so a case that reads
+    // only those three properties cannot tell the two apart. The case in
+    // tests/unit/ai-aim.test.ts reads the side by coordinates instead.
+    find: '  const ideal = unitOr(ball.x - target.x, ball.y - target.y, approach);',
+    replace:
+      '  const ideal = unitOr(ball.x - target.x, ball.y - target.y, { x: -approach.x, y: -approach.y });',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'a rolled block refuses only the lane that would play the ball',
+    file: 'src/core/ai.ts', // the opponent routine
+    // The refusal is what separates the roll rate from the substitution
+    // rate, and both are pinned; a refusal that never fires moves the
+    // second onto the first.
+    find: '  return Math.hypot(nearestX - ball.x, nearestY - ball.y) >= TOUCHING;',
+    replace: '  return true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'D4',
+    name: 'the whiff passes on the side the error draw names',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '    const sign = errorRad < 0 ? -1 : 1;',
+    replace: '    const sign = 1;',
     detectedBy: 'unit',
   },
   {

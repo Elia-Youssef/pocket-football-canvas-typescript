@@ -411,13 +411,14 @@ export function strikeAim(scene: Centres, attacking: 'left' | 'right'): Aim {
   const towardX = ball.x - me.x;
   const towardY = ball.y - me.y;
   if (towardX * (goalX - ball.x) + towardY * (MOUTH_CENTRE - ball.y) < 0) {
-    // Between the ball and the goal being attacked: the contact normal of an
-    // approaching striker points where the striker stands, so no choice of
-    // side sends the ball forward. SPEC section 8.1 spends those turns on the
-    // BLOCKING target instead, the midpoint of the ball and the goal being
-    // defended, and only where the trip there cannot run into the ball from an
-    // uncontrolled side; where it would, the clamped strike below is what is
-    // left.
+    // Standing between the ball and the goal being attacked. THE SCRIPTED
+    // STRIKER'S OWN TACTIC, not a rule of SPEC section 8.1: the clamp below
+    // answers this layout with the most goal-ward strike the cone admits, and
+    // section 8 substitutes the block on a stated probability and on nothing
+    // else, so this branch says only that a driver with no clock to beat
+    // prefers to step aside here. It is taken only where the trip cannot run
+    // into the ball from an uncontrolled side; where it would, the clamped
+    // strike below is what is left.
     const ownGoalX = attacking === 'right' ? LEFT_GOAL : RIGHT_GOAL;
     const blockX = (ball.x + ownGoalX) / 2;
     const blockY = (ball.y + MOUTH_CENTRE) / 2;
@@ -428,14 +429,23 @@ export function strikeAim(scene: Centres, attacking: 'left' | 'right'): Aim {
   }
 
   // SPEC section 8.1's reachable-cone rule, written from the section: a side
-  // is reachable when the striker's offset PROJECTED ON IT, in pixels and
-  // never normalised, is at least the touching distance. Where the ideal side
-  // fails that test, the closest reachable side is the cone boundary along the
-  // ideal's own perpendicular, held at or above the strike-solidity floor.
+  // is admissible when a launch aimed at its contact point transfers at least
+  // the stated minimum solidity to the ball, which inverts to one bound on
+  // dot(approach, side) and carries the section's reachability test with it,
+  // since that bound exceeds TOUCHING / gap at every gap past the touching
+  // distance. Where the ideal side fails it, the closest admissible side is
+  // the cone boundary along the ideal's own perpendicular.
   const gap = Math.hypot(towardX, towardY) || 1;
   const ux = -towardX / gap;
   const uy = -towardY / gap;
-  const floor = Math.max(Math.min(TOUCHING / gap, 1), MIN_STRIKE_SOLIDITY);
+  const spreadOfFloor = 1 - MIN_STRIKE_SOLIDITY * MIN_STRIKE_SOLIDITY;
+  const floor = Math.min(
+    1,
+    (TOUCHING * spreadOfFloor +
+      MIN_STRIKE_SOLIDITY *
+        Math.sqrt(Math.max(0, gap * gap - TOUCHING * TOUCHING * spreadOfFloor))) /
+      gap,
+  );
   const along = ux * ix + uy * iy;
   let sideX = ix;
   let sideY = iy;
@@ -455,11 +465,16 @@ export function strikeAim(scene: Centres, attacking: 'left' | 'right'): Aim {
     sideY = uy * floor + perpY * spread;
   }
 
-  // The launch aims at the point on the ball's surface the chosen side names,
-  // with no safety margin: the surface point sits well inside the contact
-  // disc, so a straight launch cannot skip past it.
-  const contactX = ball.x + sideX * BALL_RADIUS;
-  const contactY = ball.y + sideY * BALL_RADIUS;
+  // The launch aims at SPEC section 8.1's contact point, where the striker's
+  // CENTRE stands at the moment it touches the chosen side: the touching
+  // distance along that side, with no safety margin. It is the only aim
+  // distance the section's reachability test is derivable for, and the one
+  // the ball departs along minus the side from; the ball's own surface point,
+  // 34 px inside the contact disc, is met at a normal pulled toward the
+  // striker's approach and was measured at 20 to 25 degrees of departure
+  // error before the aim was corrected.
+  const contactX = ball.x + sideX * TOUCHING;
+  const contactY = ball.y + sideY * TOUCHING;
   const radians = Math.atan2(contactY - me.y, contactX - me.x);
   return { degrees: whole((radians * 180) / Math.PI), percent: 100 };
 }
