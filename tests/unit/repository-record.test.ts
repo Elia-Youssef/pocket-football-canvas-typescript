@@ -20,6 +20,8 @@ import {
   scanContent,
   scanPath,
   scanRecord,
+  shallowRefusal,
+  shallowState,
 } from '../../scripts/check-repository-record.mjs';
 
 /**
@@ -491,6 +493,70 @@ describe('PF-0 repository record gate', () => {
     it('pins the Closes pattern itself', () => {
       expect(CLOSES_PATTERN.test('Closes: M3')).toBe(true);
       expect(CLOSES_PATTERN.test('Closes: none')).toBe(false);
+    });
+  });
+
+  describe('the walk refuses a history it can only see part of', () => {
+    it('refuses a shallow repository by name', () => {
+      const refusal = shallowRefusal('true\n');
+      expect(refusal).not.toBeNull();
+      // By name, not by silence. The verdict a truncated walk reaches looks
+      // exactly like the verdict a clean history reaches, so the refusal has
+      // to say which of the two this is and what to do about it.
+      expect(refusal).toContain('shallow');
+      expect(refusal).toContain('unshallow');
+    });
+
+    it('refuses a history it could not even ask about', () => {
+      // THE ERROR PATH IS A VERDICT, NOT A NOTE. It used to print the cause and
+      // then walk whatever was present, so a repository that would not answer
+      // the question got the same "ok, N commits checked" a clean full history
+      // gets. On a real --depth 1 clone with the query made to throw, that was
+      // "1 commits checked" and PASS.
+      const thrown = shallowState(() => {
+        throw new Error('fatal: not a git repository\nsecond line');
+      });
+      expect(thrown.refusal).not.toBeNull();
+      expect(thrown.refusal, 'says what it could not confirm').toContain(
+        'whole history',
+      );
+      expect(thrown.refusal, 'and names the cause').toContain(
+        'fatal: not a git repository',
+      );
+      // One line of the cause, because a stack trace in a gate's output is how
+      // the line that matters stops being read.
+      expect(thrown.refusal).not.toContain('second line');
+
+      // The two answers a working reader gives, so the wrapper is not just a
+      // catch block: shallow refuses, full says nothing.
+      expect(shallowState(() => 'true\n').refusal).toContain('unshallow');
+      expect(shallowState(() => 'false\n').refusal).toBeNull();
+    });
+
+    it('reads the shallow flag before it walks anything', () => {
+      // The refusal above is a pure function, so it says nothing about whether
+      // the walk consults it. Read as source, because the only other way to ask
+      // is to make a shallow clone, which is the probe rather than the test.
+      const source = readFileSync(
+        path.join(PROJECT_ROOT, 'scripts', 'check-repository-record.mjs'),
+        'utf8',
+      );
+      const walk = source.indexOf('function checkCommits()');
+      const flag = source.indexOf("git('rev-parse', '--is-shallow-repository')", walk);
+      const log = source.indexOf('log = git(', walk);
+      expect(walk, 'the commit walk exists').toBeGreaterThan(-1);
+      expect(flag, 'the shallow flag is read inside it').toBeGreaterThan(walk);
+      expect(flag, 'and before the log is read').toBeLessThan(log);
+      expect(source).toContain('const { refusal } = shallowState(() =>');
+    });
+
+    it('says nothing about a full one', () => {
+      // The control. Every real run takes this branch, so a refusal that fired
+      // on the wrong answer would be found by the gate refusing itself, and one
+      // that fires on nothing would be found by nobody.
+      expect(shallowRefusal('false\n')).toBeNull();
+      expect(shallowRefusal('false')).toBeNull();
+      expect(shallowRefusal('')).toBeNull();
     });
   });
 

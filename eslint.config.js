@@ -72,6 +72,22 @@ export default [
     },
   },
 
+  // The one rule the two recommended sets leave off that this project cannot
+  // afford. A single `!` defeats `strict`, `noUncheckedIndexedAccess` and
+  // `exactOptionalPropertyTypes` at the point it is written, and it does so
+  // silently, because the type checker agrees: it was told to.
+  //
+  // SCOPED TO src/ FOR A MEASURED REASON, not out of caution. There are zero
+  // non-null assertions in the shipped source and three in the suite, where a
+  // test indexes a list it has just built and knows the length of. The shipped
+  // source is where the guarantee is worth having and where the rule costs
+  // nothing today; widening it to tests/ is one line here on the day those
+  // three are written another way.
+  {
+    files: ['src/**/*.{ts,tsx,mts,cts}'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'error' },
+  },
+
   // A violating line inside core may not switch off its own detection.
   // Without this, the whole of item M3 is worth one comment.
   {

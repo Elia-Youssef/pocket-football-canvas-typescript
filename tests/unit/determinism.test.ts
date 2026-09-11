@@ -19,6 +19,7 @@ import {
 import { createSimulation } from '../../src/core/physics';
 import { createRng } from '../../src/core/rng';
 import { distance } from '../../src/core/vec2';
+import { modulesUnder } from '../../tools/eslint-plugin-core-boundary/index.js';
 import { digest, driveToRest } from './support/drive';
 
 /**
@@ -45,6 +46,16 @@ import { digest, driveToRest } from './support/drive';
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const CORE = path.join(PROJECT_ROOT, 'src', 'core');
+
+/** The fixture tree that has a subdirectory, so the recursion has a witness. */
+const LEAKY_CORE_FIXTURE = path.join(
+  PROJECT_ROOT,
+  'tests',
+  'lint',
+  'fixtures',
+  'reach',
+  'core',
+);
 
 interface Script {
   readonly seed: string;
@@ -399,10 +410,35 @@ describe('PF-2 the seeded stream, item B12', () => {
   });
 });
 
+/**
+ * A second, independent recursive count of the `.ts` files under a directory.
+ *
+ * Written here rather than imported so the sweep's own walk is checked against
+ * something instead of against itself: a walk that stopped descending would
+ * otherwise agree with every assertion made in its own terms.
+ */
+function countTypeScriptUnder(directory: string): number {
+  let total = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      total += countTypeScriptUnder(path.join(directory, entry.name));
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
 describe('PF-2 nothing in core reaches for another source, item B12', () => {
-  const files = readdirSync(CORE)
-    .filter((name) => name.endsWith('.ts'))
-    .sort();
+  // THE SWEEP RECURSES. A listing of the top level of `src/core` reads a
+  // directory rather than a layer, and a module one directory below it was
+  // subject to neither this scan nor anything else: `Date.now()` planted in
+  // `src/core/sub/` passed the lint and the whole unit suite. The walk is the
+  // boundary plugin's own, so this scan and the import-closure test in
+  // core-boundary.test.ts cannot disagree about what "under core" means.
+  const files = modulesUnder(CORE, ['.ts']).map((file) =>
+    path.relative(CORE, file).split(path.sep).join('/'),
+  );
 
   it('reads every core module, so the sweep is not a sweep over nothing', () => {
     // Named rather than counted, so the sweep cannot quietly stop reading one
@@ -412,6 +448,16 @@ describe('PF-2 nothing in core reaches for another source, item B12', () => {
       expect(files, name).toContain(name);
     }
     expect(files.length).toBeGreaterThanOrEqual(5);
+
+    // And counted as well, against a walk with no shared code, because "named"
+    // says nothing about the module nobody has written yet.
+    expect(files.length).toBe(countTypeScriptUnder(CORE));
+
+    // The counter proved able to descend, on the one tree in this project that
+    // has somewhere to descend to. `src/core` is flat today, so a count taken
+    // there agrees with itself whether or not either walk recurses, and the
+    // agreement above would mean nothing without this line.
+    expect(countTypeScriptUnder(LEAKY_CORE_FIXTURE)).toBe(2);
   });
 
   it('finds no other source of randomness and no clock read', () => {

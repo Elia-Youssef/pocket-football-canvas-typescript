@@ -41,6 +41,11 @@ export declare function checkCommitRecord(
   options?: { allowDependabotGeneratedMetadata?: boolean },
 ): string[];
 
+export declare function shallowRefusal(output: string): string | null;
+export declare function shallowState(read: () => string): {
+  refusal: string | null;
+};
+
 export interface ParsedCommit {
   sha: string;
   author: string;

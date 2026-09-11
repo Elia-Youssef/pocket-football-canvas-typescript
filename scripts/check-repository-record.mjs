@@ -591,8 +591,77 @@ export function parseCommitLog(log) {
   return { records, fragments };
 }
 
+/**
+ * The refusal a shallow repository earns, or null when it earns none.
+ *
+ * A SHALLOW CLONE TRUNCATES THE WALK AND SAYS NOTHING. `git log` reads what the
+ * clone has and stops, so `git clone --depth 1` leaves one commit and this
+ * check prints "1 commits checked from the checked-out revision" and reaches a
+ * verdict on a history it never saw. CI is safe, because the policy job sets
+ * `fetch-depth: 0` on purpose; the hole is therefore open on exactly the
+ * machines nobody is watching, a contributor's clone and a local run before a
+ * push. A gate whose verdict depends on how the clone was made is not deciding
+ * anything, so it refuses instead.
+ *
+ * Exported and pure because the value is one line of git output and the
+ * decision is the whole of the property.
+ */
+export function shallowRefusal(output) {
+  if (String(output).trim() !== 'true') {
+    return null;
+  }
+  return (
+    'this repository is shallow, so the commit walk would read a truncated ' +
+    'history and report a verdict on the part of it that happens to be here. ' +
+    'Fetch the whole history first (git fetch --unshallow), or run this check ' +
+    'in a full clone.'
+  );
+}
+
+/**
+ * The same question asked of a reader that can fail, which is the only kind
+ * there is.
+ *
+ * A GATE THAT CANNOT CONFIRM IT HAS THE WHOLE HISTORY REFUSES. The first shape
+ * of this check printed a note when the query threw and then walked whatever
+ * history was present, so on a repository that would not answer, a `--depth 1`
+ * clone reported "1 commits checked" and PASS. That is the same verdict a clean
+ * full history earns and it is reached by not looking, which is worse than the
+ * hole it was written to close: the hole was silent, and this was a green tick.
+ * The note stays as a note about the CAUSE; the verdict is a refusal.
+ *
+ * Takes its reader as an argument so the failing path has a home a test can
+ * drive. There is no other way to ask: making real git fail on demand is a
+ * probe, and a probe is not a gate.
+ */
+export function shallowState(read) {
+  let output;
+  try {
+    output = read();
+  } catch (error) {
+    const cause =
+      error instanceof Error ? error.message.split('\n')[0] : String(error);
+    return {
+      refusal:
+        'this repository would not say whether it is shallow, so the commit ' +
+        'walk cannot confirm it is reading the whole history and refuses to ' +
+        `report a verdict on part of one. The query failed with: ${cause}`,
+    };
+  }
+  return { refusal: shallowRefusal(output) };
+}
+
 function checkCommits() {
   console.log('== 3. every commit reachable from the checked-out revision ==');
+
+  const { refusal } = shallowState(() =>
+    git('rev-parse', '--is-shallow-repository'),
+  );
+  if (refusal !== null) {
+    fail(refusal);
+    return 0;
+  }
+
   let log;
   try {
     log = git(

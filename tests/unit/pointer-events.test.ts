@@ -100,26 +100,45 @@ function severityOf(entry: unknown): number {
   return typeof value === 'number' ? value : -1;
 }
 
+/**
+ * The budget this file's config test carries, in milliseconds. The measurement
+ * and the reason are stated once, beside the same constant in
+ * tests/unit/core-boundary.test.ts: constructing ESLint and resolving the flat
+ * config measures 1213 ms warm here, and 7.62 to 8.65 s over six fresh installs
+ * on the cold module graph a fresh `npm ci` leaves, which is past Vitest's
+ * 5000 ms default and reddened the unit gate three times out of three for a
+ * reason unrelated to the code.
+ *
+ * It is on the FIRST test in this file that touches the linter, because that is
+ * the one which pays the cold graph; core-boundary.test.ts asserts by census, in
+ * declaration order, that it still is.
+ */
+const COLD_ESLINT_LOAD_MS = 30_000;
+
 describe('PF-6 pointer events only, item C9', () => {
-  it('puts the rule at error in the shipping config, everywhere it lints', async () => {
-    // Every file the project lints, not just the play surface: the criterion
-    // says the SOURCE has no mouse or touch listener, and a second input path
-    // written first as a test helper would be the same defect arriving by a
-    // side door.
-    for (const relative of [
-      'src/render/input.ts',
-      'src/ui/components/aim-controls.ts',
-      'src/core/aiming.ts',
-      'tests/unit/pointer-events.test.ts',
-      'scripts/mutation-check.mjs',
-    ]) {
-      const config = await eslint().calculateConfigForFile(
-        path.join(PROJECT_ROOT, relative),
-      );
-      const rules = (config.rules ?? {}) as Record<string, unknown>;
-      expect(severityOf(rules[RULE]), `${RULE} in ${relative}`).toBe(2);
-    }
-  });
+  it(
+    'puts the rule at error in the shipping config, everywhere it lints',
+    { timeout: COLD_ESLINT_LOAD_MS },
+    async () => {
+      // Every file the project lints, not just the play surface: the criterion
+      // says the SOURCE has no mouse or touch listener, and a second input path
+      // written first as a test helper would be the same defect arriving by a
+      // side door.
+      for (const relative of [
+        'src/render/input.ts',
+        'src/ui/components/aim-controls.ts',
+        'src/core/aiming.ts',
+        'tests/unit/pointer-events.test.ts',
+        'scripts/mutation-check.mjs',
+      ]) {
+        const config = await eslint().calculateConfigForFile(
+          path.join(PROJECT_ROOT, relative),
+        );
+        const rules = (config.rules ?? {}) as Record<string, unknown>;
+        expect(severityOf(rules[RULE]), `${RULE} in ${relative}`).toBe(2);
+      }
+    },
+  );
 
   it('reports every marked line of the fixture, and reports nothing else', async () => {
     const expected = markers(VIOLATIONS);

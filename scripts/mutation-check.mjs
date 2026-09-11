@@ -25,7 +25,7 @@
  * item, it is the GITHUB section that states it, so that `GH7` reads as
  * "section 7, the authorship of the repository record".
  *
- * Four safety properties, because a harness that edits live source files has
+ * Six safety properties, because a harness that edits live source files has
  * to be trustworthy before it is useful:
  *
  *   Staleness guard.  Each `find` must match its file EXACTLY once. A mutation
@@ -38,6 +38,36 @@
  *                     Against a red tree every mutation looks detected.
  *   Port reclaimed.   The browser detector owns the preview port either side of
  *                     every run it makes. See the section below.
+ *   Killed is not     A detector killed at its deadline never reached a verdict.
+ *   detected.         Reading its non-zero exit as a detection would report a
+ *                     gate as working on a run that measured nothing, so a kill
+ *                     is an ERROR that stops the sweep with the entry named.
+ *                     See `detectorOutcome` below.
+ *   One tree.         Every entry is measured against the tree the sweep began
+ *                     on. The whole tree is hashed at the baseline and again
+ *                     after each entry; drift is restored from the baseline
+ *                     bytes, recorded as an INCIDENT and the entry measured
+ *                     again on the clean tree. See `treeDrift` below.
+ *
+ * WHY THE WHOLE TREE AND NOT THE FILE THE ENTRY EDITED. Restoring `entry.file`
+ * proves that one file is back; it says nothing about the rest. Two tests in
+ * this suite rewrite a LIVE shipped source and restore it in a `finally` that a
+ * failed or killed write never reaches, and a stub left behind by one of them
+ * makes the unit suite red for a reason that has nothing to do with any
+ * mutation. From that moment every remaining entry reports "detected" while
+ * measuring nothing at all, and the sweep ends with PASS. That happened three
+ * times in one day on this machine, in the tool that replays these entries, and
+ * a sweep of five hours with no such guard is a sweep whose verdict cannot be
+ * read. Restore and re-run rather than stop, because the fault is the machine's
+ * and one entry's worth of work is the right price to pay for it; two drifts on
+ * the same entry are a machine that is not going to settle, and that stops.
+ *
+ * NO GIT, DELIBERATELY. The tree is hashed rather than asked about, for the
+ * same reason every detector is run as its own node binary: a gate whose answer
+ * depends on how the clone was made, on what a per-clone exclude file hides, or
+ * on git being installed at all is a gate that decides different things on
+ * different machines. On this one, every markdown file is excluded locally, so
+ * a status walk would not have noticed a README rewritten under an entry.
  *
  * THE BROWSER DETECTOR REAPS ITS OWN PREVIEW SERVER. Its Playwright
  * configuration starts `vite preview` as a web server, which arrives as a
@@ -70,7 +100,15 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5682,6 +5720,681 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     replace: '    hintDismissed: false,',
     detectedBy: 'browser',
   },
+
+  // ==========================================================================
+  // The workflow, the dependency policy, the determinism wiring, the boundary
+  // by reach, and the harness's own verdict rule.
+  //
+  // GH6 is GITHUB section 6, the merge gate; GH12 is section 12, dependencies
+  // and supply chain; QB13 is QUALITY-BAR section 13, which is where "a test
+  // that cannot fail is not a test" is written and therefore where a harness
+  // that reads a killed process as a detection is answerable. The rest carry
+  // the acceptance item whose gate they strengthen.
+  // ==========================================================================
+
+  {
+    // GITHUB 6: a required check that has not reported is a failure, never a
+    // pass, and GITHUB 7's closure of the squash gap is the push-to-main run.
+    // Unconditional cancellation left three commits on the default branch with
+    // no completed run at all.
+    // RE-POINTED: the exemption used to be written against the ref and is now
+    // written against the event, because the group below carries the commit.
+    // Same property, same detector, one line further down the file.
+    item: 'GH6',
+    name: 'a push to the default branch is never cancelled by a later push',
+    file: '.github/workflows/ci.yml',
+    find: "cancel-in-progress: ${{ github.event_name != 'push' }}",
+    replace: 'cancel-in-progress: true',
+    detectedBy: 'unit',
+  },
+  {
+    // The other half, and the half `cancel-in-progress` cannot cover: inside a
+    // shared group a QUEUED run is cancelled by the next arrival whatever the
+    // flag says, so a burst of three pushes still loses the middle one.
+    item: 'GH6',
+    name: 'a push to the default branch runs in a group of its own',
+    file: '.github/workflows/ci.yml',
+    find:
+      '  group: ${{ github.workflow }}-${{ github.ref }}-' +
+      "${{ github.event_name == 'push' && github.sha || '' }}",
+    replace: '  group: ${{ github.workflow }}-${{ github.ref }}',
+    detectedBy: 'unit',
+  },
+  {
+    // GITHUB 6: the two required checks judge one tree. With a ref override the
+    // record gate read the pull request head while the gates job built the
+    // merge result.
+    item: 'GH6',
+    name: 'both jobs check out the same tree',
+    file: '.github/workflows/ci.yml',
+    find: '          fetch-depth: 0',
+    replace:
+      '          fetch-depth: 0\n' +
+      '          ref: ${{ github.event.pull_request.head.sha || github.ref }}',
+    detectedBy: 'unit',
+  },
+  {
+    // The browser phase is 94.0 percent of its job. Without its own budget a
+    // slow suite is reported as a killed job, which reads as infrastructure.
+    item: 'GH6',
+    name: 'the browser phase carries its own budget inside the job cap',
+    file: '.github/workflows/ci.yml',
+    find: '        timeout-minutes: 25',
+    replace: '        timeout-minutes: 30',
+    detectedBy: 'unit',
+  },
+
+  {
+    // QUALITY-BAR 13: the tests that load ESLint exceed the runner's default on
+    // a cold module graph, so the unit gate goes red for a reason unrelated to
+    // the code, and the harness reads that red as a detection.
+    // LABELLED QB13 AND NOT C9. Both entries live in the pointer file, but
+    // neither attacks anything item C9 states: C9 is "input is handled through
+    // Pointer Events only", and what these two protect is a suite that can tell
+    // a slow start from a broken gate, which is QUALITY-BAR section 13's
+    // sentence. The label routes the entry to whoever owns the property.
+    item: 'QB13',
+    name: 'the pointer config test states its own cold-load budget',
+    file: 'tests/unit/pointer-events.test.ts',
+    find: '    { timeout: COLD_ESLINT_LOAD_MS },',
+    replace: '    // budget removed',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'the cold-load budget is the measured figure and not the default',
+    file: 'tests/unit/pointer-events.test.ts',
+    find: 'const COLD_ESLINT_LOAD_MS = 30_000;',
+    replace: 'const COLD_ESLINT_LOAD_MS = 5_000;',
+    detectedBy: 'unit',
+  },
+  {
+    // The other half of the same decision: two named exceptions are a
+    // measurement, a raised default is a suite that stops noticing a hang.
+    item: 'QB13',
+    name: 'the suite-wide default budget is not loosened',
+    file: 'vitest.config.ts',
+    find: "    environment: 'node',",
+    replace: "    environment: 'node',\n    testTimeout: 30_000,",
+    detectedBy: 'unit',
+  },
+
+  {
+    // A process killed at its deadline never reached a verdict. Reading its
+    // non-zero exit as a detection reports a gate as working on a run that
+    // measured nothing.
+    // EVERY FIND BELOW SPANS TWO LINES ON PURPOSE. This file is its own
+    // target, and a single-line anchor also matches the string literal that
+    // states it, which the staleness guard correctly refuses as two matches.
+    item: 'QB13',
+    name: 'a detector killed by its own deadline is not a detection',
+    file: 'scripts/mutation-check.mjs',
+    find: '  const killed =\n    error.killed === true ||',
+    replace: '  const killed =\n    false ||',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a detector killed from outside is not a detection either',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '    error.killed === true ||\n' +
+      '    (error.signal !== null && error.signal !== undefined);',
+    replace: '    error.killed === true ||\n    false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a killed detector is the verdict that stops the sweep',
+    file: 'scripts/mutation-check.mjs',
+    find: "  if (outcome.killed) {\n    return 'error';",
+    replace: "  if (false) {\n    return 'error';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a stopped sweep says so in its last line',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (stoppedAt !== null) {\n    return {',
+    replace: '  if (false) {\n    return {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'an undetected entry still fails the sweep',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (missed > 0) {\n    return {',
+    replace: '  if (false) {\n    return {',
+    detectedBy: 'unit',
+  },
+
+  {
+    // Item A6. The RUNS table was pinned as four differing conditions and
+    // nothing asserted the table reached the build, so each condition could be
+    // pinned to the first row with verify:build PASS and the report still
+    // printing the second row.
+    item: 'A6',
+    name: 'the time zone the build runs under comes from the run',
+    file: 'scripts/check-determinism.mjs',
+    find: '      TZ: run.zone,',
+    replace: '      TZ: RUNS[0].zone,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'the VITE_ probe value comes from the run',
+    file: 'scripts/check-determinism.mjs',
+    find: '      VITE_DETERMINISM_PROBE: run.probe,',
+    replace: '      VITE_DETERMINISM_PROBE: RUNS[0].probe,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'the output directory comes from the run',
+    file: 'scripts/check-determinism.mjs',
+    find: "    argv: [VITE, 'build', '--outDir', run.outDir, '--emptyOutDir'],",
+    replace: "    argv: [VITE, 'build', '--outDir', RUNS[0].outDir, '--emptyOutDir'],",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'the composed environment is what the child process is given',
+    file: 'scripts/check-determinism.mjs',
+    find:
+      "  spawn(process.execPath, argv, { cwd: PROJECT_ROOT, stdio: 'pipe', env });",
+    replace:
+      "  spawn(process.execPath, argv, { cwd: PROJECT_ROOT, stdio: 'pipe', env: process.env });",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'each run stamps the inputs with its own fake time',
+    file: 'scripts/check-determinism.mjs',
+    find: '      stamp(files, entry.stamp);',
+    replace: '      stamp(files, runs[0].stamp);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'the same fake time is written to both timestamps',
+    file: 'scripts/check-determinism.mjs',
+    find: '    touch(file, when, when);',
+    replace: '    touch(file, when, new Date(0));',
+    detectedBy: 'unit',
+  },
+  {
+    // The edit the script's own docstring says proves almost nothing: two
+    // builds a second apart under identical conditions.
+    item: 'A6',
+    name: 'the loop runs every row of the table and not the first one twice',
+    file: 'scripts/check-determinism.mjs',
+    find: '    for (const entry of runs) {',
+    replace: '    for (const entry of [runs[0], runs[0]]) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'the report table is built from what each build was given',
+    file: 'scripts/check-determinism.mjs',
+    find: '    ...conditionRows(records).map(row),',
+    replace: '    ...conditionRows(RUNS).map(row),',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'A6',
+    name: 'each report row states the condition it names',
+    file: 'scripts/check-determinism.mjs',
+    find: "    ['TZ', ...cells((entry) => entry.zone)],",
+    replace: "    ['TZ', ...cells((entry) => entry.probe)],",
+    detectedBy: 'unit',
+  },
+
+  {
+    // Item M3. A module one directory below src/core was subject to neither
+    // the boundary rules' path scoping nor the source sweep.
+    item: 'M3',
+    name: 'the module walk descends into subdirectories',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: '          stack.push(path.join(directory, entry.name));',
+    replace: '          void entry;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M3',
+    name: 'a dependency that leaves the boundary is reported',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: '      if (resolved === null || !isInside(root, resolved)) {',
+    replace: '      if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M3',
+    name: 'the sweep s own count is taken over a tree it walked into',
+    file: 'tests/unit/determinism.test.ts',
+    find: '      total += countTypeScriptUnder(path.join(directory, entry.name));',
+    replace: '      total += 0;',
+    detectedBy: 'unit',
+  },
+  {
+    // Item M3, second clause. A denylist reports the names somebody
+    // remembered; `type A = ChildNode` passed every gate this project has.
+    item: 'M3',
+    name: 'a DOM name nobody listed is still refused inside core',
+    file: 'tools/eslint-plugin-core-boundary/lib/platform-globals.js',
+    find: '  if (DOM_LIB_NAMES.has(name)) {',
+    replace: '  if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M3',
+    name: 'the DOM name set is derived from the installed library files',
+    file: 'tools/eslint-plugin-core-boundary/lib/platform-globals.js',
+    find: "    return { names: dom, origin: path.join(libraries, 'lib.dom.d.ts') };",
+    replace: '    return { names: new Set(), origin: null };',
+    detectedBy: 'unit',
+  },
+  {
+    // Without the subtraction the rule reports Math inside a module whose
+    // whole job is arithmetic, and it is switched off within a week.
+    item: 'M3',
+    name: 'the language s own names are subtracted from the DOM set',
+    file: 'tools/eslint-plugin-core-boundary/lib/platform-globals.js',
+    find: '        dom.delete(name);',
+    replace: '        dom.add(name);',
+    detectedBy: 'unit',
+  },
+  {
+    // Time is an input to the simulation. A core module reading the wall clock
+    // has left the seeded, replayable model.
+    item: 'M3',
+    name: 'the wall clock is refused inside core',
+    file: 'tools/eslint-plugin-core-boundary/lib/platform-globals.js',
+    find: "  'Date',\n  // Scheduling by microtask",
+    replace: "  'DateOfBirth',\n  // Scheduling by microtask",
+    detectedBy: 'unit',
+  },
+
+  {
+    // GITHUB 12: a dependency pull request merges when the gate is green and
+    // never because it is only a version bump. A major grouped with two
+    // patches makes "do not merge" the only correct answer.
+    item: 'GH12',
+    name: 'a major version opens its own pull request',
+    file: '.github/dependabot.yml',
+    find: '        update-types:\n          - minor\n          - patch',
+    replace: '        update-types:\n          - minor',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH12',
+    name: 'an unsupported runtime refuses to install rather than warning',
+    file: '.npmrc',
+    find: 'engine-strict=true',
+    replace: 'engine-strict=false',
+    detectedBy: 'unit',
+  },
+
+  {
+    // GITHUB 6: the record check owns every commit reachable from the
+    // checked-out revision. On a shallow clone it reported a verdict on the
+    // part of the history that happened to be present.
+    item: 'GH7',
+    name: 'a shallow repository is refused rather than judged',
+    file: 'scripts/check-repository-record.mjs',
+    find: "  if (String(output).trim() !== 'true') {",
+    replace: '  if (true) {',
+    detectedBy: 'unit',
+  },
+  {
+    // RE-POINTED: the read moved behind `shallowState` so its failing path has
+    // a home a test can drive. Same property, same detector, same line of the
+    // walk.
+    item: 'GH7',
+    name: 'the commit walk consults the shallow flag before it reads the log',
+    file: 'scripts/check-repository-record.mjs',
+    find:
+      '  const { refusal } = shallowState(() =>\n' +
+      "    git('rev-parse', '--is-shallow-repository'),\n" +
+      '  );',
+    replace: '  const refusal = null;',
+    detectedBy: 'unit',
+  },
+  {
+    // A gate that cannot confirm it has the whole history refuses. Noting the
+    // cause and walking on turned a repository that would not answer into the
+    // same "ok, N commits checked" a clean history earns.
+    item: 'GH7',
+    name: 'a shallow check that could not run refuses instead of noting',
+    file: 'scripts/check-repository-record.mjs',
+    find:
+      '      refusal:\n' +
+      "        'this repository would not say whether it is shallow, so the commit ' +",
+    replace: "      refusal:\n        null && 'a note rather than a refusal' +",
+    detectedBy: 'unit',
+  },
+
+  {
+    // The suite reaches five modules through declarations nothing verified, so
+    // the declarations decided what every test believed about them.
+    item: 'QB13',
+    name: 'a declaration promising an export the module lacks is reported',
+    file: 'scripts/output-fingerprint.d.mts',
+    find: 'export declare function hashBytes(data: Uint8Array | string): string;',
+    replace:
+      'export declare function hashBytes(data: Uint8Array | string): string;\n' +
+      'export declare const notActuallyExported: number;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'an export the declaration forgot is reported too',
+    file: 'tools/eslint-plugin-core-boundary/index.d.ts',
+    find: 'export declare function isCorePath(filename: unknown): boolean;',
+    replace: '// isCorePath is no longer declared',
+    detectedBy: 'unit',
+  },
+
+  {
+    // A single non-null assertion defeats strict, noUncheckedIndexedAccess and
+    // exactOptionalPropertyTypes at the point it is written.
+    item: 'QB13',
+    name: 'the non-null assertion is refused in the shipped source',
+    file: 'eslint.config.js',
+    find: "    rules: { '@typescript-eslint/no-non-null-assertion': 'error' },",
+    replace: "    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'that rule is scoped to the shipped source and stated to be',
+    file: 'eslint.config.js',
+    find: "    files: ['src/**/*.{ts,tsx,mts,cts}'],",
+    replace: "    files: ['**/*.{ts,tsx,mts,cts}'],",
+    detectedBy: 'unit',
+  },
+  {
+    // Item C9. The clean fixture is what makes a stated limit tested rather
+    // than merely admitted, and it is only worth anything if the plain form of
+    // the same line is caught.
+    item: 'C9',
+    name: 'the clean pointer fixture is swept and the plain handler is caught',
+    file: 'tests/lint/fixtures/pointer/pointer-only.ts',
+    find: 'surface[PROP] = handler;',
+    replace: 'surface.onmousedown = handler;',
+    detectedBy: 'unit',
+  },
+
+  // ==========================================================================
+  // The gates the review found reporting green while doing nothing: a closure
+  // walk that could not read the import form five core modules are written in,
+  // a comment stripper no test could fail, a workflow whose load-bearing shape
+  // was asserted nowhere, and this harness's own blindness to a tree that moved
+  // under it.
+  //
+  // EVERY FIND AIMED AT THIS FILE SPANS TWO LINES, for the reason stated above
+  // the killed-detector entries: a single-line anchor also matches the string
+  // literal that states it, which the staleness guard correctly refuses.
+  // ==========================================================================
+
+  {
+    // Item M3. `import {` on one line and the list on the next is the form
+    // ai.ts, bodies.ts, goals.ts, guide.ts and physics.ts are written in, and a
+    // pattern that stopped at the newline read none of their dependencies:
+    // a wrapped import of an unseeded module passed lint, the closure walk and
+    // the whole suite.
+    item: 'M3',
+    name: 'the closure walk reads a wrapped import list',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: "[^;'\"]*?\\bfrom",
+    replace: "[^;'\"\\n]*?\\bfrom",
+    detectedBy: 'unit',
+  },
+  {
+    // Item M3, the stripper's three branches. A commented-out import is not an
+    // import; without this branch the walk reports an escape nobody wrote.
+    item: 'M3',
+    name: 'an import inside a line comment is not an import',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: "    if (here === '/' && next === '/') {",
+    replace: '    if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M3',
+    name: 'an import inside a block comment is not an import either',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: "    if (here === '/' && next === '*') {",
+    replace: '    if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    // The branch that keeps the other two honest: without the quote state, a
+    // string that merely CONTAINS a comment opener starts a comment that eats
+    // every import below it, and the walk reports a module with dependencies as
+    // a module with none.
+    item: 'M3',
+    name: 'a comment opener inside a string opens no comment',
+    file: 'tools/eslint-plugin-core-boundary/lib/reach.js',
+    find: "    if (here === \"'\" || here === '\"' || here === '`') {",
+    replace: '    if (false) {',
+    detectedBy: 'unit',
+  },
+
+  {
+    // GITHUB 6: the exemption is worth nothing without the trigger it serves.
+    // Removed, there is no default-branch run to preserve at all and every
+    // other assertion about cancellation still passes.
+    item: 'GH6',
+    name: 'the workflow runs on a push to the default branch',
+    file: '.github/workflows/ci.yml',
+    find: 'on:\n  push:\n    branches: [main]\n  pull_request:',
+    replace: 'on:\n  pull_request:',
+    detectedBy: 'unit',
+  },
+  {
+    // One tree, one lockfile, one runtime. A policy job on one major and a
+    // gates job on another is two answers to a question the manifest asks once.
+    item: 'GH6',
+    name: 'both jobs pin the same runtime',
+    file: '.github/workflows/ci.yml',
+    find: '          node-version: 20.19.0\n          cache: npm',
+    replace: '          node-version: 22.13.0\n          cache: npm',
+    detectedBy: 'unit',
+  },
+  {
+    // And the pin is inside the range package.json declares, which under
+    // engine-strict is the difference between an install and a refusal.
+    item: 'GH6',
+    name: 'the pinned runtime is one the manifest says it supports',
+    file: '.github/workflows/ci.yml',
+    find: '          node-version: 20.19.0\n\n      - name: Branches',
+    replace: '          node-version: 18.20.8\n\n      - name: Branches',
+    detectedBy: 'unit',
+  },
+  {
+    // A job renamed here and not in the ruleset leaves `main` waiting on a
+    // context nothing will ever report, which reads as pending, not as failed.
+    item: 'GH6',
+    name: 'the job names are the ruleset s required contexts, character for character',
+    file: '.github/workflows/ci.yml',
+    find: '    name: Pocket Football gates',
+    replace: '    name: Pocket Football checks',
+    detectedBy: 'unit',
+  },
+  {
+    // The cheap check runs first so a banned name in the record fails before a
+    // five minute install rather than after it.
+    item: 'GH6',
+    name: 'the gates job waits for the record check',
+    file: '.github/workflows/ci.yml',
+    find: '    needs: repository-policy',
+    replace: '    # needs: repository-policy',
+    detectedBy: 'unit',
+  },
+  {
+    // Each step below can be deleted on its own and leave a workflow that is
+    // still green and no longer decides anything.
+    item: 'GH6',
+    name: 'the record check is a step the merge waits on',
+    file: '.github/workflows/ci.yml',
+    find: '        run: node scripts/check-repository-record.mjs',
+    replace: '        run: echo skipped',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH6',
+    name: 'the unit suite is a step the merge waits on',
+    file: '.github/workflows/ci.yml',
+    find: '      - name: Unit and headless tests\n        run: npm run test',
+    replace: '      - name: Unit and headless tests\n        run: echo skipped',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH6',
+    name: 'the browser suite is a step the merge waits on',
+    file: '.github/workflows/ci.yml',
+    find: '        run: npm run test:browser',
+    replace: '        run: echo skipped',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH6',
+    name: 'the deterministic build is a step the merge waits on',
+    file: '.github/workflows/ci.yml',
+    find: '        run: npm run verify:build',
+    replace: '        run: echo skipped',
+    detectedBy: 'unit',
+  },
+
+  {
+    // GITHUB 12. Under engine-strict the declared range decides whether an
+    // install happens at all, so a floor that over-promises is a refusal
+    // waiting for a contributor: 27 of the lockfile's 117 ranges refuse Node
+    // 22.0 to 22.12, 10 refuse 22.12, 31 refuse 21.x and 11 refuse 23.x, all of
+    // which ">=20.19.0" declared supported.
+    item: 'GH12',
+    name: 'the declared runtime range is the one the lockfile supports',
+    file: 'package.json',
+    find: '"node": "^20.19.0 || ^22.13.0 || >=24"',
+    replace: '"node": ">=20.19.0"',
+    detectedBy: 'unit',
+  },
+
+  {
+    // QUALITY-BAR 13, and the property every other entry in this file rests on:
+    // a sweep's PASS means each entry was measured against the tree the sweep
+    // started from. A stub left live by a test that rewrites a shipped source
+    // makes the suite red for a reason no mutation caused, and from that moment
+    // every remaining entry reports "detected" while measuring nothing.
+    item: 'QB13',
+    name: 'the tree walk descends into every directory it owns',
+    file: 'scripts/mutation-check.mjs',
+    find: '      if (entry.isDirectory()) {\n        stack.push(child);',
+    replace: '      if (entry.isDirectory()) {\n        void child;',
+    detectedBy: 'unit',
+  },
+  {
+    // The other end of the same walk: build output, the dependency tree and the
+    // measurement artifacts are rewritten by every detector, so watching them
+    // would report drift on every entry and stop the first sweep that ran.
+    item: 'QB13',
+    name: 'the tree walk leaves the output every detector rewrites alone',
+    file: 'scripts/mutation-check.mjs',
+    find: "  'node_modules',\n  '.git',\n  'dist',",
+    replace: "  'node_modules',\n  '.git',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'two listings that disagree are compared by content',
+    file: 'scripts/mutation-check.mjs',
+    find: '    if (was !== now) {\n      changes.push',
+    replace: '    if (false) {\n      changes.push',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a path the baseline recorded goes back to the bytes it had',
+    file: 'scripts/mutation-check.mjs',
+    find: '    if (known.has(change.path)) {\n      restore.push(change.path);',
+    replace: '    if (false) {\n      restore.push(change.path);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'an entry the tree moved under is measured again, not believed',
+    file: 'scripts/mutation-check.mjs',
+    find: '  return { stop: null, rerun: true };\n}',
+    replace: '  return { stop: null, rerun: false };\n}',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a second drift on the same entry stops the sweep',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (attempt > 1) {\n    return {',
+    replace: '  if (false) {\n    return {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a path the repair could not put back stops the sweep too',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (failed.length > 0) {\n    return {',
+    replace: '  if (false) {\n    return {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'the sweep compares the whole tree after every entry',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '    const drift = treeDrift(baseline.listing, treeListing());\n' +
+      '    const paths = drift.map((change) => change.path);',
+    replace:
+      '    const drift = [];\n' +
+      '    const paths = drift.map((change) => change.path);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'the baseline is the tree, recorded once, after the detectors are green',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '  const baseline = { bytes: snapshotBytes(), listing: treeListing() };\n' +
+      '  console.log(',
+    replace:
+      '  const baseline = { bytes: new Map(), listing: new Map() };\n' +
+      '  console.log(',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'the summary prints every incident the sweep recorded',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (incidents.length > 0) {\n    trailer.push(',
+    replace: '  if (false) {\n    trailer.push(',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'a sweep that ends on a different tree is refused, not passed',
+    file: 'scripts/mutation-check.mjs',
+    find: '  if (finalDrift.length > 0) {\n    return {',
+    replace: '  if (false) {\n    return {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'QB13',
+    name: 'the closing comparison is taken against the recorded baseline',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '    finalDrift: treeDrift(baseline.listing, treeListing()).map(\n' +
+      '      (change) => change.path,\n' +
+      '    ),',
+    replace: '    finalDrift: [],',
+    detectedBy: 'unit',
+  },
 ];
 
 /**
@@ -5846,6 +6559,143 @@ function reclaim(detector, when) {
   }
 }
 
+/**
+ * WHAT ONE DETECTOR RUN ACTUALLY DID, as a pure function of what the child
+ * process reported. Exported so all three answers are graded by the unit suite
+ * rather than only the two a green sweep happens to take.
+ *
+ * A TEST THAT FAILED AND A PROCESS THAT WAS KILLED ARE OPPOSITE ANSWERS, and
+ * this harness used to read both as "the mutation was detected" because both
+ * arrive as a non-zero exit. The first is the whole point of the gate. The
+ * second is a detector that never reached a verdict at all, and counting it as
+ * a detection reports a gate as working on the strength of a run that measured
+ * nothing. The shape is not hypothetical: two tests of this suite exceed the
+ * unit runner's default budget on a cold module graph, and a suite that goes
+ * red for a reason unrelated to the code would have been indistinguishable from
+ * five hundred caught mutations.
+ *
+ * `execFileSync` sets `killed` and a `signal` when its own deadline fires, and
+ * leaves `signal` set when anything else killed the child; a child that decided
+ * its own exit carries a numeric `status` and no signal at all. So the signal is
+ * the discriminator, and the deadline case is named by both fields.
+ */
+export function detectorOutcome(error, stdout = '', stderr = '') {
+  if (error === null || error === undefined) {
+    return { passed: true, killed: false, output: '' };
+  }
+  const killed =
+    error.killed === true ||
+    (error.signal !== null && error.signal !== undefined);
+  return { passed: false, killed, output: `${stdout}${stderr}`.trim() };
+}
+
+/**
+ * The verdict for one entry. `error` is not a severity label: it is the answer
+ * that stops the sweep, because every entry after a killed detector would be
+ * measured against a machine that has already shown it cannot finish a run.
+ */
+export function entryVerdict(outcome) {
+  if (outcome.killed) {
+    return 'error';
+  }
+  return outcome.passed ? 'missed' : 'detected';
+}
+
+/**
+ * The last line of the log, which is the only line anybody reads, and its exit
+ * status. A sweep that stopped is not a sweep that passed, and it is not a
+ * sweep that found a missed entry either: it is a sweep with no verdict on the
+ * entry it stopped at and none at all on the entries after it, and the summary
+ * has to say so in those words.
+ *
+ * THE INCIDENT LIST AND THE CLOSING COMPARISON ARE PART OF THE VERDICT, not a
+ * footnote under it. A sweep that repaired the tree three times measured three
+ * entries twice and everything else once, which a reader has to be told; a
+ * sweep that ends on a tree it did not start on has not finished, whatever its
+ * entries reported, so that is a refusal and not a pass.
+ */
+export function sweepSummary({
+  total,
+  ran,
+  missed,
+  stoppedAt = null,
+  stopReason = 'kill',
+  incidents = [],
+  finalDrift = [],
+}) {
+  const detected = ran - missed;
+  const counted =
+    `  ${String(ran)} of ${String(total)} entries run, ${String(detected)} detected, ` +
+    `${String(missed)} missed`;
+  // The trailer sits BETWEEN the count and the verdict, because the verdict is
+  // the last line anybody reads and, when it is UNDETECTED, the names of the
+  // undetected entries follow it immediately.
+  const trailer = [];
+  if (incidents.length > 0) {
+    trailer.push(
+      '',
+      `${String(incidents.length)} tree drift incident(s), restored from the ` +
+        'baseline snapshot:',
+    );
+    for (const incident of incidents) {
+      trailer.push(`  ${incident.entry}: ${incident.paths.join(', ')}`);
+    }
+  }
+  trailer.push(
+    '',
+    finalDrift.length > 0
+      ? `TREE: this sweep did not finish on the tree it started on: ${finalDrift.join(', ')}`
+      : '  tree: identical to the one this sweep started on',
+  );
+  if (stoppedAt !== null) {
+    return {
+      status: 1,
+      lines: [
+        counted,
+        ...trailer,
+        '',
+        stopReason === 'drift'
+          ? `STOPPED at "${stoppedAt}": the working tree moved under it and did not ` +
+            'settle, so that mutation was measured against a tree this sweep did not ' +
+            'start on, and no entry after it was measured at all. A tree that moved ' +
+            'is not a detection.'
+          : `STOPPED at "${stoppedAt}": its detector was killed at its deadline rather ` +
+            'than reaching a verdict, so that mutation was neither caught nor shown ' +
+            'to be uncaught, and no entry after it was measured. A killed detector ' +
+            'is not a detection.',
+      ],
+    };
+  }
+  if (missed > 0) {
+    return {
+      status: 1,
+      lines: [
+        counted,
+        ...trailer,
+        '',
+        'UNDETECTED, so the gate each one names is decorative:',
+      ],
+    };
+  }
+  if (finalDrift.length > 0) {
+    return {
+      status: 1,
+      lines: [
+        counted,
+        ...trailer,
+        '',
+        'mutations: REFUSED. Every entry reported, but the tree moved under the ' +
+          'sweep and was not put back, so what those entries were measured against ' +
+          'is not the tree this repository has.',
+      ],
+    };
+  }
+  return {
+    status: 0,
+    lines: [counted, ...trailer, '', 'mutations: PASS, every entry detected'],
+  };
+}
+
 function detectorPasses(name, whole = false) {
   const detector = DETECTORS[name];
   reclaim(detector, `before the ${detector.label}`);
@@ -5857,11 +6707,11 @@ function detectorPasses(name, whole = false) {
       maxBuffer: 64 * 1024 * 1024,
       timeout: detector.timeout,
     });
-    return { passed: true, output: '' };
+    return detectorOutcome(null);
   } catch (error) {
     const stdout = error && error.stdout ? String(error.stdout) : '';
     const stderr = error && error.stderr ? String(error.stderr) : '';
-    return { passed: false, output: `${stdout}${stderr}`.trim() };
+    return detectorOutcome(error, stdout, stderr);
   } finally {
     // A detector this harness timed out has left its preview behind, and the
     // next browser run cannot start while it holds the port.
@@ -5883,7 +6733,7 @@ function runEdit(entry) {
   }
   try {
     writeFileSync(absolute, original.replace(entry.find, entry.replace), 'utf8');
-    return detectorPasses(entry.detectedBy).passed;
+    return detectorPasses(entry.detectedBy);
   } finally {
     writeFileSync(absolute, original, 'utf8');
   }
@@ -5900,9 +6750,228 @@ function runAddition(entry) {
   try {
     mkdirSync(path.dirname(absolute), { recursive: true });
     writeFileSync(absolute, entry.content, 'utf8');
-    return detectorPasses(entry.detectedBy).passed;
+    return detectorPasses(entry.detectedBy);
   } finally {
     rmSync(absolute, { force: true });
+  }
+}
+
+/**
+ * What this sweep is NOT responsible for putting back: build output, the
+ * dependency tree, measurement artifacts and tool caches, all of which every
+ * detector writes into by design.
+ *
+ * A DIRECTORY THAT BELONGS HERE AND IS MISSING FAILS LOUDLY rather than
+ * silently: its files appear as drift on the first entry that runs a detector,
+ * the sweep restores what it can, records an incident and says the paths out
+ * loud. That is the right direction for a list nobody will remember to update.
+ */
+const SNAPSHOT_SKIP = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'coverage',
+  'playwright-report',
+  'test-results',
+  'blob-report',
+  '.determinism',
+  'artifacts',
+  '.vite',
+  '.cache',
+  '.eslintcache',
+]);
+
+/** Every file under `root` this sweep owns, relative, forward slashed, sorted. */
+export function filesUnder(root, skip = SNAPSHOT_SKIP) {
+  const found = [];
+  const stack = [''];
+  while (stack.length > 0) {
+    const relative = stack.pop();
+    const absolute = relative === '' ? root : path.join(root, relative);
+    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+      if (skip.has(entry.name)) {
+        continue;
+      }
+      const child = relative === '' ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        stack.push(child);
+      } else if (entry.isFile()) {
+        found.push(child);
+      }
+    }
+  }
+  found.sort();
+  return found;
+}
+
+/** The tree as a listing of path to content digest. */
+export function treeListing(root = PROJECT_ROOT, skip = SNAPSHOT_SKIP) {
+  const listing = new Map();
+  for (const relative of filesUnder(root, skip)) {
+    listing.set(
+      relative,
+      createHash('sha256').update(readFileSync(path.join(root, relative))).digest('hex'),
+    );
+  }
+  return listing;
+}
+
+/** The same files, as bytes, so a drifted one can be put back exactly. */
+function snapshotBytes(root = PROJECT_ROOT, skip = SNAPSHOT_SKIP) {
+  const bytes = new Map();
+  for (const relative of filesUnder(root, skip)) {
+    bytes.set(relative, readFileSync(path.join(root, relative)));
+  }
+  return bytes;
+}
+
+/**
+ * Every path two listings disagree about, named in the direction it moved.
+ *
+ * Pure, because the decision is the whole of the property and the two listings
+ * are the whole of the input: `was` null is a file that appeared, `now` null is
+ * one that vanished, and two different digests are one that was rewritten.
+ */
+export function treeDrift(before, after) {
+  const changes = [];
+  for (const relative of new Set([...before.keys(), ...after.keys()])) {
+    const was = before.get(relative) ?? null;
+    const now = after.get(relative) ?? null;
+    if (was !== now) {
+      changes.push({ path: relative, was, now });
+    }
+  }
+  changes.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  return changes;
+}
+
+/**
+ * How each drifted path goes back: a path the baseline recorded is rewritten
+ * with the bytes it had, and a path the baseline never saw is one that appeared
+ * during the sweep and is removed.
+ */
+export function restorePlan(drift, known) {
+  const restore = [];
+  const remove = [];
+  for (const change of drift) {
+    if (known.has(change.path)) {
+      restore.push(change.path);
+    } else {
+      remove.push(change.path);
+    }
+  }
+  return { restore, remove };
+}
+
+/**
+ * What a sweep does about a tree that moved under one entry: nothing, repair
+ * and measure the entry again, or stop.
+ *
+ * `stop` is the same answer a killed detector earns and for the same reason:
+ * the entry reached no trustworthy verdict, and neither would any entry after
+ * it. `failed` is the list of paths the repair could not put back, which is the
+ * case where carrying on would measure every remaining entry against a tree
+ * nobody can describe.
+ */
+export function driftVerdict({ paths = [], failed = [], attempt = 1 }) {
+  if (paths.length === 0) {
+    return { stop: null, rerun: false };
+  }
+  if (failed.length > 0) {
+    return {
+      stop:
+        'the working tree changed under this entry and could not be put back: ' +
+        `${failed.join(', ')}. Every entry after it would be measured against a ` +
+        'tree this sweep cannot describe.',
+      rerun: false,
+    };
+  }
+  if (attempt > 1) {
+    return {
+      stop:
+        'the working tree changed under this entry twice, so the drift is not a ' +
+        'transient and re-running it again would measure the same nothing.',
+      rerun: false,
+    };
+  }
+  return { stop: null, rerun: true };
+}
+
+/** What one incident says: which entry, which paths, and what became of them. */
+export function incidentLines({ entry, attempt, paths, failed, rerun = true }) {
+  const lines = [
+    `  INCIDENT the working tree changed under "${entry}" (attempt ${String(attempt)}): ` +
+      paths.join(', '),
+  ];
+  if (failed.length > 0) {
+    lines.push(`        NOT RESTORED: ${failed.join(', ')}`);
+  } else if (rerun) {
+    lines.push(
+      '        restored from the baseline snapshot, and the entry is measured ' +
+        'again on the clean tree',
+    );
+  } else {
+    lines.push(
+      '        restored from the baseline snapshot, but the tree has now moved ' +
+        'under this entry twice and the sweep stops here',
+    );
+  }
+  return lines;
+}
+
+/**
+ * The repair. Every path is attempted and every failure is said out loud; what
+ * is RETURNED is the re-measured drift rather than a count of exceptions,
+ * because a write that threw and a write that silently wrote the wrong thing
+ * are the same problem and only the second listing can tell.
+ */
+function applyRestore(plan, baseline) {
+  for (const relative of plan.restore) {
+    const absolute = path.join(PROJECT_ROOT, relative);
+    try {
+      mkdirSync(path.dirname(absolute), { recursive: true });
+      writeFileSync(absolute, baseline.bytes.get(relative));
+    } catch (error) {
+      console.log(`  note  could not restore ${relative}: ${String(error)}`);
+    }
+  }
+  for (const relative of plan.remove) {
+    try {
+      rmSync(path.join(PROJECT_ROOT, relative), { force: true });
+    } catch (error) {
+      console.log(`  note  could not remove ${relative}: ${String(error)}`);
+    }
+  }
+  return treeDrift(baseline.listing, treeListing()).map((change) => change.path);
+}
+
+/**
+ * One entry, measured against the tree the sweep began on.
+ *
+ * The loop runs at most twice: once, and once more after a repaired drift.
+ * `driftVerdict` owns the decision; everything here is the doing of it.
+ */
+function measureEntry(entry, baseline, incidents) {
+  for (let attempt = 1; ; attempt += 1) {
+    const outcome = entry.kind === 'edit' ? runEdit(entry) : runAddition(entry);
+    const drift = treeDrift(baseline.listing, treeListing());
+    const paths = drift.map((change) => change.path);
+    const failed =
+      paths.length === 0 ? [] : applyRestore(restorePlan(drift, baseline.bytes), baseline);
+    const verdict = driftVerdict({ paths, failed, attempt });
+    if (paths.length > 0) {
+      const incident = { entry: entry.name, attempt, paths, failed, rerun: verdict.rerun };
+      incidents.push(incident);
+      for (const line of incidentLines(incident)) {
+        console.log(line);
+      }
+    }
+    if (verdict.stop !== null) {
+      return { outcome, stop: verdict.stop };
+    }
+    if (!verdict.rerun) {
+      return { outcome, stop: null };
+    }
   }
 }
 
@@ -5950,7 +7019,10 @@ export function main() {
   for (const name of Object.keys(DETECTORS)) {
     const result = detectorPasses(name, true);
     if (!result.passed) {
-      console.log(`  FAIL  ${DETECTORS[name].label} is red before any mutation`);
+      const why = result.killed
+        ? 'was killed at its deadline before any mutation, so it never reached a verdict'
+        : 'is red before any mutation';
+      console.log(`  FAIL  ${DETECTORS[name].label} ${why}`);
       console.log(result.output.split('\n').slice(-25).join('\n'));
       console.log(
         '\nrefusing to report: against a red tree every mutation looks detected.',
@@ -5960,6 +7032,11 @@ export function main() {
     console.log(`  ok    ${DETECTORS[name].label} green`);
   }
 
+  // The tree every entry below is measured against, recorded AFTER the baseline
+  // runs so that whatever those runs wrote is part of it.
+  const baseline = { bytes: snapshotBytes(), listing: treeListing() };
+  console.log(`  ok    working tree recorded, ${String(baseline.bytes.size)} files`);
+
   const entries = [
     ...EDITS.map((entry) => ({ ...entry, kind: 'edit' })),
     ...ADDITIONS.map((entry) => ({ ...entry, kind: 'addition' })),
@@ -5968,16 +7045,45 @@ export function main() {
   console.log('\n== mutations ==');
   const missed = [];
   const counts = new Map();
+  const incidents = [];
+  let ran = 0;
+  let stoppedAt = null;
+  let stopReason = 'kill';
   for (const entry of entries) {
-    const stillGreen =
-      entry.kind === 'edit' ? runEdit(entry) : runAddition(entry);
-    const detected = !stillGreen;
+    const measured = measureEntry(entry, baseline, incidents);
+    if (measured.stop !== null) {
+      console.log(`  ERROR ${entry.item}  ${entry.name.padEnd(58)} ${measured.stop}`);
+      stoppedAt = entry;
+      stopReason = 'drift';
+      break;
+    }
+    const outcome = measured.outcome;
+    const verdict = entryVerdict(outcome);
+    if (verdict === 'error') {
+      // The sweep stops here rather than carrying on. Every entry after a
+      // detector that could not finish would be measured against a machine
+      // that has just shown it cannot finish a run, and each of those would be
+      // recorded as caught.
+      console.log(
+        `  ERROR ${entry.item}  ${entry.name.padEnd(58)} ` +
+          `${DETECTORS[entry.detectedBy].label} killed at its deadline`,
+      );
+      console.log(outcome.output.split('\n').slice(-25).join('\n'));
+      stoppedAt = entry;
+      break;
+    }
+    // Counted here and not at the top of the loop: the per-item tally under the
+    // summary is a tally of what was MEASURED, and an entry the sweep stopped
+    // at reached no verdict at all.
     counts.set(entry.item, (counts.get(entry.item) ?? 0) + 1);
-    const verdict = detected ? 'PASS' : 'FAIL';
+    ran += 1;
+    const detected = verdict === 'detected';
     const by = detected
       ? `detected by ${DETECTORS[entry.detectedBy].label}`
       : 'NOT DETECTED';
-    console.log(`  ${verdict}  ${entry.item}  ${entry.name.padEnd(58)} ${by}`);
+    console.log(
+      `  ${detected ? 'PASS' : 'FAIL'}  ${entry.item}  ${entry.name.padEnd(58)} ${by}`,
+    );
     if (!detected) {
       missed.push(entry);
     }
@@ -5987,19 +7093,24 @@ export function main() {
   for (const [item, total] of [...counts].sort()) {
     console.log(`  ${item}: ${String(total)} entries`);
   }
-  const detected = entries.length - missed.length;
-  console.log(
-    `  ${String(entries.length)} entries, ${String(detected)} detected, ${String(missed.length)} missed`,
-  );
-  if (missed.length > 0) {
-    console.log('\nUNDETECTED, so the gate each one names is decorative:');
-    for (const entry of missed) {
-      console.log(`  ${entry.item}  ${entry.name}`);
-    }
-    return 1;
+  const summary = sweepSummary({
+    total: entries.length,
+    ran,
+    missed: missed.length,
+    stoppedAt: stoppedAt === null ? null : stoppedAt.name,
+    stopReason,
+    incidents,
+    finalDrift: treeDrift(baseline.listing, treeListing()).map(
+      (change) => change.path,
+    ),
+  });
+  for (const line of summary.lines) {
+    console.log(line);
   }
-  console.log('\nmutations: PASS, every entry detected');
-  return 0;
+  for (const entry of missed) {
+    console.log(`  ${entry.item}  ${entry.name}`);
+  }
+  return summary.status;
 }
 
 const entry = process.argv[1];

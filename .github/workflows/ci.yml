@@ -21,10 +21,28 @@ on:
 permissions:
   contents: read
 
-# A superseded run on the same ref is wasted compute and a confusing status.
+# A superseded run on the same ref is wasted compute and a confusing status, so
+# a pull request cancels its own predecessor.
+#
+# A PUSH GETS A GROUP OF ITS OWN, PER COMMIT. The ref is constant on the default
+# branch, so a shared group makes every push contend with the one before it:
+# three commits landed on 2026-09-07 with no completed run at all. GITHUB
+# section 6 treats a required check that has not reported as a failure rather
+# than a pass, and GITHUB section 7 closes the squash gap with the push-to-main
+# run precisely because it is the first thing to read the composed message. A
+# cancelled run reads neither.
+#
+# `cancel-in-progress: false` alone is NOT enough, and that is why the group
+# carries the commit. Within one concurrency group a run that arrives while
+# another is in progress becomes PENDING, and a pending run is cancelled by the
+# next one to arrive whatever cancel-in-progress says: on a burst of three
+# pushes the middle commit still ends with no conclusion. Keying the group on
+# github.sha puts every default-branch commit in a group of one, so nothing it
+# can contend with exists. Every other event keeps the shared group and the
+# cancellation, so a pull request still supersedes itself.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || '' }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   repository-policy:
@@ -33,11 +51,21 @@ jobs:
     timeout-minutes: 5
     steps:
       # fetch-depth 0 because the record check walks the complete ancestry of
-      # the checked-out revision, not only the diff.
+      # the checked-out revision, not only the diff. A shallow checkout would be
+      # refused by name rather than judged on a partial walk.
+      #
+      # NO `ref:` OVERRIDE, SO BOTH JOBS JUDGE ONE TREE. With one, this job read
+      # the pull request head while the gates job below built the merge ref, and
+      # the two checks could report on two different trees. The merge ref's walk
+      # covers `main`'s already clean history plus this pull request's own
+      # commits, which is a SUPERSET of what the head walk saw and never a
+      # smaller set, and the branch name still reaches the check through
+      # REPOSITORY_BRANCH rather than through the checkout. The one commit the
+      # merge ref adds is the synthetic merge itself, which the record walk
+      # skips today only because it walks --no-merges.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
       # No cache and no install: the check runs on node builtins alone, which
       # is what lets it be the job everything else depends on.
@@ -86,7 +114,18 @@ jobs:
       - name: Unit and headless tests
         run: npm run test
 
+      # THE BROWSER PHASE CARRIES ITS OWN BUDGET, so a slow suite reports as a
+      # slow suite rather than as a killed job. Without it the only bound is the
+      # job cap above, and this one step is 94.0 percent of the job: measured at
+      # 19 m 08 s of a 20 m 21 s job on 2026-09-07 (354 tests, three engines),
+      # against local full runs of 13.7 to 22.0 minutes. Twenty-five minutes is
+      # that measurement plus a 31 percent margin, and it clears the widest
+      # local run. The job cap stays at 30, which the 25 here plus everything
+      # else that run spent leaves headroom inside: 20 m 21 s of job less
+      # 19 m 08 s of browser step is 73 seconds for the whole of the rest, the
+      # runner's own set-up included.
       - name: Browser tests
+        timeout-minutes: 25
         run: npm run test:browser
 
       - name: Deterministic build

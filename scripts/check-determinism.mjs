@@ -128,29 +128,113 @@ function fingerprintOf(files) {
   return treeFingerprint(tree);
 }
 
-function build(run) {
-  const outDir = path.join(PROJECT_ROOT, run.outDir);
-  rmSync(outDir, { recursive: true, force: true });
-  execFileSync(
-    process.execPath,
-    [VITE, 'build', '--outDir', run.outDir, '--emptyOutDir'],
-    {
-      cwd: PROJECT_ROOT,
-      stdio: 'pipe',
-      env: {
-        ...process.env,
-        TZ: run.zone,
-        VITE_DETERMINISM_PROBE: run.probe,
-      },
+/**
+ * The child process one run asks for: its argument vector and its environment,
+ * composed FROM THE RUN IT IS GIVEN and from nothing else.
+ *
+ * SEPARATED AND EXPORTED BECAUSE THE WIRING IS THE PROPERTY. The `RUNS` table
+ * above was already pinned by the unit suite as four conditions that differ
+ * between the two builds. Nothing asserted that the table reached the build, so
+ * `TZ`, the VITE_ probe and the output directory could each be pinned to the
+ * first row with `verify:build` still reporting PASS, and the report went on
+ * printing the second row's values because it read the table rather than what
+ * the builds received. Composing here, and recording what was composed, is what
+ * makes the difference visible.
+ */
+export function buildInvocation(run) {
+  return {
+    outDir: path.join(PROJECT_ROOT, run.outDir),
+    argv: [VITE, 'build', '--outDir', run.outDir, '--emptyOutDir'],
+    env: {
+      ...process.env,
+      TZ: run.zone,
+      VITE_DETERMINISM_PROBE: run.probe,
     },
-  );
+  };
+}
+
+/**
+ * One build. `spawn` is a parameter so the unit suite can assert that what
+ * `buildInvocation` composed is what the child is actually given; a composer
+ * nobody passes to the process is the same defect one layer down.
+ */
+export function build(run, spawn = execFileSync) {
+  const { outDir, argv, env } = buildInvocation(run);
+  rmSync(outDir, { recursive: true, force: true });
+  spawn(process.execPath, argv, { cwd: PROJECT_ROOT, stdio: 'pipe', env });
   return outDir;
 }
 
-function stampAll(files, when) {
+/**
+ * Stamp every input with one fake time. `touch` is a parameter for the same
+ * reason `spawn` is: the property worth grading is that this is called once per
+ * run WITH THAT RUN'S stamp, and a real filesystem cannot answer that question
+ * without changing the tree the check is measuring.
+ */
+export function stampAll(files, when, touch = utimesSync) {
   for (const file of files) {
-    utimesSync(file, when, when);
+    touch(file, when, when);
   }
+  return files.length;
+}
+
+/**
+ * The two builds, and the record of what each one was actually given.
+ *
+ * `records` is the report's only source. A row built from `RUNS` states what
+ * the table intends; a row built from here states what the build received, and
+ * the two stop agreeing the moment a condition is unwired. The loop is over the
+ * `runs` argument rather than over the module constant so that a test can drive
+ * it with a run set of its own and see which stamp each iteration was handed.
+ */
+export function performRuns({
+  files,
+  runs,
+  stamp = stampAll,
+  run: runBuild = build,
+  read = readTree,
+}) {
+  const emitted = [];
+  const records = [];
+  let buildError = null;
+  try {
+    for (const entry of runs) {
+      stamp(files, entry.stamp);
+      const invocation = buildInvocation(entry);
+      records.push({
+        id: entry.id,
+        stamp: entry.stamp,
+        zone: invocation.env['TZ'],
+        probe: invocation.env['VITE_DETERMINISM_PROBE'],
+        outDir: invocation.argv[invocation.argv.indexOf('--outDir') + 1],
+      });
+      emitted.push(read(runBuild(entry)));
+    }
+  } catch (error) {
+    buildError = error instanceof Error ? error.message : String(error);
+  }
+  return { emitted, records, buildError };
+}
+
+/**
+ * The "what was varied" table, built from what each build was given.
+ *
+ * Exported so the report's own source can be graded without running two builds:
+ * feed it a record set and the cells are the record set's values or they are
+ * not. This is the half of item A6's evidence artifact that was false rather
+ * than merely weak, because a table naming conditions the build never saw is
+ * worse than no table.
+ */
+export function conditionRows(records) {
+  const cells = (pick) => records.map(pick);
+  return [
+    ['Condition', ...records.map((entry) => `Build ${entry.id}`)],
+    ['---', ...records.map(() => '---')],
+    ['Every input file mtime', ...cells((entry) => entry.stamp.toISOString())],
+    ['TZ', ...cells((entry) => entry.zone)],
+    ['VITE_DETERMINISM_PROBE', ...cells((entry) => entry.probe)],
+    ['Output directory', ...cells((entry) => entry.outDir)],
+  ];
 }
 
 /**
@@ -199,15 +283,9 @@ function main() {
     return { file, atime: stats.atime, mtime: stats.mtime };
   });
 
-  const emitted = [];
-  let buildError = null;
+  let outcome;
   try {
-    for (const run of RUNS) {
-      stampAll(files, run.stamp);
-      emitted.push(readTree(build(run)));
-    }
-  } catch (error) {
-    buildError = error instanceof Error ? error.message : String(error);
+    outcome = performRuns({ files, runs: RUNS });
   } finally {
     // Restoring is not optional. A check that inspects the tree must not be
     // what changes it, and the fingerprint comparison below proves it was not.
@@ -216,6 +294,7 @@ function main() {
     }
     rmSync(WORKDIR, { recursive: true, force: true });
   }
+  const { emitted, records, buildError } = outcome;
 
   const after = fingerprintOf(files);
   const inputStable = before === after;
@@ -236,16 +315,12 @@ function main() {
     '',
     '## What was varied between the two builds',
     '',
-    row(['Condition', 'Build A', 'Build B']),
-    row(['---', '---', '---']),
-    row([
-      'Every input file mtime',
-      RUNS[0].stamp.toISOString(),
-      RUNS[1].stamp.toISOString(),
-    ]),
-    row(['TZ', RUNS[0].zone, RUNS[1].zone]),
-    row(['VITE_DETERMINISM_PROBE', RUNS[0].probe, RUNS[1].probe]),
-    row(['Output directory', RUNS[0].outDir, RUNS[1].outDir]),
+    '> Every cell below is what the build was GIVEN, recorded per run as it was',
+    '> composed, and not what the table in the script says it intends. A row',
+    '> naming a condition the build never saw would be a false artifact rather',
+    '> than a weak one.',
+    '',
+    ...conditionRows(records).map(row),
     '',
     'Identical bytes under a differing `VITE_` variable is what carries the no-build-time-secrets clause',
     'of item `A2`: Vite inlines such a value wherever it is referenced, so byte equality means nothing',

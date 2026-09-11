@@ -43,8 +43,8 @@
  *   expression in it. Nothing static is there to judge, and a rule that
  *   guessed would report the name of every event in the project.
  *
- * TWO STATED LIMITS, both carried in the clean fixture so that they are tested
- * rather than merely admitted, and both of them a deliberate refusal to guess:
+ * THREE STATED LIMITS, each carried in the clean fixture so that it is tested
+ * rather than merely admitted, and each of them a deliberate refusal to guess:
  *
  *   An ALIASED registration, `const add = element.addEventListener.bind(...)`
  *   and then `add('mousedown', h)`. The callee's property name is `add`, and
@@ -59,9 +59,20 @@
  *   control "onmousedown-toggle". Item M1's own scan is the backstop: nothing
  *   under `src/ui/` may hand-roll input at all.
  *
- * Neither evasion has ever appeared in this project, and both would read as
- * deliberate to a reviewer, which is the standard the boundary plugin beside
- * this one is held to as well.
+ *   A HANDLER PROPERTY ASSIGNED THROUGH A VARIABLE KEY,
+ *   `const PROP = 'onmousedown'; element[PROP] = handler`. The property node is
+ *   an identifier naming a variable, not the handler, and resolving it would
+ *   mean constant-folding every string in the module; guessing from the
+ *   identifier's own spelling would report `element[onmousedown]` while
+ *   missing every variable named anything else, which is the worst of the three
+ *   available answers. This is the limit that was neither caught nor named
+ *   until now, and the same two backstops close it: the shipping lint reads the
+ *   whole of `src/`, where a module computing a handler property name is a
+ *   module a reader would ask about, and item M1's scan covers the chrome.
+ *
+ * None of the three evasions has ever appeared in this project, and each would
+ * read as deliberate to a reviewer, which is the standard the boundary plugin
+ * beside this one is held to as well.
  */
 
 const LEGACY_EVENT = /^(?:mouse[a-z]*|touch[a-z]*|drag[a-z]*|drop|dblclick|auxclick)$/;
