@@ -15,6 +15,7 @@ import { createWorld, everyBodyStopped, launch } from '../../src/core/bodies';
 import {
   BALL_RADIUS,
   CIRCLE_RADIUS,
+  DAMPING,
   FIELD_BOTTOM,
   FIELD_LEFT,
   FIELD_RIGHT,
@@ -22,6 +23,8 @@ import {
   GOAL_OPENING_HIGH,
   GOAL_OPENING_LOW,
   LEFT_GOAL_LINE,
+  RIGHT_GOAL_LINE,
+  STOP_SPEED,
   launchSpeed,
 } from '../../src/core/config';
 import { createMatch } from '../../src/core/match';
@@ -30,6 +33,16 @@ import { createRng } from '../../src/core/rng';
 import type { Rng } from '../../src/core/rng';
 import { distance, set } from '../../src/core/vec2';
 import type { Vec2 } from '../../src/core/vec2';
+import {
+  TOUCHING as REFERENCE_TOUCHING,
+  aimAngleFor,
+  aimPointFor,
+  clampToCone,
+  coneBound,
+  departureAt,
+  firstContact,
+  solidityOf,
+} from './reference/strike-geometry';
 
 /**
  * Item D3, Critical: "The opponent's aim clamps the strike side into the
@@ -37,24 +50,30 @@ import type { Vec2 } from '../../src/core/vec2';
  * every chosen direction reaches the ball with meaningful speed transfer, and
  * a soak confirms the own-goal rate is bounded and near zero."
  *
- * EACH CLAUSE HAS ITS OWN READING HERE. "Clamps the strike side into the
- * reachable cone" is the analytic half: layouts where the ideal side fails
- * SPEC section 8.1's reachable test are clamped to the closest reachable
- * side, and the floor is pinned against the literal 0.25 the section states,
- * never against the symbol beside it. "Every chosen direction reaches the
- * ball with meaningful speed transfer" is the sweep: the playfield grid, the
- * real physics forward, the ball struck in every layout, with the reached
- * count pinned so a sweep that never reaches anything cannot report a pass.
- * "Bounded and near zero" is the soak: a thousand seeded turns across the
- * three difficulties, counted by the scoreboard's own mouth.
+ * EVERY EXPECTED SIDE, ANGLE AND DEPARTURE COMES FROM THE REFERENCE, which is
+ * `reference/strike-geometry.ts`, written from SPEC sections 4, 6.1, 6.3 and
+ * 8.1 alone and importing nothing from `src/`. A test that recomputes the
+ * routine's own formula grades the code against itself: the aim-point case
+ * below used to do exactly that, which is how an aim 34 px short of the
+ * distance section 8.1 fixes survived every gate, measured 2026-09-08.
  *
- * THE SWEEP SWEEPS THE CLAMP, and the discipline is swept beside it. The
- * routine declines a strike whose departure would drive the ball away from
- * the target - the drive section 8.1 measured at 41.3 percent of layouts -
- * and plays those turns as defensive ones, so the sweep asserts the clamp's
- * chosen directions over the whole grid, and the routine's own strikes on
- * the forward subset of it, and that every declined strike left the ball
- * untouched. The soak counts what the full behaviour concedes.
+ * EACH CLAUSE HAS ITS OWN READING HERE. "Clamps the strike side into the
+ * reachable cone with the stated minimum solidity" is the analytic half:
+ * layouts whose ideal side is inadmissible are clamped to the closest
+ * admissible side, and the floor is pinned against the literal 0.25 the
+ * section states, never against the symbol beside it. "Every chosen direction
+ * reaches the ball with meaningful speed transfer" is the sweep: the playfield
+ * grid, launched through `planShot` itself, the real physics forward, the ball
+ * struck in every layout, the departure held to the reference's own direction
+ * and the transfer graded against the section's 0.25. "Bounded and near zero"
+ * is the soak: a thousand seeded turns across the three difficulties, counted
+ * by the scoreboard's own mouth.
+ *
+ * THE SWEEP SWEEPS WHAT THE ROUTINE ACTUALLY DOES. There is no geometric
+ * decline to sweep around any more: SPEC section 8 makes the block the
+ * profile's own probability and section 8.1 answers the striker-in-the-way
+ * layouts with the clamp, so every layout on the grid is struck and the soak
+ * measures what the hardest of them concede.
  */
 
 const TOUCHING = CIRCLE_RADIUS + BALL_RADIUS;
@@ -66,6 +85,26 @@ const PARKED = { x: FIELD_LEFT + CIRCLE_RADIUS, y: FIELD_BOTTOM + CIRCLE_RADIUS 
 
 const STEP_BUDGET = 5000;
 
+/** SPEC section 6.1's damping as pixels of speed lost per pixel travelled. */
+const DECAY = -Math.log(DAMPING);
+
+/**
+ * The fixed step's own cost, and why the measured transfer is graded with a
+ * tolerance at all. A centre advances at most SPEED_CAP / 120 = 10 px per
+ * step, so first contact is detected up to 10 px past the touching point and
+ * the normal is read at the overlapped centres. Displacing the contact by d
+ * along the path takes a transfer t to (52 t - d) / sqrt(2704 - 104 d t +
+ * d^2), which falls with d over the whole range, so the worst the step can do
+ * to a side sitting on the 0.25 floor is at the full 10 px: (13 - 10) /
+ * sqrt(2544) = 0.059479. THE TOLERANCE IS THAT DISPLACEMENT, 0.25 - 0.059479
+ * = 0.190521, ROUNDED UP so the assertion is implied by the analysis rather
+ * than a hair tighter than it: at 0.19 the floor would be 0.06 and the
+ * analytic worst case would fail it. Nothing here is fitted to a run, and the
+ * measured minimum over the grid, 0.149243, is pinned separately at six
+ * places, which is where a drift in either direction shows.
+ */
+const DISCRETISATION = 0.2;
+
 /** A world with the striker and the ball placed, the third body parked. */
 function layoutAt(opponent: Vec2, ball: Vec2): ReturnType<typeof createSimulation> {
   const world = createWorld();
@@ -75,14 +114,24 @@ function layoutAt(opponent: Vec2, ball: Vec2): ReturnType<typeof createSimulatio
   return createSimulation({ world });
 }
 
-/** The launch the clamp's chosen side produces: the exact contact point. */
-function strikeAngle(opponent: Vec2, ball: Vec2): number {
-  const choice = chooseStrikeSide(opponent, ball, TARGET);
-  const contact = {
-    x: ball.x + choice.x * BALL_RADIUS,
-    y: ball.y + choice.y * BALL_RADIUS,
-  };
-  return Math.atan2(contact.y - opponent.y, contact.x - opponent.x);
+/** The launch the REFERENCE clamp produces for a layout: its aim angle. */
+function referenceAngle(opponent: Vec2, ball: Vec2): number {
+  return aimAngleFor(
+    opponent,
+    ball,
+    clampToCone(opponent, ball, TARGET, MIN_STRIKE_SOLIDITY),
+  );
+}
+
+/** What one driven launch produced: the ball's peak, its first direction, the arrival. */
+interface Strike {
+  /** The ball's highest speed over the run. */
+  readonly peak: number;
+  /** The unit direction of the ball's velocity at the first step it moves. */
+  readonly departure: Vec2 | undefined;
+  /** The striker's speed at the step before the ball moved. */
+  readonly arrival: number;
+  readonly steps: number;
 }
 
 /** The launch driven and tracked to rest; the ball's peak speed is the verdict. */
@@ -90,17 +139,34 @@ function strikeAndTrack(
   sim: ReturnType<typeof createSimulation>,
   angle: number,
   power: number,
-): { peak: number; steps: number } {
+): Strike {
   launch(sim.world.opponent, angle, launchSpeed(power));
+  const strikerSpeed = (): number =>
+    Math.hypot(sim.world.opponent.velocity.x, sim.world.opponent.velocity.y);
   let peak = 0;
   let steps = 0;
+  let arrival = 0;
+  let before = strikerSpeed();
+  let departure: Vec2 | undefined = undefined;
   for (; steps < STEP_BUDGET; steps += 1) {
     const velocity = sim.world.ball.velocity;
-    peak = Math.max(peak, Math.hypot(velocity.x, velocity.y));
+    const speed = Math.hypot(velocity.x, velocity.y);
+    if (speed > 0 && departure === undefined) {
+      departure = { x: velocity.x / speed, y: velocity.y / speed };
+      arrival = before;
+    }
+    peak = Math.max(peak, speed);
     if (everyBodyStopped(sim.world) || sim.scoring.frozen()) break;
+    before = strikerSpeed();
     sim.step();
   }
-  return { peak, steps };
+  return { peak, departure, arrival, steps };
+}
+
+/** The angle between two unit vectors, in degrees, for a departure reading. */
+function degreesBetween(one: Vec2, other: Vec2): number {
+  const cosine = one.x * other.x + one.y * other.y;
+  return (Math.acos(Math.max(-1, Math.min(1, cosine))) * 180) / Math.PI;
 }
 
 /** Zero-error, zero-whiff, always-full-power: the clamp and nothing else. */
@@ -129,7 +195,10 @@ const SWEEP_BALLS: readonly Vec2[] = [
 /**
  * The playfield grid. Layouts the parked body would intrude on are excluded
  * by the same clearance the sweep demands of the launch, and the counts are
- * pinned below so a quiet exclusion cannot shrink the sweep.
+ * pinned below so a quiet exclusion cannot shrink the sweep. THE LEG IS THE
+ * REFERENCE'S LEG: the launch runs to the touching point of the chosen side,
+ * 52 px along it, so the exclusion is measured against the path the sweep
+ * actually drives rather than against a shorter one.
  */
 function sweepLayouts(): { all: SweepLayout[]; excluded: number } {
   const all: SweepLayout[] = [];
@@ -144,11 +213,10 @@ function sweepLayouts(): { all: SweepLayout[]; excluded: number } {
           excluded += 1;
           continue;
         }
-        const choice = chooseStrikeSide(opponent, ball, TARGET);
-        const contact = {
-          x: ball.x + choice.x * BALL_RADIUS,
-          y: ball.y + choice.y * BALL_RADIUS,
-        };
+        const contact = aimPointFor(
+          ball,
+          clampToCone(opponent, ball, TARGET, MIN_STRIKE_SOLIDITY),
+        );
         const legX = contact.x - opponent.x;
         const legY = contact.y - opponent.y;
         const legLength = Math.hypot(legX, legY);
@@ -173,63 +241,115 @@ describe('PF-8 the reachable cone, item D3', () => {
   it('keeps the ideal strike side when the striker arrives from outside it', () => {
     // The striker sits on the target's far side of the ball, which is the
     // only place the far-side contact point can be struck from; the ideal
-    // side passes the reachable test and the clamp must leave it alone.
+    // side passes the reachable test and the clamp must leave it alone. Dead
+    // centre on the side's own axis, so the transfer is exactly 1.
     const striker = { x: 900, y: 360 };
     const ball = { x: 640, y: 360 };
     const choice = chooseStrikeSide(striker, ball, TARGET);
+    const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
     expect(choice.clamped).toBe(false);
-    const idealX = (ball.x - TARGET.x) / distance(ball, TARGET);
-    const idealY = (ball.y - TARGET.y) / distance(ball, TARGET);
-    expect(choice.x).toBeCloseTo(idealX, 12);
-    expect(choice.y).toBeCloseTo(idealY, 12);
-    expect(choice.solidity).toBeGreaterThan(0.99);
+    expect(reference.clamped).toBe(false);
+    expect(choice.x).toBeCloseTo(reference.x, 12);
+    expect(choice.y).toBeCloseTo(reference.y, 12);
+    expect(choice.x).toBeCloseTo(1, 12); // the far side, straight down the pitch
+    expect(choice.solidity).toBeCloseTo(1, 12);
   });
 
-  it('clamps to the closest reachable side when the striker stands between the ball and the goal it attacks', () => {
+  it('clamps to the closest admissible side when the striker stands between ball and goal', () => {
     // THE layout the section exists for: the striker square on the lane
     // between the ball and the goal it attacks. The ideal side fails the
-    // reachable test, the clamp fires, and the chosen side sits on the cone
-    // boundary - at the floor from the approach, on the ideal's own
-    // perpendicular, which is the closest reachable point to the ideal.
+    // reachable test outright, the clamp fires, and the chosen side sits on
+    // the cone boundary - the bound from the approach, on the ideal's own
+    // perpendicular, which is the closest admissible point to the ideal.
     const striker = { x: 400, y: 360 };
     const ball = { x: 640, y: 360 };
+    const gap = distance(striker, ball);
+    expect(gap).toBe(240);
     const choice = chooseStrikeSide(striker, ball, TARGET);
+    const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
     const idealX = (ball.x - TARGET.x) / distance(ball, TARGET);
     const idealY = (ball.y - TARGET.y) / distance(ball, TARGET);
     const offsetX = striker.x - ball.x;
     const offsetY = striker.y - ball.y;
-    const gap = Math.hypot(offsetX, offsetY);
-    const reachable = (offsetX * idealX + offsetY * idealY) / gap;
-    expect(reachable).toBeLessThan(1);
-    expect(reachable).toBeLessThan(TOUCHING / gap);
+    // Not even reachable: the offset projected on the ideal side is negative,
+    // where SPEC section 8.1 wants it past the touching distance in pixels.
+    expect(offsetX * idealX + offsetY * idealY).toBe(-240);
     expect(choice.clamped).toBe(true);
-    // reachable again, at the floor, along the ideal's perpendicular
+    expect(choice.x).toBeCloseTo(reference.x, 12);
+    expect(choice.y).toBeCloseTo(reference.y, 12);
+    // The cone boundary at this gap, by literal: 48.75 + 0.25 * sqrt(240^2 -
+    // 2535), over 240. The transfer there is the section's own floor.
     const approachX = offsetX / gap;
     const approachY = offsetY / gap;
-    expect(approachX * choice.x + approachY * choice.y).toBeGreaterThanOrEqual(0.25 - 1e-9);
-    const perpX = idealX - approachX * (approachX * idealX + approachY * idealY);
-    const perpY = idealY - approachY * (approachX * idealX + approachY * idealY);
-    const perpLength = Math.hypot(perpX, perpY);
-    expect(perpLength).toBeLessThan(1e-6); // square behind the ball: degenerate
-    // and the strike the chosen side produces still lands on the ball
+    expect(approachX * choice.x + approachY * choice.y).toBeCloseTo(0.4475617995, 9);
+    expect(coneBound(240, 0.25)).toBeCloseTo(0.4475617995, 9);
+    expect(choice.solidity).toBeCloseTo(0.25, 9);
+    // The tie-break: square behind the ball, the ideal has no perpendicular
+    // component and either wall of the cone is equally close.
+    const along = approachX * idealX + approachY * idealY;
+    expect(Math.hypot(idealX - approachX * along, idealY - approachY * along)).toBeLessThan(
+      1e-6,
+    );
+    // and the strike the chosen side produces lands on the ball and leaves it
+    // along minus that side, which is what the clamp promised.
     const sim = layoutAt(striker, ball);
-    const { peak } = strikeAndTrack(sim, strikeAngle(striker, ball), 1);
-    expect(peak).toBeGreaterThan(150);
+    const { peak, departure } = strikeAndTrack(sim, referenceAngle(striker, ball), 1);
+    expect(peak).toBeGreaterThan(STOP_SPEED);
+    expect(departure).toBeDefined();
+    if (departure !== undefined) {
+      expect(degreesBetween(departure, { x: -reference.x, y: -reference.y })).toBeLessThan(
+        7,
+      );
+    }
   });
 
   it('holds the clamped side at exactly the 0.25 solidity floor when the striker is far away', () => {
-    // Beyond four touching distances the reachability cosine falls below the
-    // floor, so the floor is the binding constraint and the chosen side sits
-    // exactly on it. The assertion is against the section's literal.
-    const striker = { x: 400, y: 360 };
-    const ball = { x: 640, y: 360 };
+    // Far from the ball the cone boundary falls toward the floor itself: at
+    // 600 px the bound is 0.3304 against 0.4476 at 240, and the transfer of
+    // the chosen side is the section's literal 0.25 at both. The reachability
+    // cosine, 52 / 600, is far below either, which is why one bound carries
+    // both rules.
+    const striker = { x: 500, y: 360 };
+    const ball = { x: 1100, y: 360 };
+    const gap = distance(striker, ball);
+    expect(gap).toBe(600);
     const choice = chooseStrikeSide(striker, ball, TARGET);
-    expect(TOUCHING / 240).toBeLessThan(0.25); // the reachability bound is the looser one here
-    expect(choice.solidity).toBe(0.25);
-    const approachX = (striker.x - ball.x) / distance(striker, ball);
-    const approachY = (striker.y - ball.y) / distance(striker, ball);
-    expect(approachX * choice.x + approachY * choice.y).toBeCloseTo(0.25, 9);
+    const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
+    expect(TOUCHING / gap).toBeCloseTo(0.0866666666, 9);
+    expect(choice.clamped).toBe(true);
+    expect(choice.x).toBeCloseTo(reference.x, 12);
+    expect(choice.y).toBeCloseTo(reference.y, 12);
+    const approachX = (striker.x - ball.x) / gap;
+    const approachY = (striker.y - ball.y) / gap;
+    expect(approachX * choice.x + approachY * choice.y).toBeCloseTo(0.3303682367, 9);
+    expect(coneBound(600, 0.25)).toBeCloseTo(0.3303682367, 9);
+    expect(choice.solidity).toBeCloseTo(0.25, 9);
     expect(MIN_STRIKE_SOLIDITY).toBe(0.25);
+  });
+
+  it('clamps a reachable ideal whose transfer would still be a graze', () => {
+    // THE READING THE FLOOR IS GIVEN HERE, by literal coordinates. The offset
+    // projects 60 px onto the ideal side, past the 52 px SPEC section 8.1
+    // calls reachable, so the bare reachability test admits it; the launch it
+    // would produce transfers 8 / sqrt(240.13^2) = 0.0333 of the arrival
+    // speed, which is the graze the same section's floor exists to refuse and
+    // which item D3's "every chosen direction" covers. So it is clamped like
+    // an unreachable one, and the alternative reading - the floor on the
+    // fallback alone - would leave this launch at 0.0333.
+    const striker = { x: 700, y: 120 };
+    const ball = { x: 640, y: 360 };
+    const idealX = (ball.x - TARGET.x) / distance(ball, TARGET);
+    const idealY = (ball.y - TARGET.y) / distance(ball, TARGET);
+    const reach = (striker.x - ball.x) * idealX + (striker.y - ball.y) * idealY;
+    expect(reach).toBe(60);
+    expect(reach).toBeGreaterThan(TOUCHING);
+    expect(solidityOf(striker, ball, { x: idealX, y: idealY })).toBeCloseTo(0.0333148, 7);
+    const choice = chooseStrikeSide(striker, ball, TARGET);
+    const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
+    expect(choice.clamped).toBe(true);
+    expect(choice.x).toBeCloseTo(reference.x, 12);
+    expect(choice.y).toBeCloseTo(reference.y, 12);
+    expect(choice.solidity).toBeCloseTo(0.25, 9);
   });
 
   it('pushes straight out when the striker is already inside the contact distance', () => {
@@ -246,22 +366,140 @@ describe('PF-8 the reachable cone, item D3', () => {
     expect(choice.y).toBeCloseTo(approachY, 9);
   });
 
-  it('aims the launch at the exact contact point of the chosen side, with no safety margin', () => {
-    // The aim angle is recomputed here from the chosen side alone, so a
-    // margin sneaking into the routine moves this assertion. A margin past
-    // the touching distance is the prior build's 69.4 percent whiff.
-    const striker = { x: 900, y: 300 };
+  it('answers a target on the ball and a coordinate that is not a number with a finite side', () => {
+    // The three normalisations the routine makes are total. A target
+    // coincident with the ball has no ideal direction; a coordinate that is
+    // not a number has no approach; either would otherwise put NaN into a
+    // launch angle, where the finiteness policy repairs it into a skipped
+    // turn nobody can see.
+    //
+    // THE STATED FALLBACK IS READ BY COORDINATES, NOT BY FINITENESS. When the
+    // ideal has no direction the routine strikes along the APPROACH, which
+    // sends the ball away from the striker rather than back through it, and a
+    // layout square above the ball approaches along (0, 1): a fallback that
+    // was reversed, or fixed at the (1, 0) SPEC section 6.3 names for a
+    // coincident normal, gives a different answer here. Asserting only that
+    // the side is finite and unit leaves the choice ungated, which is what a
+    // striker on the goal's own lane would pay for.
     const ball = { x: 640, y: 360 };
-    const world = createWorld();
-    set(world.opponent.position, striker.x, striker.y);
-    set(world.ball.position, ball.x, ball.y);
-    const plan = planShot(world, { ...CASUAL, angularErrorDeg: 0, whiffChance: 0 }, createRng('aim').split(OPPONENT_STREAM));
-    const choice = chooseStrikeSide(striker, ball, TARGET);
-    const contact = {
-      x: ball.x + choice.x * BALL_RADIUS,
-      y: ball.y + choice.y * BALL_RADIUS,
-    };
-    expect(plan.angle).toBeCloseTo(Math.atan2(contact.y - striker.y, contact.x - striker.x), 9);
+    const above = { x: 640, y: 600 };
+    const onTheBall = chooseStrikeSide(above, ball, ball);
+    expect(Number.isFinite(onTheBall.x)).toBe(true);
+    expect(Number.isFinite(onTheBall.y)).toBe(true);
+    expect(Math.hypot(onTheBall.x, onTheBall.y)).toBeCloseTo(1, 12);
+    expect(onTheBall.x).toBeCloseTo(0, 12);
+    expect(onTheBall.y).toBeCloseTo(1, 12);
+    expect(onTheBall.clamped).toBe(false);
+    expect(onTheBall.solidity).toBeGreaterThanOrEqual(0.25);
+    // and a target no arithmetic can point at leaves by the same door with
+    // the same side, which is the other way an ideal goes missing.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const unpointable = chooseStrikeSide(above, ball, { x: bad, y: bad });
+      expect(Math.hypot(unpointable.x, unpointable.y), String(bad)).toBeCloseTo(1, 12);
+      expect(unpointable.x, String(bad)).toBeCloseTo(0, 12);
+      expect(unpointable.y, String(bad)).toBeCloseTo(1, 12);
+      expect(unpointable.solidity, String(bad)).toBeGreaterThanOrEqual(0.25);
+    }
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const striker of [{ x: bad, y: 360 }, { x: 900, y: bad }]) {
+        const choice = chooseStrikeSide(striker, ball, TARGET);
+        expect(Number.isFinite(choice.x), String(bad)).toBe(true);
+        expect(Number.isFinite(choice.y), String(bad)).toBe(true);
+        expect(Math.hypot(choice.x, choice.y)).toBeCloseTo(1, 12);
+        expect(choice.solidity).toBeGreaterThanOrEqual(0.25);
+      }
+      const coincident = chooseStrikeSide(ball, ball, { x: bad, y: bad });
+      expect(Math.hypot(coincident.x, coincident.y)).toBeCloseTo(1, 12);
+      expect(coincident.solidity).toBeGreaterThanOrEqual(0.25);
+    }
+    // and a gap past the point where the cone arithmetic can be computed at
+    // all, which is 1.3e154 px against a pitch that holds 1160.31: the same
+    // straight-out answer rather than a side of infinite length.
+    const absurd = chooseStrikeSide({ x: 1e300, y: 1e300 }, ball, TARGET);
+    expect(Math.hypot(absurd.x, absurd.y)).toBeCloseTo(1, 12);
+    expect(absurd.solidity).toBeGreaterThanOrEqual(0.25);
+  });
+
+  it('holds the floor within a hair of the touching distance, on both branches', () => {
+    // THE BAND THE GRID CANNOT REACH. `collisions.ts` separates a contacting
+    // pair to exactly the touching distance, so a ball resting against the
+    // striker arrives here at a gap of 52 plus a few units in the last place,
+    // where the transfer is 0/0 and a formula written as a difference of two
+    // large quantities loses every digit of it. The sweep's own layouts start
+    // at 72.111, so nothing else in this file visits the band. Both branches
+    // are walked: an ideal square behind the ball, which clamps, and one
+    // along the approach, which is dead centre and does not.
+    const ball = { x: 640, y: 360 };
+    let worstClamped = 1;
+    let worstFree = 1;
+    let clampedSeen = 0;
+    let freeSeen = 0;
+    for (let step = 0; step < 4000; step += 1) {
+      const gap = 52 + (step / 4000) * 4e-6;
+      const behind = chooseStrikeSide({ x: ball.x - gap, y: ball.y }, ball, TARGET);
+      const beyond = chooseStrikeSide({ x: ball.x + gap, y: ball.y }, ball, TARGET);
+      for (const choice of [behind, beyond]) {
+        expect(Math.hypot(choice.x, choice.y)).toBeCloseTo(1, 9);
+        if (choice.clamped) {
+          clampedSeen += 1;
+          worstClamped = Math.min(worstClamped, choice.solidity);
+        } else {
+          freeSeen += 1;
+          worstFree = Math.min(worstFree, choice.solidity);
+        }
+        expect(choice.solidity, String(gap)).toBeGreaterThanOrEqual(0.25);
+      }
+    }
+    // Both branches must actually be exercised, or the assertion above is a
+    // statement about one of them.
+    expect(clampedSeen).toBeGreaterThan(1000);
+    expect(freeSeen).toBeGreaterThan(1000);
+    expect(worstClamped).toBe(0.25);
+    expect(worstFree).toBe(1);
+  });
+
+  it('aims the launch at the touching point of the chosen side, with no safety margin', () => {
+    // THE EXPECTED ANGLE COMES FROM THE REFERENCE, not from a restatement of
+    // the routine's own formula: three layouts, one of them clamped, and the
+    // aim is the point where the striker's centre stands at contact. A margin
+    // past the touching distance is the prior build's 69.4 percent whiff, and
+    // an aim short of it is the 20 to 25 degrees of departure error the sweep
+    // below measures.
+    const ball = { x: 640, y: 360 };
+    const cases: readonly [Vec2, boolean][] = [
+      [{ x: 900, y: 300 }, false],
+      [{ x: 1120, y: 590 }, false],
+      [{ x: 400, y: 360 }, true],
+    ];
+    for (const [striker, clamped] of cases) {
+      const world = createWorld();
+      set(world.opponent.position, striker.x, striker.y);
+      set(world.ball.position, ball.x, ball.y);
+      const plan = planShot(
+        world,
+        { ...CASUAL, angularErrorDeg: 0, whiffChance: 0 },
+        createRng('aim').split(OPPONENT_STREAM),
+      );
+      expect(plan.clamped, JSON.stringify(striker)).toBe(clamped);
+      expect(plan.angle, JSON.stringify(striker)).toBeCloseTo(
+        referenceAngle(striker, ball),
+        9,
+      );
+      // and that aim point is where the centre path first meets the contact
+      // disc, which is the property section 8.1's reachable test is derived
+      // from and the property the ball's own surface point does not have.
+      const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
+      const aim = aimPointFor(ball, reference);
+      const contact = firstContact(striker, ball, aim);
+      expect(contact).toBeDefined();
+      expect(Math.hypot((contact?.x ?? 0) - aim.x, (contact?.y ?? 0) - aim.y)).toBeLessThan(
+        1e-9,
+      );
+      expect(distance(aim, ball)).toBeCloseTo(TOUCHING, 12);
+      expect(TOUCHING).toBe(52);
+      expect(REFERENCE_TOUCHING).toBe(TOUCHING);
+      expect(BALL_RADIUS).toBe(18);
+    }
   });
 });
 
@@ -269,63 +507,187 @@ describe('PF-8 the playfield sweep, item D3', () => {
   const { all, excluded } = sweepLayouts();
 
   it('reaches the ball with meaningful speed transfer on every chosen strike direction', () => {
-    // THE SWEEP. Every layout, the real physics forward, the ball struck.
-    // The reached count is pinned against the layout count because a sweep
-    // that never reaches the ball reports no own goals and has tested
-    // nothing; 150 px/s is the minimum launch speed, so the transfer is
-    // meaningful by the game's own definition of a shot.
+    // THE SWEEP, THROUGH planShot ITSELF. Every layout, the real physics
+    // forward, the ball struck, and the reached count pinned against the
+    // layout count because a sweep that never reaches the ball reports no own
+    // goals and has tested nothing.
+    //
+    // THREE READINGS OF "MEANINGFUL SPEED TRANSFER", and the first is the
+    // section's own number. The reference's transfer for each chosen side is
+    // at or above the literal 0.25 exactly; the transfer MEASURED on the
+    // physics, the ball's peak over the striker's speed at the step before
+    // contact, is at or above 0.25 less the fixed step's ANALYTIC worst case,
+    // with the measured minimum pinned separately below; and the
+    // absolute peak is pinned beside what the reference predicts for it,
+    // which is the transfer times the arrival speed the damping leaves after
+    // the leg. PF-8 read this clause as "the peak clears 150 px/s", which was
+    // a reading of the aim it shipped rather than of the section.
     expect(all.length).toBe(96);
     expect(excluded).toBe(3);
     let reached = 0;
+    let strikes = 0;
     let minimumPeak = Infinity;
+    let minimumPredicted = Infinity;
+    let minimumTransfer = Infinity;
     for (const layout of all) {
       const sim = layoutAt(layout.opponent, layout.ball);
-      const { peak } = strikeAndTrack(sim, strikeAngle(layout.opponent, layout.ball), 1);
-      if (peak > 6) reached += 1;
+      const plan = planShot(sim.world, CLAMP_ONLY, createRng('sweep').split(OPPONENT_STREAM));
+      if (plan.defensive) continue;
+      strikes += 1;
+      const reference = clampToCone(
+        layout.opponent,
+        layout.ball,
+        TARGET,
+        MIN_STRIKE_SOLIDITY,
+      );
+      const { peak, arrival } = strikeAndTrack(sim, plan.angle, plan.power);
+      if (peak > STOP_SPEED) reached += 1;
       minimumPeak = Math.min(minimumPeak, peak);
+      const leg = distance(layout.opponent, aimPointFor(layout.ball, reference));
+      minimumPredicted = Math.min(
+        minimumPredicted,
+        reference.solidity * (launchSpeed(1) - DECAY * leg),
+      );
+      expect(arrival, JSON.stringify(layout)).toBeGreaterThan(0);
+      minimumTransfer = Math.min(minimumTransfer, peak / arrival);
+      expect(reference.solidity, JSON.stringify(layout)).toBeGreaterThanOrEqual(0.25 - 1e-9);
+      expect(peak / arrival, JSON.stringify(layout)).toBeGreaterThanOrEqual(
+        0.25 - DISCRETISATION,
+      );
       expect(sim.readout().repairs).toBe(0);
     }
+    expect(strikes).toBe(96);
     expect(reached).toBe(all.length);
-    expect(minimumPeak).toBeGreaterThan(150);
+    // Pinned exactly, so a drift in either direction shows: the measured
+    // envelope of the discretisation cost, and the slowest strike on the grid
+    // against the reference's prediction for that same layout.
+    expect(minimumTransfer).toBeCloseTo(0.149243, 6);
+    expect(minimumPeak).toBeCloseTo(61.0106, 4);
+    expect(minimumPredicted).toBeCloseTo(61.7593, 4);
+    expect(minimumPeak / minimumPredicted).toBeGreaterThan(0.98);
+  });
+
+  it('leaves the ball along minus the chosen side on every layout of the grid', () => {
+    // THE PROPERTY SECTION 8.1 STATES AND THE OLD GATE COULD NOT SEE: "the
+    // ball departs along -side". Measured as the ball's velocity at the first
+    // step it moves, against the REFERENCE clamp's side, over the whole grid,
+    // and against the direction to the target goal on the unclamped subset,
+    // where the ideal side is the chosen one and the departure is the shot.
+    // The bounds are literals: the fixed step's overshoot puts the measured
+    // departure a few degrees off the geometric one, and further at the
+    // glancing end, which is what the 7 allows for. The aim at the ball's own
+    // surface measured 24.6 degrees of mean error against these same layouts.
+    expect(all.length).toBe(96);
+    let free = 0;
+    let clamped = 0;
+    let worstSide = 0;
+    let worstTarget = 0;
+    for (const layout of all) {
+      const reference = clampToCone(
+        layout.opponent,
+        layout.ball,
+        TARGET,
+        MIN_STRIKE_SOLIDITY,
+      );
+      if (reference.clamped) clamped += 1;
+      else free += 1;
+      const sim = layoutAt(layout.opponent, layout.ball);
+      const plan = planShot(sim.world, CLAMP_ONLY, createRng('sweep').split(OPPONENT_STREAM));
+      const { departure } = strikeAndTrack(sim, plan.angle, plan.power);
+      expect(departure, JSON.stringify(layout)).toBeDefined();
+      if (departure === undefined) continue;
+      const offSide = degreesBetween(departure, { x: -reference.x, y: -reference.y });
+      worstSide = Math.max(worstSide, offSide);
+      expect(offSide, JSON.stringify(layout)).toBeLessThan(7);
+      if (!reference.clamped) {
+        const toTarget = {
+          x: (TARGET.x - layout.ball.x) / distance(TARGET, layout.ball),
+          y: (TARGET.y - layout.ball.y) / distance(TARGET, layout.ball),
+        };
+        const offTarget = degreesBetween(departure, toTarget);
+        worstTarget = Math.max(worstTarget, offTarget);
+        expect(offTarget, JSON.stringify(layout)).toBeLessThan(6);
+      }
+    }
+    // The grid must exercise both branches, and the counts are pinned so a
+    // quiet change to the bound cannot empty one of them.
+    expect(clamped).toBe(56);
+    expect(free).toBe(40);
+    expect(worstSide).toBeCloseTo(5.8121, 3);
+    expect(worstTarget).toBeCloseTo(4.4487, 3);
   });
 
   it('holds every chosen side at or above the stated minimum solidity across the grid', () => {
+    // The analytic half, and the routine against the reference: the same side
+    // to twelve places on every layout, and the transfer at or above the
+    // literal 0.25 everywhere.
     expect(all.length).toBe(96);
     let clampedCount = 0;
     for (const layout of all) {
       const choice = chooseStrikeSide(layout.opponent, layout.ball, TARGET);
+      const reference = clampToCone(
+        layout.opponent,
+        layout.ball,
+        TARGET,
+        MIN_STRIKE_SOLIDITY,
+      );
       expect(choice.solidity).toBeGreaterThanOrEqual(0.25 - 1e-9);
+      expect(choice.x, JSON.stringify(layout)).toBeCloseTo(reference.x, 12);
+      expect(choice.y, JSON.stringify(layout)).toBeCloseTo(reference.y, 12);
+      expect(choice.solidity, JSON.stringify(layout)).toBeCloseTo(reference.solidity, 12);
+      expect(choice.clamped, JSON.stringify(layout)).toBe(reference.clamped);
       if (choice.clamped) clampedCount += 1;
     }
     // The grid must exercise the clamp, not only the free ideal side.
-    expect(clampedCount).toBe(52);
+    expect(clampedCount).toBe(56);
   });
 
-  it('the routine strikes reach the ball on the forward layouts and leave it on the declined ones', () => {
-    // Through planShot itself: forward layouts strike and reach; layouts the
-    // routine declines - whose strike would drive the ball away from the
-    // target - leave the ball exactly untouched, which is the discipline the
-    // soak's own-goal bound rests on.
+  it('agrees with itself about where the contact is and what it transfers', () => {
+    // The reference reaches its two answers by two routes: the quadratic for
+    // the first contact of the centre path with the disc, and the closed form
+    // for the transfer. Over the grid the first contact of an aim at the
+    // touching point IS that point, the normal there is minus the side, and
+    // the closed form matches the cosine measured at the contact. A reference
+    // that disagreed with itself would be grading the routine against
+    // arithmetic nobody had checked.
     expect(all.length).toBe(96);
-    let strikes = 0;
-    let reached = 0;
+    for (const layout of all) {
+      const reference = clampToCone(
+        layout.opponent,
+        layout.ball,
+        TARGET,
+        MIN_STRIKE_SOLIDITY,
+      );
+      const aim = aimPointFor(layout.ball, reference);
+      const measured = departureAt(layout.opponent, layout.ball, aim);
+      expect(measured, JSON.stringify(layout)).toBeDefined();
+      if (measured === undefined) continue;
+      // A ten-thousandth of a degree: the quadratic's two roots meet at the
+      // tangent, so the contact position it returns carries the cancellation
+      // error of that meeting, which the closed form does not have.
+      expect(degreesBetween(measured.direction, { x: -reference.x, y: -reference.y })).
+        toBeLessThan(1e-4);
+      expect(measured.transfer, JSON.stringify(layout)).toBeCloseTo(
+        solidityOf(layout.opponent, layout.ball, reference),
+        12,
+      );
+      expect(measured.transfer, JSON.stringify(layout)).toBeCloseTo(reference.solidity, 12);
+    }
+  });
+
+  it('strikes every layout on the grid, because nothing but the roll substitutes the block', () => {
+    // The geometric decline is gone: SPEC section 8 makes the substitution
+    // the profile's own probability, so a profile that never rolls it never
+    // takes it, whatever the layout. Item D4's own case measures the rates.
+    expect(all.length).toBe(96);
     let declined = 0;
     for (const layout of all) {
       const sim = layoutAt(layout.opponent, layout.ball);
       const plan = planShot(sim.world, CLAMP_ONLY, createRng('sweep').split(OPPONENT_STREAM));
-      if (plan.defensive) {
-        declined += 1;
-        const { peak } = strikeAndTrack(sim, plan.angle, plan.power);
-        expect(peak).toBe(0);
-        continue;
-      }
-      strikes += 1;
-      const { peak } = strikeAndTrack(sim, plan.angle, plan.power);
-      if (peak > 6) reached += 1;
+      expect(plan.rolled).toBe(false);
+      if (plan.defensive) declined += 1;
     }
-    expect(strikes).toBe(69);
-    expect(reached).toBe(strikes);
-    expect(declined).toBe(27);
+    expect(declined).toBe(0);
   });
 });
 
@@ -334,12 +696,19 @@ describe('PF-8 the own-goal soak, item D3', () => {
     // A thousand seeded turns over the whole playfield, every difficulty at
     // its stated behaviour, counted by the scoreboard's mouth: a goal in the
     // mouth the striker defends can only be its own doing, because nobody
-    // else is playing. The bound is pinned at two percent of turns. For
-    // scale: the same soak with the clamp removed concedes on roughly a
-    // quarter of the turns, which is the defect this item exists to keep
-    // out; the measured residue below is the class of layout where the
-    // striker stands square behind a ball parked in its own goalmouth, where
-    // every straight launch plays the ball toward the net.
+    // else is playing. The bound is pinned at two percent of turns, where
+    // SPEC section 8.1 asks for a rate that is non-zero but bounded.
+    //
+    // THE RESIDUE IS A GEOMETRIC CLASS, AND IT IS GRADED AS ONE. The ball
+    // leaves along minus the chosen side and every admissible side lies
+    // within arccos(coneBound(gap)) of the approach, so the departures a
+    // layout can produce are a fan of that half-angle about the axis running
+    // from the striker through the ball. Where that fan reaches the mouth the
+    // striker defends, an own goal is geometrically available and no aim
+    // inside the cone removes it; where it does not, one cannot happen. The
+    // fan class is 406 of the thousand turns and concedes 6; the other 594
+    // concede none. The predicate is computed from the REFERENCE's own bound,
+    // so it is a statement about the specification and not about the routine.
     const cases: readonly [string, OpponentProfile, number][] = [
       ['casual', CASUAL, 400],
       ['pro', PRO, 400],
@@ -347,7 +716,9 @@ describe('PF-8 the own-goal soak, item D3', () => {
     ];
     let own = 0;
     let scored = 0;
-    const turns = 1000;
+    let inFan = 0;
+    let ownInFan = 0;
+    let played = 0;
     for (const [name, profile, count] of cases) {
       const root = createRng(`soak-${name}`);
       const spots = root.split('layout');
@@ -369,19 +740,71 @@ describe('PF-8 the own-goal soak, item D3', () => {
         const sim = layoutAt(opponent, ball);
         const plan = planShot(sim.world, profile, shots);
         strikeAndTrack(sim, plan.angle, plan.power);
+        played += 1;
+        const reachesOwnMouth = fanReachesOwnMouth(opponent, ball);
+        if (reachesOwnMouth) inFan += 1;
         const last = sim.scoring.readout().last;
         if (last !== undefined) {
-          if (last.mouth === 'right') own += 1;
-          else scored += 1;
+          if (last.mouth === 'right') {
+            own += 1;
+            if (reachesOwnMouth) ownInFan += 1;
+          } else scored += 1;
         }
       }
     }
-    expect(turns).toBe(1000);
-    expect(own).toBe(12);
+    expect(played).toBe(1000);
+    expect(own).toBe(6);
     expect(own).toBeLessThanOrEqual(20);
+    expect(scored).toBe(15);
     expect(scored).toBeGreaterThanOrEqual(5);
+    // Every own goal came from the class the geometry cannot answer, and the
+    // class is a minority of turns rather than the whole soak.
+    expect(ownInFan).toBe(own);
+    expect(inFan).toBe(406);
   });
 });
+
+/** An angle folded into (-pi, pi], for comparing two bearings. */
+function wrapped(angle: number): number {
+  const folded = ((angle + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+  return folded - Math.PI;
+}
+
+/**
+ * True when the fan of departures the cone admits, of half-angle
+ * arccos(coneBound(gap)) about the axis from the striker through the ball,
+ * reaches the mouth this striker defends: the class of layout where an own
+ * goal is geometrically available whatever side the clamp picks.
+ *
+ * THE CONDITION IS INTERVAL OVERLAP, and it is tested as one rather than
+ * sampled. Two angular intervals overlap exactly when one of them contains an
+ * endpoint of the other, so both readings are taken: a post inside the fan,
+ * and a fan edge inside the mouth's subtense. Sampling the mouth at its posts
+ * and centre misses the second reading outright, which is the case of a
+ * narrow fan lying wholly inside a wide mouth - a striker close behind the
+ * ball, where the cone bound approaches 1 and the half-angle approaches 0.
+ * Both post bearings have a positive x component, because the ball centre
+ * never reaches the goal line it is measured against, so the mouth interval
+ * never wraps and a plain comparison decides it.
+ */
+function fanReachesOwnMouth(striker: Vec2, ball: Vec2): boolean {
+  const gap = distance(striker, ball);
+  if (!(gap >= TOUCHING)) return true;
+  const half = Math.acos(Math.min(1, coneBound(gap, MIN_STRIKE_SOLIDITY)));
+  const axis = Math.atan2(ball.y - striker.y, ball.x - striker.x);
+  const toLow = Math.atan2(GOAL_OPENING_LOW - ball.y, RIGHT_GOAL_LINE - ball.x);
+  const toHigh = Math.atan2(GOAL_OPENING_HIGH - ball.y, RIGHT_GOAL_LINE - ball.x);
+  for (const post of [toLow, toHigh]) {
+    if (Math.abs(wrapped(post - axis)) <= half) return true;
+  }
+  const low = Math.min(toLow, toHigh);
+  const high = Math.max(toLow, toHigh);
+  for (const edge of [axis - half, axis + half]) {
+    const bearing = wrapped(edge);
+    if (bearing >= low && bearing <= high) return true;
+  }
+  return false;
+}
 
 describe('PF-8 the opponent sits on the launch seam', () => {
   it('answers a raised seam with the planned launch and nothing else', () => {
