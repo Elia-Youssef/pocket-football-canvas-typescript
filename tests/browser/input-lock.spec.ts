@@ -1,7 +1,20 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { advance, startMatch, turnText } from './support/game';
+import {
+  A_WHOLE_TEST,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  PLAYER_FILL,
+  SETTLE,
+  advance,
+  centres,
+  dispatchAim,
+  nextFrames,
+  pauseClock,
+  startMatch,
+  turnText,
+} from './support/game';
 
 /**
  * Item C8, method T, evidence `playwright/input-lock`:
@@ -37,37 +50,20 @@ import { advance, startMatch, turnText } from './support/game';
  */
 
 /**
- * The two budgets a state read on a busy machine needs, and both are
- * starvation budgets rather than correctness ones. A test here reads the
- * whole canvas back pixel for pixel and drives real shots to rest, so it is
- * seconds of work on a quiet machine; the mutation harness runs this suite
- * with a build going beside it, and a loaded machine has been measured
- * taking ten times as long to answer a navigation. A gate that reports a
- * defect when the machine is busy is a gate nobody trusts.
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILL COME FROM `support/game.ts`. Every
+ * one of them used to be retyped here, and a SPEC section 18 fill that lives in
+ * two places is a fill this file goes on scanning for after the palette has
+ * moved. `SETTLE` and `A_WHOLE_TEST` there are starvation budgets rather than
+ * correctness ones, for the reason this file most needs them: a test here reads
+ * the whole canvas back and drives real shots to rest, and the mutation harness
+ * runs this suite with a build going beside it.
  */
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
-const LOGICAL_WIDTH = 1280;
-const LOGICAL_HEIGHT = 720;
-
-/** SPEC section 18's player fill, as the bytes it is read back as. */
-const PLAYER_FILL = [0x55, 0x90, 0xce] as const;
 
 interface Box {
   readonly left: number;
   readonly top: number;
   readonly width: number;
   readonly height: number;
-}
-
-interface Attempt {
-  readonly pressedAt: { x: number; y: number };
-  readonly afterDown: string;
-  readonly afterMove: string;
-  readonly afterEnd: string;
-  /** The turn readout on either side of the attempt, read in the same task. */
-  readonly turnBefore: string;
-  readonly turnAfter: string;
 }
 
 async function surfaceBox(page: Page): Promise<Box> {
@@ -88,148 +84,14 @@ function clientOf(box: Box, designX: number, designY: number): { x: number; y: n
   };
 }
 
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let at = 0; at < times; at += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
-}
-
-/** The player circle's centre in design units, from the drawn pixels. */
-async function playerCentre(page: Page, fill: readonly number[]): Promise<{ x: number; y: number }> {
-  return page.evaluate((wanted) => {
-    const canvas = document.querySelector('[data-pf="play-surface"]');
-    if (!(canvas instanceof HTMLCanvasElement)) {
-      throw new Error('the play surface is not in the document');
-    }
-    const context = canvas.getContext('2d');
-    if (context === null) {
-      throw new Error('the play surface has no 2d context');
-    }
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const scaleX = canvas.width / 1280;
-    const scaleY = canvas.height / 720;
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    for (let row = 0; row < canvas.height; row += 1) {
-      for (let column = 0; column < canvas.width; column += 1) {
-        const at = (row * canvas.width + column) * 4;
-        const designX = column / scaleX;
-        if (designX <= 100) {
-          continue;
-        }
-        if (
-          Math.abs(Number(pixels[at]) - Number(wanted[0])) > 6 ||
-          Math.abs(Number(pixels[at + 1]) - Number(wanted[1])) > 6 ||
-          Math.abs(Number(pixels[at + 2]) - Number(wanted[2])) > 6
-        ) {
-          continue;
-        }
-        const designY = 720 - row / scaleY;
-        minX = Math.min(minX, designX);
-        maxX = Math.max(maxX, designX);
-        minY = Math.min(minY, designY);
-        maxY = Math.max(maxY, designY);
-      }
-    }
-    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-  }, fill);
-}
-
 /**
- * A press, a drag and an end, dispatched at the surface with the circle's own
- * coordinates read in the same task. The phase is sampled after each, because
- * a lock that let the press through and tidied up afterwards is not a lock.
+ * THE PIXEL SCAN IS THE SHARED ONE, TWICE OVER. This file used to carry the
+ * same twenty-eight line scan in two places, once to find the circle to press
+ * on and once inside the dispatched attempt, with the design space, the
+ * exclusion band and the tolerance retyped in both. `centres` answers the
+ * first and `dispatchAim` the second, both from `support/game.ts`, so a change
+ * to any of those numbers is one change.
  */
-async function dispatchAim(
-  page: Page,
-  units: number,
-  ending: 'pointerup' | 'pointercancel',
-  fill: readonly number[],
-): Promise<Attempt> {
-  return page.evaluate(
-    (input) => {
-      const canvas = document.querySelector('[data-pf="play-surface"]');
-      if (!(canvas instanceof HTMLCanvasElement)) {
-        throw new Error('the play surface is not in the document');
-      }
-      const context = canvas.getContext('2d');
-      if (context === null) {
-        throw new Error('the play surface has no 2d context');
-      }
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      const scaleX = canvas.width / 1280;
-      const scaleY = canvas.height / 720;
-      let minX = Number.POSITIVE_INFINITY;
-      let maxX = Number.NEGATIVE_INFINITY;
-      let minY = Number.POSITIVE_INFINITY;
-      let maxY = Number.NEGATIVE_INFINITY;
-      for (let row = 0; row < canvas.height; row += 1) {
-        for (let column = 0; column < canvas.width; column += 1) {
-          const at = (row * canvas.width + column) * 4;
-          const designX = column / scaleX;
-          if (designX <= 100) {
-            continue;
-          }
-          if (
-            Math.abs(Number(pixels[at]) - Number(input.fill[0])) > 6 ||
-            Math.abs(Number(pixels[at + 1]) - Number(input.fill[1])) > 6 ||
-            Math.abs(Number(pixels[at + 2]) - Number(input.fill[2])) > 6
-          ) {
-            continue;
-          }
-          const designY = 720 - row / scaleY;
-          minX = Math.min(minX, designX);
-          maxX = Math.max(maxX, designX);
-          minY = Math.min(minY, designY);
-          maxY = Math.max(maxY, designY);
-        }
-      }
-      const readout = document.querySelector('[data-pf="turn"]');
-      if (!(readout instanceof HTMLElement)) {
-        throw new Error('the turn readout is not in the document');
-      }
-      const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-      const rect = canvas.getBoundingClientRect();
-      const clientX = rect.left + (centre.x * rect.width) / 1280;
-      const clientY = rect.top + ((720 - centre.y) * rect.height) / 720;
-      const across = (input.units * rect.width) / 1280;
-      const fire = (type: string, x: number): void => {
-        canvas.dispatchEvent(
-          new PointerEvent(type, {
-            pointerId: 1,
-            clientX: x,
-            clientY,
-            bubbles: true,
-          }),
-        );
-      };
-      const phase = (): string => canvas.dataset['pfAim'] ?? '';
-      const turnBefore = readout.textContent ?? '';
-      fire('pointerdown', clientX);
-      const afterDown = phase();
-      fire('pointermove', clientX + across);
-      const afterMove = phase();
-      fire(input.ending, clientX + across);
-      return {
-        pressedAt: centre,
-        afterDown,
-        afterMove,
-        afterEnd: phase(),
-        turnBefore,
-        turnAfter: readout.textContent ?? '',
-      };
-    },
-    { units, ending, fill },
-  );
-}
 
 /** The same gesture as a real mouse press, for the phases that allow one. */
 async function mouseAim(
@@ -263,6 +125,10 @@ test.describe('PF-5 the input lock, item C8', () => {
     await page.clock.install({ time: 0 });
     await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    // AND STOPPED. An installed clock is not a stopped one: it ticks with real
+    // time and keeps firing frames, which is the whole of the race the comment
+    // above describes as handled and was not.
+    await pauseClock(page);
     await advance(page, 4);
 
     const surface = page.locator('[data-pf="play-surface"]');
@@ -271,7 +137,7 @@ test.describe('PF-5 the input lock, item C8', () => {
     // The positive control, in the turn that allows an aim: the same press
     // begins one, and a release under the minimum cancels it without a shot.
     const box = await surfaceBox(page);
-    const start = await playerCentre(page, PLAYER_FILL);
+    const start = (await centres(page)).player;
     await mouseAim(page, box, start, 20);
     await expect(surface).toHaveAttribute('data-pf-aim', 'below-minimum');
     await page.mouse.up();
@@ -280,6 +146,11 @@ test.describe('PF-5 the input lock, item C8', () => {
     // A real shot, and then the attempt while it is still running.
     await mouseAim(page, box, start, 40);
     await page.mouse.up();
+    // ONE FRAME, because the readout follows the SIMULATION and the simulation
+    // only runs on the frames this test drives. A quarter of a second is far
+    // inside the flight of a shot this size, which the drive below then plays
+    // out one frame at a time.
+    await advance(page, 1);
     await expect(turn).toHaveText('IN PLAY', SETTLE);
     await expect(surface).toHaveCount(1);
 
@@ -302,16 +173,18 @@ test.describe('PF-5 the input lock, item C8', () => {
     // opponent answers its own turn, so that turn lasts SPEC section 8's
     // pre-launch delay and then moves on by itself; the frames are driven by
     // hand to reach it and then stopped, which holds the match in the turn
-    // this test is about however loaded the machine is.
+    // this test is about however loaded the machine is, once the clock is
+    // STOPPED: installed alone, it keeps ticking and keeps firing frames.
     await page.clock.install({ time: 0 });
     await startMatch(page);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
+    await pauseClock(page);
     await advance(page, 4);
 
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
     const box = await surfaceBox(page);
-    const start = await playerCentre(page, PLAYER_FILL);
+    const start = (await centres(page)).player;
 
     await mouseAim(page, box, start, 40);
     await page.mouse.up();
@@ -353,7 +226,7 @@ test.describe('PF-5 the input lock, item C8', () => {
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
     const box = await surfaceBox(page);
-    const start = await playerCentre(page, PLAYER_FILL);
+    const start = (await centres(page)).player;
 
     await mouseAim(page, box, start, 120);
     await expect(surface).toHaveAttribute('data-pf-aim', 'aiming');
@@ -413,6 +286,10 @@ test.describe('PF-5 the input lock, item C8', () => {
     // reason.
     await page.clock.install({ time: 0 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED: the whole minute below is the 260 frames this test drives,
+    // so the whistle lands where the test put it.
+    await pauseClock(page);
+
     const surface = page.locator('[data-pf="play-surface"]');
     const turn = page.locator('[data-pf="turn"]');
 

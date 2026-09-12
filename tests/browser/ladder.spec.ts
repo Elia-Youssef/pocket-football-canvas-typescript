@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
+import { LADDER_TOTAL } from '../../src/core/modes';
 import {
   A_WHOLE_TEST,
   SETTLE,
+  pauseClock,
   playUntil,
   scores,
   startMatch,
@@ -16,11 +18,16 @@ import {
  *   "Ladder plays the six opponents in order, advances on a win, restarts on a
  *    loss, and persists progress across sessions."
  *
- * THE SIX, IN ORDER, ARE SPEC SECTION 10'S OWN TABLE, written out here as
- * literals and read nowhere else in this file. The browser is asked for the
- * rung it is on and the name it shows; the order itself is pinned over the
- * real mode module in tests/unit/modes.test.ts, where all six can be walked
- * without playing six matches.
+ * THE SIX, IN ORDER, ARE SPEC SECTION 10'S OWN TABLE, and every name the
+ * browser is asked for is read out of it. They were literals here that nothing
+ * else in the file read, so the two assertions that quoted them compared a
+ * literal against itself and could not fail; now the running game's readout is
+ * what they are compared against, and the count comes from the module that
+ * owns the order, so a rung removed from that table fails the length check
+ * below and a rung renamed fails the readouts. The table stays written out
+ * rather than imported, because a name taken from the module under test would
+ * agree with the module whatever the module said; what is imported is the
+ * COUNT, which is the half the module and the document must agree on.
  *
  * A RUNG IS DRIVEN TO A REAL RESULT, both ways. The scripted striker in
  * `support/game.ts` attacks the opponent's goal to win a rung and the player's
@@ -41,13 +48,22 @@ import {
 /** SPEC section 10's six, in the order the section lists them. */
 const RUNGS: readonly string[] = ['Sparks', 'Bolt', 'Anchor', 'Vector', 'Cinder', 'Meridian'];
 
+/** The name on a rung, by its one-based position, refusing an unknown one. */
+function rung(position: number): string {
+  const name = RUNGS[position - 1];
+  if (name === undefined) {
+    throw new Error(`SPEC section 10 states no rung ${String(position)}`);
+  }
+  return name;
+}
+
 function at(page: Page, marker: string): ReturnType<Page['locator']> {
   return page.locator(`[data-pf="${marker}"]`);
 }
 
 /** The HUD's ladder readout, which SPEC section 12 gives the ladder alone. */
 function rungLine(name: string, position: number): string {
-  return `${name} - RUNG ${String(position)} OF 6`;
+  return `${name} - RUNG ${String(position)} OF ${String(LADDER_TOTAL)}`;
 }
 
 /** Play the rung out with the striker pointed at one goal or the other. */
@@ -68,7 +84,7 @@ test.describe('PF-9 the ladder, item J3', () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'ladder' });
     // Rung one, by name, in the HUD and in the turn indicator alike.
-    await expect(at(page, 'ladder')).toHaveText(rungLine('Sparks', 1));
+    await expect(at(page, 'ladder')).toHaveText(rungLine(rung(1), 1));
     await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);
     // SPEC section 12: a rung is a First-to-N match, so the centre slot
     // carries the target and the score line rather than a clock.
@@ -80,7 +96,11 @@ test.describe('PF-9 the ladder, item J3', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'ladder' });
-    await expect(at(page, 'ladder')).toHaveText(rungLine('Sparks', 1));
+    // AND STOPPED. Two rungs are played out here, the longest drive in the
+    // suite; an installed clock that keeps ticking plays part of them itself,
+    // and the starvation budget then has to cover both.
+    await pauseClock(page);
+    await expect(at(page, 'ladder')).toHaveText(rungLine(rung(1), 1));
 
     // RUNG ONE, WON. The striker attacks the opponent's goal until the rung's
     // own target is reached, which a First-to-N rung always reaches.
@@ -97,30 +117,37 @@ test.describe('PF-9 the ladder, item J3', () => {
     // still leaves the ladder standing on rung two.
     await at(page, 'change-mode').click();
     await expect(at(page, 'panel-mode')).toBeVisible();
-    await expect(at(page, 'mode-ladder-rung')).toHaveText('Ladder: rung 2 of 6, Bolt');
+    await expect(at(page, 'mode-ladder-rung')).toHaveText(
+      `Ladder: rung 2 of ${String(LADDER_TOTAL)}, ${rung(2)}`,
+    );
     await at(page, 'mode-ladder').check();
     await at(page, 'mode-start').click();
-    await expect(at(page, 'ladder')).toHaveText(rungLine('Bolt', 2));
+    await expect(at(page, 'ladder')).toHaveText(rungLine(rung(2), 2));
     expect(await scores(page)).toEqual({ player: 0, opponent: 0 });
-    // The second rung is the second NAME: the order is SPEC section 10's, not
-    // whichever profile happened to be next in an array.
-    expect(RUNGS[1]).toBe('Bolt');
+    // The second rung is the second NAME, and the readout above is what said
+    // so: the order is SPEC section 10's, not whichever profile happened to be
+    // next in an array. What is left to check here is the other half, that the
+    // module owning that order still holds as many rungs as the section lists,
+    // because a rung dropped from it would move every name up one and the
+    // readouts would go on agreeing with a table that had lost a row.
+    expect(RUNGS).toHaveLength(LADDER_TOTAL);
 
     // RUNG TWO, LOST, by putting the rung's own target past the player's own
     // keeper: SPEC section 3 credits the mouth the ball entered.
     await playRung(page, 'left');
     expect((await scores(page)).opponent).toBe(3);
-    await expect(at(page, 'result')).toHaveText('Bolt wins!');
+    await expect(at(page, 'result')).toHaveText(`${rung(2)} wins!`);
     await expect(at(page, 'restart-ladder')).toHaveAttribute('aria-disabled', 'false');
     await expect(at(page, 'next-opponent')).toHaveAttribute('aria-disabled', 'true');
 
     await at(page, 'restart-ladder').click();
-    await expect(at(page, 'ladder')).toHaveText(rungLine('Sparks', 1));
+    await expect(at(page, 'ladder')).toHaveText(rungLine(rung(1), 1));
     await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);
-    expect(RUNGS[0]).toBe('Sparks');
     // And the menu offers the ladder from the bottom again.
     await at(page, 'pause').click();
     await page.locator('[data-pf="panel-pause"] button', { hasText: 'Quit' }).click();
-    await expect(at(page, 'mode-ladder-rung')).toHaveText('Ladder: rung 1 of 6, Sparks');
+    await expect(at(page, 'mode-ladder-rung')).toHaveText(
+      `Ladder: rung 1 of ${String(LADDER_TOTAL)}, ${rung(1)}`,
+    );
   });
 });

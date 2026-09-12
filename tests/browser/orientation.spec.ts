@@ -1,7 +1,15 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { A_WHOLE_TEST, SETTLE, advance, centres, startMatch, turnText } from './support/game';
+import {
+  A_WHOLE_TEST,
+  SETTLE,
+  advance,
+  centres,
+  pauseClock,
+  startMatch,
+  turnText,
+} from './support/game';
 
 /**
  * Item F5, method T, evidence `playwright/orientation`:
@@ -133,6 +141,11 @@ test.describe('PF-14 an orientation change, item F5', () => {
       await page.clock.install({ time: 0 });
       await startMatch(page, { firstEver: true });
       await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);
+      // AND STOPPED, the moment the match is running rather than after the
+      // shot: an installed clock keeps ticking and keeps firing frames, so
+      // every frame between here and the readings below is one this test
+      // charged. The jump to the pause target fires at most one frame.
+      await pauseClock(page);
 
       // A match with time on it and a world that has been played in, so the
       // comparison below is of something rather than of a kickoff.
@@ -142,11 +155,8 @@ test.describe('PF-14 an orientation change, item F5', () => {
       await at(page, 'aim-launch').click();
       await advance(page, 12);
 
-      // Freeze time for the comparison. The jump to the pause target fires at
-      // most one frame, before anything below is read; from here on nothing
-      // ticks until the test ends, so both readings see the same match.
-      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 2000);
-
+      // Nothing ticks from here to the end of the test, so both readings see
+      // the same match.
       await markSession(page);
       const before = await readout(page);
       const worldBefore = await centres(page);

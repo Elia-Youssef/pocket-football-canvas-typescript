@@ -8,6 +8,7 @@ import {
   centres,
   chooseMode,
   leaveToMenu,
+  pauseClock,
   playUntil,
   scores,
   startMatch,
@@ -98,32 +99,65 @@ test.describe('PF-9 Quick Match, item J1', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED: the clock face below is driven to a reading, and a page
+    // clock that keeps ticking drives it past one.
+    await pauseClock(page);
 
-    // Down to the last seconds, then a full-strength shot, so the whistle
-    // lands with three bodies moving rather than on a still pitch. The clock
-    // is driven to a READING rather than to a frame count, because the page's
-    // own animation frames are not a currency a test can count on.
+    // DOWN TO THE LAST SECOND, then a full-strength shot, so the whistle lands
+    // on a moving pitch rather than a still one. The clock is driven to a
+    // READING rather than to a frame count, because the page's own animation
+    // frames are not a currency a test can count on.
+    //
+    // THE LAST SECOND AND NOT THE LAST THREE, and the difference is what a
+    // stopped clock makes measurable. A launch is spent within about a second
+    // and a half of driven time: launched at 00:03 the whole shot is over
+    // before zero, and this test's own name would be describing a still pitch.
+    // A ceiling face of 00:01 means between three quarters of a second and a
+    // second of match is left, so the launched circle is still travelling when
+    // the whistle goes, and the freeze below is a freeze.
     let face = '';
-    for (let frame = 0; frame < 300 && face !== '00:03'; frame += 1) {
+    for (let frame = 0; frame < 300 && face !== '00:01'; frame += 1) {
       await advance(page, 1);
       face = (await page.locator('[data-pf="clock"]').textContent()) ?? '';
     }
-    expect(face).toBe('00:03');
+    expect(face).toBe('00:01');
     await page.locator('[data-pf="aim-angle"]').fill('0');
     await page.locator('[data-pf="power"]').fill('100');
     await page.locator('[data-pf="aim-launch"]').click();
 
-    // The positive control: the bodies really were moving in the frames
+    // The positive control: the launched circle really was moving in the frames
     // before the whistle, so "nothing moved" afterwards is a statement about
-    // the whistle and not about a scene that was already at rest.
-    await advance(page, 2);
+    // the whistle and not about a scene that was already at rest. Half a second
+    // of driven time, which cannot reach zero from a face of 00:01.
+    await advance(page, 1);
     const moving = await centres(page);
-    await advance(page, 2);
+    await advance(page, 1);
     const later = await centres(page);
-    expect(later.ball.x).not.toBeCloseTo(moving.ball.x, 3);
+    expect(later.player.x).not.toBeCloseTo(moving.player.x, 3);
 
-    await advance(page, 6);
+    // THE WHISTLE IS DRIVEN TO BY STATE, not by a count of frames, and with the
+    // clock stopped it has to be: a ceiling clock reads 00:01 for anything from
+    // three quarters of a second to a second, so a fixed count of driven frames
+    // either stops short of zero or runs past the shot. Every frame here is one
+    // this test charged, so the drive is exact and the bound is a starvation
+    // budget.
+    let toWhistle = 0;
+    let whistled = false;
+    for (; toWhistle < 20 && !whistled; toWhistle += 1) {
+      await advance(page, 1);
+      whistled = (await turnText(page)) === 'FULL TIME';
+    }
+    expect(whistled).toBe(true);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('FULL TIME', SETTLE);
+    // AND THE SHOT WAS STILL IN FLIGHT WHEN ZERO ARRIVED, which is the clause
+    // this test's name carries. It is asserted as the DISTANCE from the frame
+    // the launched circle was measured moving in, not as a difference across
+    // the whistle itself: the frame zero lands on steps nothing, which is what
+    // "stops all movement at zero" means, so the scene at zero IS the scene of
+    // the frame before it and comparing the two proves nothing either way. Half
+    // a second of driven time after a measured motion, against a launch that
+    // takes about a second and a half to spend, is a shot in flight.
+    expect(toWhistle).toBeLessThanOrEqual(2);
     // Every body, frozen, over sixty further frames of driven time: fifteen
     // seconds of would-be match with nothing to show for it.
     const atZero = await centres(page);
@@ -136,6 +170,8 @@ test.describe('PF-9 Quick Match, item J1', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED, so the 260 frames below are the whole of the match.
+    await pauseClock(page);
     // Nobody launches, so the match sits in the player's turn and neither side
     // can score. Sixty seconds is 240 frames; twenty more prove the whistle
     // has gone rather than that the drive ran out.
@@ -151,6 +187,10 @@ test.describe('PF-9 Quick Match, item J1', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 120 });
+    // AND STOPPED. This test read the scene between two driven frames and a
+    // goal reset erased it once; with the clock stopped the only match that
+    // happens between two readings is the match this drive charged.
+    await pauseClock(page);
     // A whole two minute match, played out by the scripted striker.
     const frames = await playUntil(page, 520, 'right', async () => {
       return (await turnText(page)) === 'FULL TIME';

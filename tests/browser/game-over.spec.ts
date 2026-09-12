@@ -6,6 +6,7 @@ import {
   SETTLE,
   advance,
   centres,
+  pauseClock,
   playBothSides,
   playUntil,
   scores,
@@ -83,6 +84,8 @@ test.describe('PF-9 the game over panel, item J6', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'hotseat', target: 3 });
+    // AND STOPPED: the drive below is made of the frames it charges.
+    await pauseClock(page);
     const frames = await playBothSides(page, 2000, 'right');
     expect(frames).toBeLessThan(2000);
     const board = await scores(page);
@@ -99,6 +102,8 @@ test.describe('PF-9 the game over panel, item J6', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'first-to', target: 3 });
+    // AND STOPPED, for the same reason as the win above.
+    await pauseClock(page);
     // The same striker, aimed at the player's own goal: SPEC section 3 credits
     // the mouth the ball entered, so these are the opponent's goals.
     const frames = await playUntil(page, 2000, 'left', async () => {
@@ -119,6 +124,9 @@ test.describe('PF-9 the game over panel, item J6', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED: sixty seconds of match is 240 driven frames and no more,
+    // so "nobody launched" is a fact about a match this test played in full.
+    await pauseClock(page);
     await advance(page, 260);
     await expect(at(page, 'turn')).toHaveText('FULL TIME', SETTLE);
     await expectPanelShape(page, 'Draw!', '0 : 0');
@@ -131,6 +139,9 @@ test.describe('PF-9 the game over panel, item J6', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED: five rounds of shot, whistle and restart, each made of the
+    // frames this loop charges.
+    await pauseClock(page);
     const inventory = async (): Promise<Record<string, number>> =>
       page.evaluate(() => {
         const count: Record<string, number> = {};
@@ -182,6 +193,12 @@ test.describe('PF-9 the game over panel, item J6', () => {
         5,
       );
       await at(page, 'play-again').click();
+      // ONE FRAME, BECAUSE THE CANVAS IS READ BELOW. The panel's own handler
+      // syncs every readout, so the turn and the clock are already right; the
+      // SCENE is drawn on a frame, and under a stopped clock the only frames
+      // are the ones this test charges. A quarter of a second over a pitch at
+      // kickoff moves nothing and leaves the ceiling clock at 01:00.
+      await advance(page, 1);
       // SPEC section 13: the clock, both scores, every position and the turn
       // order, back to a fresh match.
       await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);

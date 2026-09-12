@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { startMatch } from './support/game';
+import { A_WHOLE_TEST, SETTLE, nextFrames, startMatch } from './support/game';
 
 /**
  * Item C12, method T, evidence `playwright/keyboard`:
@@ -32,8 +32,15 @@ import { startMatch } from './support/game';
  * then swept for the one declaration that would remove it.
  */
 
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
+/**
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILLS COME FROM `support/game.ts`.
+ * They were retyped in eight of these specs, SPEC section 18's fills among
+ * them, so a palette change would have left five of them scanning for a colour
+ * the game no longer draws. `SETTLE` and `A_WHOLE_TEST` there are starvation
+ * budgets rather than correctness ones: a test here reads the canvas back and
+ * drives real shots to rest, and the mutation harness runs this suite with a
+ * build going beside it.
+ */
 
 /** QUALITY-BAR section 3's floor for a focus indicator, as a literal. */
 const FOCUS_CONTRAST = 3;
@@ -122,18 +129,6 @@ async function tabTo(page: Page, marker: string): Promise<void> {
     await page.keyboard.press('Tab');
   }
   throw new Error(`Tab never reached ${marker}`);
-}
-
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let index = 0; index < times; index += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
 }
 
 /**

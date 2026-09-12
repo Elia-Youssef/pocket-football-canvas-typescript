@@ -80,6 +80,147 @@ function declaresInset(selector: string, inset: string): boolean {
   return ruleFor(selector).includes(`var(--pf-safe-${inset})`);
 }
 
+/**
+ * Every at-rule prelude in a stylesheet, at every nesting depth, found by
+ * matching braces rather than by a regular expression over the text.
+ *
+ * WHY EVERY AT-RULE AND NOT EVERY MEDIA QUERY. `src/ui/breakpoints.ts` and
+ * `chrome.css` both state the design: the four names and the 400 px sticky
+ * threshold are resolved in code and pinned to the design contract, and the
+ * stylesheet selects on the written answer, so it carries arrangement and not
+ * one threshold. Every construct that could reintroduce a viewport condition
+ * here is an at-rule: `@media`, in the `min-width` spelling and in the range
+ * spelling a matcher for `min-` and `max-` never sees, and in the
+ * `orientation` and `aspect-ratio` forms that carry no length at all;
+ * `@container`, which asks the same question of an ancestor box; and
+ * `@import`, which could pull a whole second stylesheet in. Listing the
+ * preludes rather than pattern-matching them means the gate does not have to
+ * guess which spellings exist: anything at all in this file is reviewable, and
+ * today there is nothing.
+ *
+ * `tests/unit/tokens.test.ts` matches braces the same way over the TOKEN
+ * stylesheet, where the answer is not empty: five blocks, two of them under a
+ * media query, pinned there as a list in the same shape as the list below.
+ */
+function matchingBrace(text: string, open: number): number {
+  let depth = 0;
+  for (let at = open; at < text.length; at += 1) {
+    const here = text[at];
+    if (here === '{') {
+      depth += 1;
+    } else if (here === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return at;
+      }
+    }
+  }
+  throw new Error('the stylesheet has an unclosed block');
+}
+
+/**
+ * The stylesheet with every comment and every string literal blanked out, and
+ * every offset left where it was.
+ *
+ * A BRACE INSIDE A STRING IS NOT A BRACE, and a walk that believed it was could
+ * be blinded by one declaration: `content: "}"` closes a rule the walk is not
+ * in, every following block is read at the wrong depth, and an orientation
+ * query after it is never reported at all - a gate answering "no at-rule here"
+ * for a stylesheet that has one. `{` inside a string is the same defect in the
+ * safe direction: the walk runs off the end and throws. Comments were already
+ * blanked at the call site for the same reason, one class of quoting earlier;
+ * this puts the other one beside it and keeps the offsets so the text reported
+ * is still the source's own.
+ *
+ * The escape is honoured, so a quote inside a string does not end it: `"\""`
+ * is one literal and not two.
+ */
+function maskLiterals(source: string): string {
+  const out = [...source];
+  const blank = (from: number, to: number): void => {
+    for (let at = from; at < to && at < out.length; at += 1) {
+      if (out[at] !== '\n') {
+        out[at] = ' ';
+      }
+    }
+  };
+  let at = 0;
+  while (at < source.length) {
+    const here = source[at];
+    if (here === '/' && source[at + 1] === '*') {
+      const end = source.indexOf('*/', at + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      blank(at, stop);
+      at = stop;
+      continue;
+    }
+    if (here === '"' || here === "'") {
+      let scan = at + 1;
+      while (scan < source.length) {
+        if (source[scan] === '\\') {
+          scan += 2;
+          continue;
+        }
+        if (source[scan] === here) {
+          break;
+        }
+        scan += 1;
+      }
+      // The quotes themselves stay, so what is left still reads as a value.
+      blank(at + 1, Math.min(scan, source.length));
+      at = scan + 1;
+      continue;
+    }
+    at += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * Every at-rule prelude in a stylesheet, at every nesting depth.
+ *
+ * A PRELUDE IS RECOGNISED ONLY WHERE ONE CAN BEGIN: at the start of the sheet,
+ * or after a `;`, a `{` or a `}`. Without that rule an `@` anywhere in a
+ * declaration is an at-rule, and `background: url("@2x.png")` reports one; the
+ * recursion supplies the brace boundaries and the split on `;` below supplies
+ * the rest, so a statement at-rule such as `@import` is found by exactly the
+ * same rule as a block one rather than by a second matcher of its own.
+ */
+function atRulePreludes(source: string): string[] {
+  const masked = maskLiterals(source);
+  const found: string[] = [];
+  const record = (from: number, to: number): void => {
+    const text = source.slice(from, to).trim().replace(/\s+/g, ' ');
+    if (text.startsWith('@')) {
+      found.push(text);
+    }
+  };
+  function walk(from: number, to: number): void {
+    let at = from;
+    while (at < to) {
+      const opened = masked.indexOf('{', at);
+      const bound = opened === -1 || opened >= to ? to : opened;
+      let start = at;
+      for (let scan = at; scan < bound; scan += 1) {
+        if (masked[scan] === ';') {
+          record(start, scan);
+          start = scan + 1;
+        }
+      }
+      if (opened === -1 || opened >= to) {
+        record(start, bound);
+        return;
+      }
+      record(start, opened);
+      const close = matchingBrace(masked, opened);
+      walk(opened + 1, close);
+      at = close + 1;
+    }
+  }
+  walk(0, masked.length);
+  return found;
+}
+
 describe('PF-14 the responsive chrome', () => {
   describe('SPEC section 2.1 s portrait hint', () => {
     it('is a bar with a line of text and one control, and nothing else', () => {
@@ -125,6 +266,29 @@ describe('PF-14 the responsive chrome', () => {
         hint.setDismissed(false);
         expect(hint.isDismissed()).toBe(false);
         expect(dismissals).toBe(1);
+      } finally {
+        installed.restore();
+      }
+    });
+
+    it('reads a hint the browser could reveal as one nobody put away', () => {
+      // THE MODULE STATES THIS AS A DECISION and nothing checked it: the
+      // dismissal is compared against `true` rather than returned, because the
+      // platform type admits `until-found` beside the boolean, and a hint the
+      // browser can reveal on a find is not a hint the player put away. The
+      // value is set the way a platform sets it, which the fake document holds
+      // as written, and the two answers either side of it are the control.
+      const installed = installFakeDocument();
+      try {
+        const hint = createPortraitHint({ onDismiss: () => undefined });
+        const root = hint.root as unknown as { hidden: boolean | string };
+        expect(hint.isDismissed()).toBe(false);
+        root.hidden = true;
+        expect(hint.isDismissed()).toBe(true);
+        root.hidden = 'until-found';
+        expect(hint.isDismissed()).toBe(false);
+        root.hidden = false;
+        expect(hint.isDismissed()).toBe(false);
       } finally {
         installed.restore();
       }
@@ -272,17 +436,99 @@ describe('PF-14 the responsive chrome', () => {
   });
 
   describe('the stylesheet carries the arrangement and no thresholds', () => {
-    it('declares no width or height media query at all', () => {
+    it('declares no at-rule at all, so no viewport condition can live here', () => {
       // The breakpoints are resolved in ui/breakpoints.ts and pinned to the
-      // design contract; a media query here would carry the same numbers
-      // where nothing can read them back.
-      expect(CSS).not.toMatch(/@media[^{]*\b(?:min|max)-(?:width|height)\b/);
-      // The control, so a matcher that has stopped matching cannot report a
-      // clean stylesheet forever.
-      expect('@media (max-width: 767px) { .a { color: red; } }').toMatch(
-        /@media[^{]*\b(?:min|max)-(?:width|height)\b/,
-      );
+      // design contract; a query here would carry the same answer where
+      // nothing can read it back. The list is the whole of the gate: an
+      // at-rule that arrives in a spelling nobody predicted is still an
+      // at-rule, and this file is entitled to have none.
+      expect(atRulePreludes(CSS)).toEqual([]);
       expect(CSS.length).toBeGreaterThan(0);
+    });
+
+    it('sees every spelling a viewport condition can arrive in', () => {
+      // THE CONTROLS ARE THE GATE. Without them a parser that had stopped
+      // finding at-rules would report a clean stylesheet forever, which is the
+      // same output as a clean stylesheet. Three of the five below passed the
+      // matcher this test used to carry, which looked for `min-` or `max-`
+      // followed by `width` or `height` and could see neither an orientation
+      // query, nor an aspect ratio, nor a container query; and the range
+      // spelling `width >= 768px` has been a supported syntax since the Safari
+      // version this project's browser matrix floors at.
+      const controls: ReadonlyArray<readonly [string, string]> = [
+        ['@media (max-width: 767px) { .a { color: red; } }', '@media (max-width: 767px)'],
+        ['@media (orientation: portrait) { .a { gap: 0; } }', '@media (orientation: portrait)'],
+        [
+          '@media (min-aspect-ratio: 1/1) { .a { display: none; } }',
+          '@media (min-aspect-ratio: 1/1)',
+        ],
+        ['@media (width >= 768px) { .a { gap: 0; } }', '@media (width >= 768px)'],
+        ['@container (min-width: 700px) { .a { gap: 0; } }', '@container (min-width: 700px)'],
+      ];
+      expect(controls).toHaveLength(5);
+      for (const [text, prelude] of controls) {
+        expect(atRulePreludes(text), text).toEqual([prelude]);
+      }
+      // A block-less at-rule counts too: an import is a whole second
+      // stylesheet, and the walk has to reach one that carries no braces.
+      expect(atRulePreludes("@import url('other.css');\n.a { color: red; }")).toEqual([
+        "@import url('other.css')",
+      ]);
+      // A nested one is found at its own depth, so wrapping a query in a
+      // supports test does not hide it.
+      const nested =
+        '@supports (display: grid) { @media (orientation: portrait) { .a { gap: 0; } } }';
+      expect(atRulePreludes(nested)).toEqual([
+        '@supports (display: grid)',
+        '@media (orientation: portrait)',
+      ]);
+      // And the negative control: an ordinary rule is not an at-rule.
+      expect(atRulePreludes('.pf-hud { gap: var(--space-2); }')).toEqual([]);
+    });
+
+    it('is not blinded by a brace inside a string, in any quoting', () => {
+      // THE ONE EDIT THAT COULD HIDE EVERY LATER AT-RULE. A closing brace in a
+      // string closes a rule the walk is not in, so everything after it is read
+      // at the wrong depth and a query beyond it is never reported at all: a
+      // gate answering "no at-rule here" for a stylesheet that has one. Each
+      // quoting style is its own control, because a matcher that knew only one
+      // of them would still be blind to the other.
+      const guarded = (content: string): string =>
+        `.pf-brace-guard::before { content: ${content}; }\n` +
+        '@media (orientation: portrait) { .a { gap: 0; } }';
+      const quotings: readonly string[] = [
+        '"}"',
+        "'}'",
+        '"\\"}"',
+        "'\\'}'",
+        '"{"',
+        '"};{"',
+      ];
+      expect(quotings).toHaveLength(6);
+      for (const content of quotings) {
+        expect(atRulePreludes(guarded(content)), content).toEqual([
+          '@media (orientation: portrait)',
+        ]);
+      }
+      // A semicolon in a string is not the end of a declaration either, so the
+      // text after it is not a place a prelude can begin.
+      expect(atRulePreludes('.a { content: ";@media (orientation: portrait)"; }')).toEqual([]);
+    });
+
+    it('reports a prelude only where a prelude can begin', () => {
+      // THE OTHER DIRECTION, and it is the safe one: an `@` in the middle of a
+      // declaration or a selector is not an at-rule, and a gate that reported
+      // one would be a gate a reviewer learns to ignore. A prelude begins at
+      // the start of the sheet or after a `;`, a `{` or a `}`, and the walk
+      // supplies the braces while the split on `;` supplies the rest.
+      expect(atRulePreludes('.a { background: url("@2x.png"); }')).toEqual([]);
+      expect(atRulePreludes('[data-x=";@media"] { gap: 0; }')).toEqual([]);
+      expect(atRulePreludes('.a { font-family: "@font"; color: red; }')).toEqual([]);
+      // And the positive control beside them, so the narrowing did not simply
+      // stop the walk reporting: the same sheet with a real query in it.
+      expect(
+        atRulePreludes('.a { background: url("@2x.png"); }\n@media print { .a { gap: 0; } }'),
+      ).toEqual(['@media print']);
     });
 
     it('selects on the names the composition root writes, and only those', () => {

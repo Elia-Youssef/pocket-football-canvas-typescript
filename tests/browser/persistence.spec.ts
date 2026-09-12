@@ -9,6 +9,7 @@ import {
   chooseMode,
   launchAim,
   openGame,
+  pauseClock,
   playUntil,
   scores,
   strikeAim,
@@ -165,6 +166,12 @@ test.describe('PF-10 persistence across a mid-match reload, item I5', () => {
       });
       await at(page, 'mode-start').click();
       await expect(at(page, 'turn')).not.toHaveText('MENU', SETTLE);
+      // AND STOPPED, now a match is running. A rung and a goal are driven
+      // below and the document is read between them, so the frames have to be
+      // this test's: an installed clock that keeps ticking can carry a match
+      // past the point a reading was taken for. The stop outlives both the
+      // later starts and the reload.
+      await pauseClock(page);
       await chooseDarkThemeAndQuit(page);
 
       // THE LADDER RUNG, WON FOR REAL. The scripted striker attacks the

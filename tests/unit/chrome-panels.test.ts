@@ -2,11 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ScoringReadout } from '../../src/core/goals';
 import type { MatchReadout } from '../../src/core/match';
+import { formatNumber } from '../../src/ui/components/clock';
 import { createGameOverPanel, resultText } from '../../src/ui/components/game-over-panel';
 import { createHowToPanel } from '../../src/ui/components/how-to-panel';
+import { createModePanel } from '../../src/ui/components/mode-panel';
+import type { Panel } from '../../src/ui/components/panel';
 import { createPausePanel } from '../../src/ui/components/pause-panel';
 import { createSettingsPanel } from '../../src/ui/components/settings-panel';
-import { censusControls, findAllByTag, findByMarker, installFakeDocument } from './support/chrome-dom';
+import {
+  censusControls,
+  findAllByTag,
+  findByMarker,
+  installFakeDocument,
+  isFocusable,
+} from './support/chrome-dom';
 import type { FakeElement } from './support/chrome-dom';
 
 /**
@@ -132,25 +141,90 @@ describe('PF-13 the panels', () => {
     }
   });
 
-  it('opens with focus on the first control and closes with focus restored', () => {
+  it('opens with focus on the first control it offers, on every panel', () => {
+    // THE FIRST CONTROL, NOT THE FIRST BUTTON, and the difference is the whole
+    // of this test. QUALITY-BAR section 3 says an overlay takes focus when it
+    // opens; the assertion here used to open the PAUSE panel, whose controls
+    // are all buttons, and then look up the first BUTTON in the tree, so it
+    // proved "on the first button, on the one panel where those coincide".
+    // Two panels open on an `<input>` - the mode menu, which is the first
+    // thing a player sees, and settings, whose first button is Reset all data
+    // - and with the input arm dropped from the panel frame's own focus rule
+    // both of them opened on a button further down while every test stayed
+    // green. So every panel is opened here, and the element focus lands on is
+    // compared against the first entry of `controls()` a PLATFORM would put in
+    // the tab order, decided by the census helper's own reading of that rather
+    // than by the frame's.
     const installed = installFakeDocument();
     try {
-      const panel = createPausePanel({
-        onResume: () => undefined,
-        onOpenSettings: () => undefined,
-        onOpenHowToPlay: () => undefined,
-        onQuit: () => undefined,
-        onEscape: () => undefined,
-      });
-      const root = panel.root as unknown as FakeElement;
-      const opener = installed.document.createElement('button');
-      panel.show(opener as unknown as HTMLElement);
-      expect(root.hidden).toBe(false);
-      const first = findAllByTag(root, 'BUTTON')[0];
-      expect(installed.document.activeElement).toBe(first);
-      panel.hide();
-      expect(root.hidden).toBe(true);
-      expect(installed.document.activeElement).toBe(opener);
+      const panels: ReadonlyArray<readonly [string, Panel]> = [
+        [
+          'pause',
+          createPausePanel({
+            onResume: () => undefined,
+            onOpenSettings: () => undefined,
+            onOpenHowToPlay: () => undefined,
+            onQuit: () => undefined,
+            onEscape: () => undefined,
+          }),
+        ],
+        [
+          'settings',
+          createSettingsPanel({
+            onThemeChange: () => undefined,
+            onSurfaceScaleChange: () => undefined,
+            onReset: () => undefined,
+            onClose: () => undefined,
+            onEscape: () => undefined,
+          }),
+        ],
+        [
+          'how to play',
+          createHowToPanel({ onClose: () => undefined, onEscape: () => undefined }),
+        ],
+        ['game over', createGameOverPanel({ onPlayAgain: () => undefined })],
+        [
+          'mode',
+          createModePanel({
+            initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
+            guideOn: true,
+            onStart: () => undefined,
+            onHowToPlay: () => undefined,
+          }),
+        ],
+      ];
+      const opensOnAnInput: string[] = [];
+      for (const [name, panel] of panels) {
+        const root = panel.root as unknown as FakeElement;
+        const controls = panel.controls() as unknown as readonly FakeElement[];
+        const first = controls.find((control) => isFocusable(control));
+        expect(first, name).toBeDefined();
+        const opener = installed.document.createElement('button');
+        panel.show(opener as unknown as HTMLElement);
+        expect(root.hidden, name).toBe(false);
+        expect(installed.document.activeElement, name).toBe(first);
+        panel.hide();
+        expect(root.hidden, name).toBe(true);
+        expect(installed.document.activeElement, name).toBe(opener);
+        if (first?.tagName === 'INPUT') {
+          opensOnAnInput.push(name);
+        }
+      }
+      // NON-VACUITY. Two of the five really do open on an input, so the input
+      // arm of the frame's focus rule is exercised here rather than merely
+      // agreed with, and on both of them the first button in the tree is a
+      // different element from the one focus is asserted on.
+      expect(opensOnAnInput).toEqual(['settings', 'mode']);
+      for (const [name, panel] of panels) {
+        if (!opensOnAnInput.includes(name)) {
+          continue;
+        }
+        const root = panel.root as unknown as FakeElement;
+        const controls = panel.controls() as unknown as readonly FakeElement[];
+        expect(findAllByTag(root, 'BUTTON')[0], name).not.toBe(
+          controls.find((control) => isFocusable(control)),
+        );
+      }
     } finally {
       installed.restore();
     }
@@ -318,6 +392,32 @@ describe('PF-13 the panels', () => {
     expect(resultText(3, 1, 'Sparks')).toBe('You win!');
     expect(resultText(1, 3, 'Sparks')).toBe('Sparks wins!');
     expect(resultText(2, 2, 'Sparks')).toBe('Draw!');
+  });
+
+  it('formats every readout the panels show without a group separator', () => {
+    // THE PANELS' SHARED NUMBER FORMAT, witnessed here because every readout
+    // they show goes through it: the mode menu's ladder rung and the game-over
+    // score line both format through `clock.ts`, and its own docstring states
+    // the choice as a decision - "Grouping is off: several locales group with
+    // U+202F rather than a plain space, and an MM:SS pair has no digits that
+    // could ever need a separator" - which nothing asserted. It is unreachable
+    // today because every value handed to it is a score, a duration or a rung,
+    // all below a thousand; a pin nothing checks is a pin that will be wrong
+    // the first time the input widens, so it is checked at a value that would
+    // group and in a locale that groups with the character the docstring names.
+    expect(formatNumber(1234, ['en-US'])).toBe('1234');
+    expect(formatNumber(1234, ['fr-FR'])).toBe('1234');
+    expect(formatNumber(1234567, ['en-US'])).toBe('1234567');
+    // The control: those locales really do group, so the assertions above are
+    // about the option and not about a platform that never separates anything.
+    expect(new Intl.NumberFormat(['en-US'], { useGrouping: true }).format(1234)).toBe('1,234');
+    expect(
+      new Intl.NumberFormat(['fr-FR'], { useGrouping: true }).format(1234).includes('1'),
+    ).toBe(true);
+    expect(new Intl.NumberFormat(['fr-FR'], { useGrouping: true }).format(1234)).not.toBe('1234');
+    // And the values the panels actually pass are unaffected either way, which
+    // is why this was invisible.
+    expect(formatNumber(6, ['fr-FR'])).toBe('6');
   });
 
   it('carries each panel heading as real text', () => {

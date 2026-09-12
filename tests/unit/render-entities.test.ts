@@ -50,21 +50,42 @@ describe('PF-11 the three bodies', () => {
     }
   });
 
-  it('takes every identity colour from the palette of the variant', () => {
+  it('gives every drawn shape its own identity colour, in draw order', () => {
+    // ORDERED, NOT A SET, and that is the whole of this assertion. A set loses
+    // both multiplicity and the pairing between a shape and the colour it was
+    // drawn in, and `glyphOnOpponent` and `line` are the same string, so a
+    // marker painted in the circle's own fill and a glyph painted in the
+    // boundary colour both produce exactly the six-element set a set assertion
+    // expects. SPEC section 4 gives each circle a fill, a facing marker and a
+    // glyph and QUALITY-BAR section 4 forbids identity by colour alone, so
+    // which object took which colour is the property, not which colours were
+    // used. The eight are the eight assignments the pass makes, in order.
     for (const variant of ['floodlit', 'daylight'] as const) {
       const palette = PLAY_SURFACE[variant];
       const recorder = new CanvasRecorder();
       drawEntities(recorder.context, palette, createWorld());
-      expect(new Set(recorder.values('fillStyle'))).toEqual(
-        new Set([
-          palette.teamPlayer,
-          palette.glyphOnPlayer,
-          palette.teamOpponent,
-          palette.glyphOnOpponent,
-          palette.ballBody,
-          palette.ballPanel,
-        ]),
-      );
+      expect(recorder.values('fillStyle'), variant).toEqual([
+        // The player circle: its fill, then its marker and its glyph, both in
+        // the colour SPEC section 18 measures AGAINST that fill.
+        palette.teamPlayer,
+        palette.glyphOnPlayer,
+        palette.glyphOnPlayer,
+        // The opponent circle, the same three.
+        palette.teamOpponent,
+        palette.glyphOnOpponent,
+        palette.glyphOnOpponent,
+        // The ball: its body, then the panel pattern clipped inside it.
+        palette.ballBody,
+        palette.ballPanel,
+      ]);
+      // And the two colours the swap would confuse really are different, so
+      // the ordered list above is telling the two apart rather than agreeing
+      // with itself: the player's glyph colour is not its fill, and the
+      // opponent's glyph colour IS the boundary colour, which is why the
+      // player's slot is the one that catches a glyph drawn in the line.
+      expect(palette.glyphOnPlayer, variant).not.toBe(palette.teamPlayer);
+      expect(palette.glyphOnPlayer, variant).not.toBe(palette.line);
+      expect(palette.glyphOnOpponent, variant).toBe(palette.line);
     }
   });
 
@@ -86,6 +107,40 @@ describe('PF-11 the three bodies', () => {
     expect(tips[0]?.[1]).toBe(360);
     expect(tips[1]?.[0]).toBeCloseTo(980 - CIRCLE_RADIUS * 0.95, 9);
     expect(tips[1]?.[1]).toBe(360);
+  });
+
+  it('opens the wedge at its base, so the marker is a shape and not a line', () => {
+    // THE TIP IS NOT THE WEDGE. A marker pinned by its tip alone is still a
+    // marker when its two base points collapse onto the midline: the path is
+    // then three collinear points, the fill covers nothing, and SPEC section
+    // 4's second identity carrier has silently gone. So the base is pinned
+    // too, by the coordinates it actually has.
+    //
+    // The two numbers are the player's wedge at kickoff, from (300, 360) with
+    // the circle facing the ball: the base sits at 0.45 radii out along the
+    // facing turned by a fifth of a half turn either way, which puts both base
+    // points at x 312.37796 and y 368.99311 and 351.00689. They are written as
+    // measurements rather than rebuilt from the module's own trigonometry,
+    // because an expected value computed the way the code computes it agrees
+    // with the code whatever the code does.
+    const world = createWorld();
+    const recorder = new CanvasRecorder();
+    drawEntities(recorder.context, PLAY_SURFACE.floodlit, world);
+    const bases = recorder.calls('lineTo').map((op) => op.args);
+    expect(bases[0]?.[0]).toBeCloseTo(312.377960, 6);
+    expect(bases[0]?.[1]).toBeCloseTo(368.993114, 6);
+    expect(bases[1]?.[0]).toBeCloseTo(312.377960, 6);
+    expect(bases[1]?.[1]).toBeCloseTo(351.006886, 6);
+    // The chord across the base, which is what a collapsed spread takes to
+    // zero, against a tip that sits 32.3 units out on the same midline.
+    const chord = Math.abs(Number(bases[0]?.[1]) - Number(bases[1]?.[1]));
+    expect(chord).toBeCloseTo(17.986229, 6);
+    // And the opponent's, facing the other way, so the shape is the body's
+    // and not a constant the player happens to produce.
+    expect(bases[2]?.[0]).toBeCloseTo(967.622040, 6);
+    expect(bases[2]?.[1]).toBeCloseTo(351.006886, 6);
+    expect(bases[3]?.[0]).toBeCloseTo(967.622040, 6);
+    expect(bases[3]?.[1]).toBeCloseTo(368.993114, 6);
   });
 
   it('redraws the marker when the facing is overridden', () => {

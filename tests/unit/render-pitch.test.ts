@@ -178,7 +178,14 @@ describe('PF-11 the pitch, pass by pass', () => {
     ]);
   });
 
-  it('draws both variants with exactly the palette of that variant', () => {
+  it('draws both variants with exactly the palette of that variant, in order', () => {
+    // ORDERED BY FIRST USE, NOT A SET. A set says which colours were used and
+    // nothing about which pass used them, so a rail painted in the boundary
+    // colour, or markings in the rail's, produce the same six-element set. The
+    // sequence below is the order the static passes first reach for a colour,
+    // which is a fact about the drawing rather than about its palette, and the
+    // stripe alternation itself is frozen by the census in the first test
+    // rather than restated here as a loop this assertion could agree with.
     for (const variant of VARIANTS) {
       const palette = PLAY_SURFACE[variant];
       const recorder = new CanvasRecorder();
@@ -187,16 +194,15 @@ describe('PF-11 the pitch, pass by pass', () => {
         ...recorder.values('fillStyle'),
         ...recorder.values('strokeStyle'),
       ].filter((value): value is string => typeof value === 'string');
-      expect(new Set(strings)).toEqual(
-        new Set([
-          palette.stripeA,
-          palette.stripeB,
-          palette.line,
-          palette.rail,
-          palette.teamPlayer,
-          palette.teamOpponent,
-        ]),
-      );
+      const firstUse = strings.filter((value, at) => strings.indexOf(value) === at);
+      expect(firstUse, variant).toEqual([
+        palette.stripeA,
+        palette.stripeB,
+        palette.line,
+        palette.rail,
+        palette.teamPlayer,
+        palette.teamOpponent,
+      ]);
     }
   });
 
@@ -222,6 +228,46 @@ describe('PF-11 the pitch, pass by pass', () => {
     expect(layerRecorder.ops[1]?.name).toBe('fillStyle');
     expect(layerRecorder.ops[2]?.name).toBe('fillRect');
     expect(layerRecorder.ops.at(-1)?.name).toBe('strokeRect');
+
+    // ALL FIVE PASSES, IN THE ORDER THEY RUN. Pinning the first three ops and
+    // the name of the last leaves the middle of the layer unpinned: moving the
+    // vignette from second to fourth leaves op 0 a setTransform, op 1 a fill
+    // colour, op 2 a fillRect and the last op a strokeRect, all unchanged, and
+    // the module's own guarantee at its head ("drawn under the markings and
+    // the rail, so nothing that carries a contrast guarantee is tinted by it")
+    // silently stops holding: the audit measured the rail falling from 3.09 to
+    // 2.44 floodlit and 2.14 daylight at the corners with the vignette last.
+    // Each pass is found by an op only it makes, and the ORDER of those is the
+    // assertion.
+    const witness = (pass: string, at: number): { pass: string; at: number } => {
+      expect(at, pass).toBeGreaterThan(0);
+      return { pass, at };
+    };
+    const rail = PLAY_SURFACE.floodlit.rail;
+    const railAt = layerRecorder.ops.findIndex(
+      (op) => op.kind === 'set' && op.name === 'fillStyle' && op.args[0] === rail,
+    );
+    const found = [
+      witness('stripes', layerRecorder.indexOf('call', 'fillRect')),
+      witness('vignette', layerRecorder.indexOf('call', 'createRadialGradient')),
+      witness('markings', layerRecorder.indexOf('call', 'arc')),
+      witness('walls', railAt),
+      witness('goal frames', layerRecorder.indexOf('call', 'strokeRect')),
+    ];
+    expect([...found].sort((one, other) => one.at - other.at).map((entry) => entry.pass)).toEqual([
+      'stripes',
+      'vignette',
+      'markings',
+      'walls',
+      'goal frames',
+    ]);
+    // And the vignette is wholly behind the markings: its alpha is restored to
+    // 1 before the first stroke the layer makes, so nothing carrying a
+    // contrast guarantee is drawn under it.
+    expect(layerRecorder.values('globalAlpha').slice(0, 2)).toEqual([0.35, 1]);
+    expect(layerRecorder.indexOf('set', 'globalAlpha')).toBeLessThan(
+      layerRecorder.indexOf('call', 'stroke'),
+    );
   });
 
   it('knows when a layer is stale, in the only three ways it can be', () => {

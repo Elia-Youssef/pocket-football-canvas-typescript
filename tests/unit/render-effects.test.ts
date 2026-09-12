@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -80,9 +81,81 @@ import { asCanvas, CanvasRecorder, fakeCanvas } from './support/canvas-recorder'
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const EFFECTS_SOURCE = path.join(PROJECT_ROOT, 'src', 'render', 'effects.ts');
+const RENDER_ROOT = path.join(PROJECT_ROOT, 'src', 'render');
 
-/** The platform generator SPEC section 6 bans, in the shapes it can be spelt. */
-const PLATFORM_GENERATOR = /Math\s*\.\s*random/;
+/**
+ * The platform generator SPEC section 6 bans, in the shapes it can be spelt.
+ *
+ * THE BRACKET FORM IS A CALL LIKE ANY OTHER, and the M3 lint rule refuses it by
+ * name inside `core/`: a computed key is a route to the same function, so
+ * `Math["random"]()` planted in a render module passed a scan that knew only
+ * the dotted spelling. `globalThis.Math.random()` needs no branch of its own,
+ * because the dotted spelling is inside it. All three quotings of the key are
+ * matched, and the boundary after the name keeps `Math.randomise` out.
+ *
+ * TWO ROUTES ARE DELIBERATELY NOT MATCHED, with their reason: an ALIAS
+ * (`const M = Math`) and a COMPUTED key read from a variable (`Math[key]`).
+ * Neither can be settled by reading text - following an alias is scope
+ * analysis, and a variable key is not in the source at all - which is exactly
+ * why the lint rule that owns `core/` is written over the syntax tree and
+ * reports every capture of the bare object. This scan covers the renderer,
+ * where the discipline is stated rather than lint-enforced, so it matches the
+ * spellings that CALL the function and says so rather than implying more.
+ */
+const PLATFORM_GENERATOR = /Math\s*(?:\.\s*random(?![\w$])|\[\s*(['"`])random\1\s*\])/;
+
+/**
+ * Every module that draws, which is what the scan below covers.
+ *
+ * WHY IT IS THE WHOLE RENDER LAYER AND THE ROOT. Expensive rule 5 and SPEC
+ * section 6 scope the ban to `core/`, and the lint boundary enforces it there;
+ * this file's own subject states the same discipline for the renderer ("the
+ * lint boundary does not police `render/`, so the discipline is stated here
+ * and pinned by a test that scans this file"), and the scan honoured that for
+ * `effects.ts` alone. Planted in `pitch.ts`, `entities.ts`, `input.ts` or the
+ * composition root, a platform draw passed everything. Item `E7`'s visual
+ * baselines compare at a threshold of zero, so a renderer-side platform draw
+ * would first surface as an unexplained baseline flake, which is the hardest
+ * place there is to diagnose it.
+ *
+ * The list is written out AND checked against the directory, so a render
+ * module added tomorrow is a red rather than a file the scan never opens, and
+ * a name removed from the list is a red rather than a hole.
+ */
+/**
+ * Every module under a directory, at any depth, by its path relative to it.
+ * A directory the walk never opens is a file the scan never reads, and a
+ * two-way reconciliation is satisfied by a file that is missing from both
+ * sides, so the recursion is part of the gate rather than a convenience.
+ */
+function modulesUnder(root: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      for (const nested of modulesUnder(path.join(root, entry.name))) {
+        found.push(`${entry.name}/${nested}`);
+      }
+      continue;
+    }
+    if (entry.name.endsWith('.ts')) {
+      found.push(entry.name);
+    }
+  }
+  return found;
+}
+
+const MODULES_THAT_DRAW: readonly string[] = [
+  'src/main.ts',
+  'src/render/arrow.ts',
+  'src/render/capture.ts',
+  'src/render/effects.ts',
+  'src/render/entities.ts',
+  'src/render/guide.ts',
+  'src/render/input.ts',
+  'src/render/pitch.ts',
+  'src/render/surface.ts',
+  'src/render/tokens.ts',
+];
 
 /** Block and line comments replaced by spaces, so a scan reads code only. */
 function withoutComments(text: string): string {
@@ -992,13 +1065,21 @@ describe('PF-12 the motion set, item E5', () => {
   });
 
   describe('every draw comes off a seeded stream', () => {
-    it('names the platform generator nowhere in the module code', () => {
+    it('names the platform generator nowhere in any module that draws', () => {
       // Comments first, because this file's own header discusses the ban and
       // prose that quotes a name is not code that calls it. The scan is of
       // what runs. The lint boundary policies `core/` and not `render/`, so
       // this is the gate that keeps the rule true here.
-      const code = withoutComments(readFileSync(EFFECTS_SOURCE, 'utf8'));
-      expect(code).not.toMatch(PLATFORM_GENERATOR);
+      const offences: string[] = [];
+      for (const relative of MODULES_THAT_DRAW) {
+        const code = withoutComments(readFileSync(path.join(PROJECT_ROOT, relative), 'utf8'));
+        if (PLATFORM_GENERATOR.test(code)) {
+          offences.push(relative);
+        }
+        // A scan over an empty read passes; every module really was opened.
+        expect(code.length, relative).toBeGreaterThan(500);
+      }
+      expect(offences).toEqual([]);
       // The positive controls: the matcher finds one when there is one, and
       // the stripper does not eat code, so a clean answer above is an answer
       // rather than a matcher or a stripper that has stopped.
@@ -1006,8 +1087,73 @@ describe('PF-12 the motion set, item E5', () => {
       expect(withoutComments('/* a */ const roll = Math.random();')).toMatch(PLATFORM_GENERATOR);
       expect(withoutComments('// a\nconst roll = Math.random();')).toMatch(PLATFORM_GENERATOR);
       expect(withoutComments('/* Math.random */ const gap = 1;')).not.toMatch(PLATFORM_GENERATOR);
-      expect(code).toContain('createRng');
-      expect(code.length).toBeGreaterThan(1000);
+      // ONE CONTROL PER SPELLING THE M3 RULE REFUSES. The bracket forms are the
+      // ones a scan for the dotted name cannot see, and they are a call to the
+      // same function.
+      expect('const roll = Math["random"]();').toMatch(PLATFORM_GENERATOR);
+      expect("const roll = Math['random']();").toMatch(PLATFORM_GENERATOR);
+      expect('const roll = Math[`random`]();').toMatch(PLATFORM_GENERATOR);
+      expect('const roll = globalThis.Math.random();').toMatch(PLATFORM_GENERATOR);
+      expect('const roll = Math [ "random" ] ();').toMatch(PLATFORM_GENERATOR);
+      // And the negative controls, so the wider matcher stays off ordinary
+      // code: another member of the same object, a longer name that begins
+      // with this one, a key that is not this one, and a local of the name.
+      expect('const top = Math.max(one, other);').not.toMatch(PLATFORM_GENERATOR);
+      expect('const roll = Math.randomise();').not.toMatch(PLATFORM_GENERATOR);
+      expect('const value = Math["round"](one);').not.toMatch(PLATFORM_GENERATOR);
+      expect('const random = stream.next();').not.toMatch(PLATFORM_GENERATOR);
+      const effects = withoutComments(readFileSync(EFFECTS_SOURCE, 'utf8'));
+      expect(effects).toContain('createRng');
+      expect(effects.length).toBeGreaterThan(1000);
+    });
+
+    it('covers every module that draws, and knows when one arrives', () => {
+      // THE LIST IS THE GATE. A scan whose list has quietly lost a file
+      // reports a clean tree forever, and a render module added tomorrow would
+      // never be opened at all, so the written list is reconciled against the
+      // directory in both directions.
+      //
+      // AND THE WALK IS RECURSIVE, because a walk that opens no directory
+      // satisfies the reconciliation with a file's ABSENCE FROM BOTH SIDES: a
+      // module under `src/render/sub/` would be in neither the written list nor
+      // the walked one, and the two would go on agreeing while it drew off the
+      // platform generator.
+      const walked = modulesUnder(RENDER_ROOT).map((name) => `src/render/${name}`);
+      expect([...MODULES_THAT_DRAW].sort()).toEqual(['src/main.ts', ...walked].sort());
+      expect(MODULES_THAT_DRAW).toHaveLength(10);
+      expect(walked.length).toBeGreaterThan(5);
+      expect(MODULES_THAT_DRAW).toContain('src/main.ts');
+    });
+
+    it('opens a render module in a subdirectory, which is the walk it needs', () => {
+      // THE CONTROL FOR THE RECURSION, over a fixture tree rather than over the
+      // real one: the real one has no subdirectory today, so a walk that had
+      // stopped opening them would answer exactly as it does now. The fixture
+      // is built, walked and removed here, and it holds one module at the top
+      // and one two levels down.
+      const fixture = mkdtempSync(path.join(tmpdir(), 'pf-render-walk-'));
+      try {
+        writeFileSync(path.join(fixture, 'top.ts'), 'export const one = 1;\n', 'utf8');
+        writeFileSync(path.join(fixture, 'notes.md'), 'not a module\n', 'utf8');
+        mkdirSync(path.join(fixture, 'sub', 'deeper'), { recursive: true });
+        writeFileSync(
+          path.join(fixture, 'sub', 'plant.ts'),
+          'export const roll = Math.random();\n',
+          'utf8',
+        );
+        writeFileSync(
+          path.join(fixture, 'sub', 'deeper', 'buried.ts'),
+          'export const two = 2;\n',
+          'utf8',
+        );
+        expect([...modulesUnder(fixture)].sort()).toEqual([
+          'sub/deeper/buried.ts',
+          'sub/plant.ts',
+          'top.ts',
+        ]);
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
     });
 
     it('reproduces exactly from one seed and differs from another', () => {
