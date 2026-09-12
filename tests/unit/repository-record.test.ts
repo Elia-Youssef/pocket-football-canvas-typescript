@@ -442,7 +442,8 @@ describe('PF-0 repository record gate', () => {
       expect(checkSubject('PF-0: Scaffold the project').length).toBeGreaterThan(0);
       expect(checkSubject('PF-0: scaffold the project.').length).toBeGreaterThan(0);
       expect(checkSubject('scaffold the project').length).toBeGreaterThan(0);
-      expect(checkSubject(`PF-0: ${'x'.repeat(80)}`).length).toBeGreaterThan(0);
+      expect(checkSubject(`PF-0: ${'x'.repeat(74)}`)).toEqual([]);
+      expect(checkSubject(`PF-0: ${'x'.repeat(75)}`).length).toBeGreaterThan(0);
       // Built from a code point so this file stays ASCII, which is the same
       // house rule the check is enforcing.
       const nonAscii = `PF-0: caf${String.fromCharCode(0xe9)} au lait`;

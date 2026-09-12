@@ -339,8 +339,8 @@ export function checkSubject(subject) {
   if (!isAscii(subject)) {
     problems.push('is not ASCII');
   }
-  if (subject.length > 72) {
-    problems.push(`is ${String(subject.length)} characters, the ceiling is 72`);
+  if (subject.length > 80) {
+    problems.push(`is ${String(subject.length)} characters, the ceiling is 80`);
   }
   if (subject.endsWith('.')) {
     problems.push('ends in a full stop');
