@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ceilingSeconds, formatClock, formatNumber } from '../../src/ui/components/clock';
 
@@ -85,5 +85,48 @@ describe('PF-13 the match clock face', () => {
     expect(source).toContain('return [...(navigator.languages ?? [])];');
     expect(source).toContain('[...locales, FALLBACK_LOCALE]');
     expect(source).toContain("typeof navigator === 'undefined'");
+  });
+
+  it('caches the two formatter shapes until the resolved locale list changes', () => {
+    // The unique list forces a cache miss regardless of earlier assertions in
+    // this file. Both public formatters then share the two constructed shapes:
+    // plain counts and two clock digits.
+    const original = Intl.NumberFormat;
+    const descriptor = Object.getOwnPropertyDescriptor(Intl, 'NumberFormat');
+    let constructions = 0;
+    function CountingNumberFormat(
+      locales?: Intl.LocalesArgument,
+      options?: Intl.NumberFormatOptions,
+    ): Intl.NumberFormat {
+      constructions += 1;
+      return new original(locales, options);
+    }
+    Object.setPrototypeOf(CountingNumberFormat, original);
+    Object.defineProperty(Intl, 'NumberFormat', {
+      configurable: true,
+      value: CountingNumberFormat,
+    });
+    try {
+      formatNumber(3, ['fr-CA']);
+      formatClock(60, ['fr-CA']);
+      formatNumber(4, ['fr-CA']);
+      expect(constructions).toBe(2);
+    } finally {
+      if (descriptor !== undefined) {
+        Object.defineProperty(Intl, 'NumberFormat', descriptor);
+      }
+    }
+  });
+
+  it('rebuilds formatters when the host language list changes', () => {
+    vi.stubGlobal('navigator', { languages: ['ar-EG'] });
+    try {
+      const arabic = formatNumber(7);
+      vi.stubGlobal('navigator', { languages: ['en-US'] });
+      expect(formatNumber(7)).toBe('7');
+      expect(arabic).not.toBe('7');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

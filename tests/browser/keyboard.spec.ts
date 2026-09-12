@@ -93,6 +93,9 @@ async function activeLabel(page: Page): Promise<string> {
     if (!(active instanceof HTMLElement)) {
       return '';
     }
+    if (active instanceof HTMLInputElement) {
+      return (active.labels?.[0]?.textContent ?? '').trim();
+    }
     return (active.textContent ?? '').trim() || (active.getAttribute('aria-label') ?? '');
   });
 }

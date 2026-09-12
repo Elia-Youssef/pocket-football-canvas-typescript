@@ -31,8 +31,8 @@ export interface Panel {
   readonly root: HTMLElement;
   readonly heading: HTMLElement;
   /** A control or a line of text, appended to the body in call order. */
-  addControl(control: HTMLElement): void;
-  addText(text: string): void;
+  addControl(control: HTMLElement, focusTarget?: HTMLElement): void;
+  addText(text: string): HTMLParagraphElement;
   isOpen(): boolean;
   /** Open the panel and put focus on its first control. */
   show(invoker?: HTMLElement): void;
@@ -87,16 +87,17 @@ export function createPanel(options: PanelOptions): Panel {
     root,
     heading,
 
-    addControl(control: HTMLElement): void {
-      added.push(control);
+    addControl(control: HTMLElement, focusTarget: HTMLElement = control): void {
+      added.push(focusTarget);
       body.appendChild(control);
     },
 
-    addText(text: string): void {
+    addText(text: string): HTMLParagraphElement {
       const line = document.createElement('p');
       line.className = 'pf-panel-text';
       line.textContent = text;
       body.appendChild(line);
+      return line;
     },
 
     isOpen(): boolean {

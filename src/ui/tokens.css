@@ -42,6 +42,9 @@
   --type-xl: 1.728rem;
   --type-2xl: 2.074rem;
 
+  /* SPEC section 1 says no webfont is shipped; this is the portable system stack. */
+  --font-body: system-ui, sans-serif;
+
   /* Section 15 states these as prose, so they are tokenised here and no
      component writes the number: 1.5 for body, 1.25 at --type-lg and above. */
   --leading-body: 1.5;

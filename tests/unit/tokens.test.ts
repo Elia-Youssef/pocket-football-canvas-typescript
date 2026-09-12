@@ -677,7 +677,7 @@ describe('PF-1 design tokens', () => {
     it('parses every table it depends on, at the size it depends on', () => {
       // A parser that has quietly stopped finding rows reports an agreement it
       // never checked, and every check below would pass over an empty loop.
-      expect(SCALES.rows).toHaveLength(37);
+      expect(SCALES.rows).toHaveLength(38);
       expect(CHROME.rows).toHaveLength(4);
       expect(SURFACE.rows).toHaveLength(10);
       expect(ARROW_ACCENT.rows).toHaveLength(1);

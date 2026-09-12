@@ -31,6 +31,13 @@ import {
   rungAt,
 } from '../../core/modes';
 import { formatNumber } from './clock';
+import {
+  createButton,
+  createChoice,
+  setCheckedIfChanged,
+  setRefused,
+  setTextIfChanged,
+} from './control';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
 
@@ -106,26 +113,25 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
     label: string,
     onPick: () => void,
   ): HTMLInputElement {
-    const input = document.createElement('input');
-    input.type = 'radio';
-    input.setAttribute('name', group);
-    input.setAttribute('aria-label', label);
-    input.dataset['pf'] = marker;
-    input.className = 'pf-choice-input';
-    input.addEventListener('change', () => {
-      if (input.getAttribute('aria-disabled') === 'true') {
+    const choice = createChoice({
+      marker,
+      group,
+      label,
+      type: 'radio',
+      onRefused: () => {
         // Refused in place: the platform may still deliver the change, so the
         // group is put back to the value the mode in force actually has.
         refresh();
-        return;
-      }
-      if (input.checked) {
-        onPick();
-        refresh();
-      }
+      },
+      onChange: (input) => {
+        if (input.checked) {
+          onPick();
+          refresh();
+        }
+      },
     });
-    panel.addControl(input);
-    return input;
+    panel.addControl(choice.root, choice.input);
+    return choice.input;
   }
 
   /**
@@ -192,37 +198,37 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
   ];
 
   panel.addText('Aim guide');
-  const guideBox = document.createElement('input');
-  guideBox.type = 'checkbox';
-  guideBox.setAttribute('aria-label', 'Aim guide');
-  guideBox.dataset['pf'] = 'mode-guide';
-  guideBox.className = 'pf-choice-input';
-  guideBox.addEventListener('change', () => {
-    guide = guideBox.checked;
+  const guideChoice = createChoice({
+    marker: 'mode-guide',
+    group: 'pf-mode-guide',
+    label: 'Aim guide',
+    type: 'checkbox',
+    onChange: (input) => {
+      guide = input.checked;
+    },
   });
-  panel.addControl(guideBox);
+  const guideBox = guideChoice.input;
+  panel.addControl(guideChoice.root, guideBox);
 
-  const ladderLine = document.createElement('p');
-  ladderLine.className = 'pf-panel-text';
+  const ladderLine = panel.addText('');
   ladderLine.dataset['pf'] = 'mode-ladder-rung';
-  panel.addControl(ladderLine);
 
-  const start = document.createElement('button');
-  start.type = 'button';
-  start.className = 'pf-choice-button';
-  start.dataset['pf'] = 'mode-start';
-  start.textContent = 'Start';
-  start.addEventListener('click', () => {
-    options.onStart(current(), guide);
+  const start = createButton({
+    marker: 'mode-start',
+    label: 'Start',
+    className: 'pf-choice-button',
+    onActivate: () => {
+      options.onStart(current(), guide);
+    },
   });
   panel.addControl(start);
 
-  const howTo = document.createElement('button');
-  howTo.type = 'button';
-  howTo.className = 'pf-choice-button';
-  howTo.dataset['pf'] = 'mode-how-to';
-  howTo.textContent = 'How to play';
-  howTo.addEventListener('click', options.onHowToPlay);
+  const howTo = createButton({
+    marker: 'mode-how-to',
+    label: 'How to play',
+    className: 'pf-choice-button',
+    onActivate: options.onHowToPlay,
+  });
   panel.addControl(howTo);
 
   function current(): ModeChoice {
@@ -246,27 +252,28 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
    */
   function refresh(): void {
     for (const [value, input] of modes) {
-      input.checked = value === kind;
+      setCheckedIfChanged(input, value === kind);
     }
     for (const [value, input] of durations) {
-      input.checked = value === duration;
+      setCheckedIfChanged(input, value === duration);
     }
     for (const [value, input] of targets) {
-      input.checked = value === target;
+      setCheckedIfChanged(input, value === target);
     }
     for (const [value, input] of difficulties) {
-      input.checked = value === difficulty;
+      setCheckedIfChanged(input, value === difficulty);
     }
     for (const group of groups) {
       const applies = group.applies.includes(kind);
       for (const input of group.inputs()) {
-        input.setAttribute('aria-disabled', applies ? 'false' : 'true');
+        setRefused(input, !applies);
       }
     }
-    guideBox.checked = guide;
-    ladderLine.textContent = `Ladder: rung ${formatNumber(rung)} of ${formatNumber(
-      LADDER_TOTAL,
-    )}, ${rungAt(rung).name}`;
+    setCheckedIfChanged(guideBox, guide);
+    setTextIfChanged(
+      ladderLine,
+      `Ladder: rung ${formatNumber(rung)} of ${formatNumber(LADDER_TOTAL)}, ${rungAt(rung).name}`,
+    );
   }
 
   refresh();

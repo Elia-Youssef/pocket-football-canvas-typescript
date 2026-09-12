@@ -276,7 +276,10 @@ test.describe('PF-6 input parity and the no-drag path, item C11', () => {
           marker,
           tag: element.tagName,
           type: element.getAttribute('type') ?? '',
-          name: element.getAttribute('aria-label') ?? element.textContent ?? '',
+          name:
+            element instanceof HTMLInputElement
+              ? element.labels?.[0]?.textContent ?? ''
+              : element.textContent ?? '',
           display: style.display,
           visibility: style.visibility,
           opacity: style.opacity,

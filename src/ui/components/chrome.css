@@ -45,8 +45,14 @@ body {
   margin: 0;
   background: var(--pf-ground);
   color: var(--pf-text);
+  font-family: var(--font-body);
   font-size: var(--type-base);
   line-height: var(--leading-body);
+}
+
+button,
+input {
+  font-family: var(--font-body);
 }
 
 /*
@@ -182,8 +188,7 @@ body {
  * component would read as two different states of the same control.
  */
 .pf-hud .pf-pause[aria-disabled='true'],
-.pf-panel .pf-choice-button[aria-disabled='true'],
-.pf-panel .pf-choice-input[aria-disabled='true'] {
+.pf-panel .pf-choice-button[aria-disabled='true'] {
   color: var(--pf-text-muted);
   border-style: dashed;
 }
@@ -255,6 +260,31 @@ body {
   inline-size: var(--target-min);
   block-size: var(--target-min);
   margin: 0;
+  accent-color: var(--pf-accent);
+  transition: outline-color var(--dur-2) var(--ease-out);
+}
+
+.pf-choice-label,
+.pf-control-label {
+  color: var(--pf-text);
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+/*
+ * A native choice ignores `border-style`, so its refusal needs an outline the
+ * platform actually paints. The dashed surround is the non-colour signal;
+ * the struck-through label repeats that shape in the visible label row.
+ */
+.pf-panel .pf-choice-input[aria-disabled='true'] {
+  outline: var(--border-hair) dashed var(--pf-text-muted);
+  outline-offset: var(--space-1);
+}
+
+.pf-panel .pf-choice-input[aria-disabled='true'] + .pf-choice-label {
+  color: var(--pf-text-muted);
+  text-decoration-line: line-through;
+  text-decoration-style: dashed;
+  text-decoration-color: var(--pf-text-muted);
 }
 
 /*
@@ -389,10 +419,30 @@ body {
 
 .pf-aim-controls .pf-aim-slider {
   flex: 1 1 var(--space-8);
-  min-inline-size: var(--space-8);
+  min-inline-size: 0;
   block-size: var(--target-min);
   margin: 0;
   accent-color: var(--pf-accent);
+}
+
+.pf-aim-controls .pf-range-control {
+  position: relative;
+  display: flex;
+  flex: 1 1 var(--space-8);
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pf-aim-controls .pf-control-label {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--pf-text);
+  font-size: var(--type-sm);
 }
 
 .pf-aim-readout {

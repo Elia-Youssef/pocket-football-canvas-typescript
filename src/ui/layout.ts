@@ -153,6 +153,19 @@ function applyTheme(theme: ThemeChoice): void {
   root.dataset['theme'] = theme;
 }
 
+/**
+ * A panel's invoker is its stable marker, never its present position. Adding a
+ * control before Settings or How to play must not silently restore focus to a
+ * different button.
+ */
+export function controlByMarker(
+  controls: readonly HTMLElement[],
+  marker: string,
+  fallback: HTMLElement,
+): HTMLElement {
+  return controls.find((control) => control.dataset['pf'] === marker) ?? fallback;
+}
+
 export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   const match = options.match;
   const modes = options.modes;
@@ -227,8 +240,10 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       match.dispatch({ kind: 'resume' });
       sync();
     },
-    onOpenSettings: () => settings.show(invokerOf(pause.controls(), 1)),
-    onOpenHowToPlay: () => howTo.show(invokerOf(pause.controls(), 2)),
+    onOpenSettings: () =>
+      settings.show(controlByMarker(pause.controls(), 'pause-settings', hud.pause)),
+    onOpenHowToPlay: () =>
+      howTo.show(controlByMarker(pause.controls(), 'pause-how-to', hud.pause)),
     onQuit: () => {
       match.dispatch({ kind: 'quit' });
       sync();
@@ -335,10 +350,6 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       }
     }
     wasPaused = paused;
-  }
-
-  function invokerOf(controls: readonly HTMLElement[], at: number): HTMLElement {
-    return controls[at] ?? hud.pause;
   }
 
   // The HUD leads the document so the play surface follows it in reading

@@ -3,7 +3,7 @@
     {
       "headers": ["Token", "Value"],
       "rows": [
-        ["--type-xs", "0.694rem"], ["--type-sm", "0.833rem"], ["--type-base", "1rem"], ["--type-md", "1.2rem"], ["--type-lg", "1.44rem"], ["--type-xl", "1.728rem"], ["--type-2xl", "2.074rem"],
+        ["--type-xs", "0.694rem"], ["--type-sm", "0.833rem"], ["--type-base", "1rem"], ["--type-md", "1.2rem"], ["--type-lg", "1.44rem"], ["--type-xl", "1.728rem"], ["--type-2xl", "2.074rem"], ["--font-body", "system-ui, sans-serif"],
         ["--leading-body", "1.5"], ["--leading-tight", "1.25"], ["--space-1", "4px"], ["--space-2", "8px"], ["--space-3", "12px"], ["--space-4", "16px"], ["--space-5", "24px"], ["--space-6", "32px"], ["--space-7", "48px"], ["--space-8", "64px"],
         ["--radius-sm", "4px"], ["--radius-md", "8px"], ["--radius-lg", "14px"], ["--radius-pill", "999px"], ["--border-hair", "1px"], ["--border-thin", "2px"], ["--border-thick", "3px"], ["--focus-ring-width", "2px"], ["--focus-ring-style", "solid"], ["--focus-ring-offset", "2px"], ["--focus-ring-color", "var(--pf-accent)"], ["--target-min", "44px"], ["--target-clearance", "var(--space-2)"],
         ["--dur-0", "0ms"], ["--dur-1", "80ms"], ["--dur-2", "140ms"], ["--dur-3", "220ms"], ["--dur-4", "320ms"], ["--ease-out", "cubic-bezier(0.2, 0, 0, 1)"], ["--ease-in-out", "cubic-bezier(0.4, 0, 0.2, 1)"]

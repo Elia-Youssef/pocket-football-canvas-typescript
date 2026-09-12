@@ -10,7 +10,13 @@ import { createMatch } from '../../src/core/match';
 import { set } from '../../src/core/vec2';
 import { createAimControls } from '../../src/ui/components/aim-controls';
 import { mountChrome } from '../../src/ui/layout';
-import { censusControls, findAllByTag, findByMarker, installFakeDocument } from './support/chrome-dom';
+import {
+  censusControls,
+  findAllByTag,
+  findByMarker,
+  focusableControls,
+  installFakeDocument,
+} from './support/chrome-dom';
 import type { FakeElement } from './support/chrome-dom';
 
 /**
@@ -523,6 +529,43 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     expect(counted.chrome + counted.row + frame).toBe(47);
   });
 
+  it('gives every focusable chrome control its own stable data marker', () => {
+    const installed = installFakeDocument();
+    try {
+      const host = installed.document.createElement('div');
+      mountChrome(host as unknown as HTMLElement, {
+        match: createMatch(),
+        onThemeChange: () => undefined,
+        modes: {
+          initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
+          guideOn: true,
+          onStart: () => undefined,
+          onPlayAgain: () => undefined,
+          onChangeMode: () => undefined,
+          onNextOpponent: () => undefined,
+          onRestartLadder: () => undefined,
+          onHowToDismissed: () => undefined,
+          ladderRung: () => 1,
+          gameOver: () => ({ opponentName: 'Opponent' }),
+        },
+      });
+      const aim = createAimControls({
+        onAim: () => undefined,
+        onLaunch: () => undefined,
+        onCancel: () => undefined,
+      });
+      const controls = [
+        ...focusableControls(host as unknown as FakeElement),
+        ...focusableControls(aim.root as unknown as FakeElement),
+      ];
+      const markers = controls.map((control) => control.dataset['pf']);
+      expect(markers).not.toContain(undefined);
+      expect(new Set(markers).size).toBe(markers.length);
+    } finally {
+      installed.restore();
+    }
+  });
+
   it('derives every panel from the readout, with no second copy of the state', () => {
     const installed = installFakeDocument();
     try {
@@ -671,7 +714,16 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       // sizes. The theme group is still the first three and is named here, so
       // an index below cannot quietly land on a different control.
       expect(inputs).toHaveLength(7);
-      expect(inputs.map((input) => input.getAttribute('aria-label'))).toEqual([
+      expect(inputs.map((input) => input.parentElement?.tagName)).toEqual([
+        'LABEL',
+        'LABEL',
+        'LABEL',
+        'LABEL',
+        'LABEL',
+        'LABEL',
+        'LABEL',
+      ]);
+      expect(inputs.map((input) => input.parentElement?.textContent)).toEqual([
         'System',
         'Light',
         'Dark',
@@ -679,6 +731,17 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         '125%',
         '150%',
         '200%',
+      ]);
+      // A programmatic name alone is not a visible label. The wrapper labels
+      // above supply both; reintroducing aria-label-only radios reddens here.
+      expect(inputs.map((input) => input.getAttribute('aria-label'))).toEqual([
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
       ]);
       const radios = inputs.slice(0, 3);
 

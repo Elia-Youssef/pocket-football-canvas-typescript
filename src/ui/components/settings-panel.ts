@@ -44,6 +44,13 @@
 
 import { SURFACE_SCALES, THEME_SETTINGS } from '../../core/storage';
 import type { ThemeSetting } from '../../core/storage';
+import {
+  createButton,
+  createChoice,
+  setCheckedIfChanged,
+  setRefused,
+  setTextIfChanged,
+} from './control';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
 
@@ -102,122 +109,109 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
   const radios = new Map<ThemeChoice, HTMLInputElement>();
   for (const choice of THEME_CHOICES) {
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.setAttribute('name', 'pf-theme');
-    radio.value = choice;
-    radio.setAttribute('aria-label', CHOICE_LABELS[choice]);
-    radio.className = 'pf-choice-input';
-    radio.addEventListener('change', () => {
+    const control = createChoice({
+      marker: `theme-${choice}`,
+      group: 'pf-theme',
+      label: CHOICE_LABELS[choice],
+      type: 'radio',
+      value: choice,
+      onChange: (radio) => {
       if (radio.checked) {
         options.onThemeChange(choice);
       }
+      },
     });
+    const radio = control.input;
     radios.set(choice, radio);
-    panel.addControl(radio);
+    panel.addControl(control.root, radio);
   }
 
   panel.addText('Play surface size');
 
   const sizes = new Map<number, HTMLInputElement>();
   for (const percent of SURFACE_SCALES) {
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.setAttribute('name', 'pf-surface-scale');
-    radio.value = String(percent);
-    radio.setAttribute('aria-label', `${String(percent)}%`);
-    radio.className = 'pf-choice-input';
-    radio.dataset['pf'] = `surface-scale-${String(percent)}`;
-    radio.addEventListener('change', () => {
+    const control = createChoice({
+      marker: `surface-scale-${String(percent)}`,
+      group: 'pf-surface-scale',
+      label: `${String(percent)}%`,
+      type: 'radio',
+      value: String(percent),
+      onChange: (radio) => {
       if (radio.checked) {
         options.onSurfaceScaleChange(percent);
       }
+      },
     });
+    const radio = control.input;
     sizes.set(percent, radio);
-    panel.addControl(radio);
+    panel.addControl(control.root, radio);
   }
 
-  const notice = document.createElement('p');
-  notice.className = 'pf-panel-text';
+  const notice = panel.addText(STORAGE_NOTICE);
   notice.dataset['pf'] = 'storage-notice';
-  notice.textContent = STORAGE_NOTICE;
-  panel.addControl(notice);
 
-  function button(marker: string, label: string): HTMLButtonElement {
-    const control = document.createElement('button');
-    control.type = 'button';
-    control.className = 'pf-choice-button';
-    control.dataset['pf'] = marker;
-    control.textContent = label;
-    panel.addControl(control);
-    return control;
-  }
-
-  const reset = button('reset-data', 'Reset all data');
-
-  const prompt = document.createElement('p');
-  prompt.className = 'pf-panel-text';
+  const prompt = panel.addText('');
   prompt.dataset['pf'] = 'reset-prompt';
-  prompt.textContent = '';
-  panel.addControl(prompt);
-
-  const confirmReset = button('reset-confirm', 'Confirm reset');
-  const cancelReset = button('reset-cancel', 'Cancel reset');
 
   /** True while the confirmation is showing, which is the only live state. */
   let armed = false;
 
-  function refused(control: HTMLButtonElement): boolean {
-    return control.getAttribute('aria-disabled') === 'true';
-  }
-
   function refresh(): void {
-    reset.setAttribute('aria-disabled', armed ? 'true' : 'false');
-    confirmReset.setAttribute('aria-disabled', armed ? 'false' : 'true');
-    cancelReset.setAttribute('aria-disabled', armed ? 'false' : 'true');
+    setRefused(reset, armed);
+    setRefused(confirmReset, !armed);
+    setRefused(cancelReset, !armed);
   }
 
-  reset.addEventListener('click', () => {
-    if (refused(reset)) {
-      return;
-    }
-    armed = true;
-    prompt.textContent = RESET_PROMPT;
-    refresh();
-    // The safe half of the pair takes focus, so the destructive one is never
-    // the control the next activation lands on.
-    cancelReset.focus();
+  const reset = createButton({
+    marker: 'reset-data',
+    label: 'Reset all data',
+    className: 'pf-choice-button',
+    onActivate: () => {
+      armed = true;
+      setTextIfChanged(prompt, RESET_PROMPT);
+      refresh();
+      // The safe half of the pair takes focus, so the destructive one is never
+      // the control the next activation lands on.
+      cancelReset.focus();
+    },
   });
+  panel.addControl(reset);
 
-  cancelReset.addEventListener('click', () => {
-    if (refused(cancelReset)) {
-      return;
-    }
-    armed = false;
-    prompt.textContent = '';
-    refresh();
-    reset.focus();
+  const confirmReset = createButton({
+    marker: 'reset-confirm',
+    label: 'Confirm reset',
+    className: 'pf-choice-button',
+    onActivate: () => {
+      armed = false;
+      options.onReset();
+      setTextIfChanged(prompt, RESET_DONE);
+      refresh();
+      reset.focus();
+    },
   });
+  panel.addControl(confirmReset);
 
-  confirmReset.addEventListener('click', () => {
-    if (refused(confirmReset)) {
-      return;
-    }
-    armed = false;
-    options.onReset();
-    prompt.textContent = RESET_DONE;
-    refresh();
-    reset.focus();
+  const cancelReset = createButton({
+    marker: 'reset-cancel',
+    label: 'Cancel reset',
+    className: 'pf-choice-button',
+    onActivate: () => {
+      armed = false;
+      setTextIfChanged(prompt, '');
+      refresh();
+      reset.focus();
+    },
   });
+  panel.addControl(cancelReset);
 
   refresh();
 
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'pf-choice-button';
-  close.dataset['pf'] = 'settings-close';
-  close.textContent = 'Close';
-  close.addEventListener('click', options.onClose);
+  const close = createButton({
+    marker: 'settings-close',
+    label: 'Close',
+    className: 'pf-choice-button',
+    onActivate: options.onClose,
+  });
   panel.addControl(close);
 
   return {
@@ -231,20 +225,20 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
      */
     show(invoker?: HTMLElement): void {
       armed = false;
-      prompt.textContent = '';
+      setTextIfChanged(prompt, '');
       refresh();
       panel.show(invoker);
     },
 
     select(theme: ThemeChoice): void {
       for (const [choice, radio] of radios) {
-        radio.checked = choice === theme;
+        setCheckedIfChanged(radio, choice === theme);
       }
     },
 
     selectSurfaceScale(percent: number): void {
       for (const [offered, radio] of sizes) {
-        radio.checked = offered === percent;
+        setCheckedIfChanged(radio, offered === percent);
       }
     },
   };
