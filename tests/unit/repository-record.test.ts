@@ -338,6 +338,53 @@ describe('PF-0 repository record gate', () => {
     });
   });
 
+  describe('GitHub-generated squash records', () => {
+    const GENERATED_SQUASH = {
+      author: 'Elia Y <78515123+Elia-Youssef@users.noreply.github.com>',
+      committer: 'GitHub <noreply@github.com>',
+      message:
+        'fix: align clock with accepted frame time (#28)\n\n' +
+        '* fix: align clock with accepted frame time\n\n' +
+        'Because countdown and simulation time have to agree.\n\n' +
+        'Closes: None\n\n' +
+        '* fix: drive game clock through accepted frames\n\n' +
+        'Because a resume gap is not visible match time.\n\n' +
+        'Closes: None',
+    };
+
+    it('checks every embedded commit when GitHub preserves a squash body', () => {
+      expect(checkCommitRecord(GENERATED_SQUASH)).toEqual([]);
+    });
+
+    it('rejects a malformed embedded record instead of waiving the wrapper', () => {
+      const malformed = {
+        ...GENERATED_SQUASH,
+        message: GENERATED_SQUASH.message.replace('Closes: None\n\n* fix: drive', 'Closes: none\n\n* fix: drive'),
+      };
+      expect(checkCommitRecord(malformed)).toContain(
+        'squashed component 1 message has a malformed Closes: line: "Closes: none"',
+      );
+    });
+
+    it('does not infer the generated shape from a GitHub committer alone', () => {
+      const lookalike = { ...GENERATED_SQUASH, author: 'Someone <someone@example.com>' };
+      expect(
+        checkCommitRecord(lookalike).some((problem) => problem.includes('contains 2 Closes: lines')),
+      ).toBe(true);
+    });
+
+    it('reserves component markers for the generated shape that can parse them', () => {
+      const manual = {
+        author: 'Someone <someone@example.com>',
+        committer: 'Someone <someone@example.com>',
+        message: 'fix: reserve generated markers\n\nBecause components need a clear boundary.\n\n* detail\n\nCloses: None',
+      };
+      expect(checkCommitRecord(manual)).toContain(
+        'message uses a squash component marker, which is reserved for GitHub-generated records',
+      );
+    });
+  });
+
   describe('control bytes cannot hide record text from the walk', () => {
     const FIELD = String.fromCharCode(0x1e);
     const RECORD = String.fromCharCode(0x1d);
