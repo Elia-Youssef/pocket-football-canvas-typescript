@@ -65,6 +65,35 @@ export const press: PointerEvent | null = null; // @expect core-boundary/no-dom
 export const query: MediaQueryList | null = null; // @expect core-boundary/no-dom
 export type Ratio = typeof devicePixelRatio; // @expect core-boundary/no-dom
 
+// -- no-dom: the wall clock and the microtask queue -----------------------
+
+export const now = Date.now(); // @expect core-boundary/no-dom
+export const stamped = new Date('2001-09-09T01:46:40Z'); // @expect core-boundary/no-dom
+queueMicrotask((): undefined => undefined); // @expect core-boundary/no-dom
+
+// -- no-dom: names no hand-written list had ------------------------------
+//
+// Each of these passed every gate this project has, because a denylist reports
+// what somebody remembered. They are reported now because the DOM library the
+// build compiles against declares them and no ES library file does.
+
+export type Child = ChildNode; // @expect core-boundary/no-dom
+export type Listen = EventListener; // @expect core-boundary/no-dom
+export const blob: Blob | null = null; // @expect core-boundary/no-dom
+export const log = console; // @expect core-boundary/no-dom
+
+// -- no-dom: a name the library does not have YET -------------------------
+//
+// AND THIS IS WHY THE FAMILY PREFIXES STAY. The derived set covers every name
+// the installed type library declares, which is most of the platform and all of
+// the lines above. It cannot cover a name that library has not caught up with:
+// a platform surface ships before the definitions do, and this one is not in
+// lib.dom.d.ts today. The prefix is what reports it, and it is the only line in
+// this fixture that the prefix alone reports, which is what makes the prefix
+// list a gate rather than a comment.
+
+export const future: HTMLModelElement | null = null; // @expect core-boundary/no-dom
+
 // -- no-math-random: every route to the function --------------------------
 
 export const roll = Math.random(); // @expect core-boundary/no-math-random:mathRandom

@@ -6,7 +6,7 @@
   "type": "module",
   "description": "Turn-based arcade football on a Canvas 2D play surface with DOM chrome.",
   "engines": {
-    "node": ">=20.19.0"
+    "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "workspaces": [
     "packages/*"

@@ -12,10 +12,22 @@ export {
   SURFACE_SEGMENTS,
 } from './lib/specifiers.js';
 export {
+  DOM_LIB_NAMES,
+  DOM_LIB_ORIGIN,
   isPlatformGlobalName,
   PLATFORM_GLOBALS,
   PLATFORM_PREFIXES,
+  topLevelDeclarations,
 } from './lib/platform-globals.js';
+export {
+  importClosure,
+  importSpecifiers,
+  isInside,
+  MODULE_EXTENSIONS,
+  modulesUnder,
+  resolveSpecifier,
+  withoutComments,
+} from './lib/reach.js';
 
 /**
  * The three halves of item M3, as one plugin. Each rule scopes itself to a

@@ -21,9 +21,21 @@ updates:
       # subject, the record check holds subjects to 72 ASCII characters, and a
       # descriptive group name is how that ceiling gets breached by a commit
       # nobody here wrote.
+      #
+      # MAJORS TRAVEL ALONE. The group carries minor and patch updates only, so
+      # a major opens its own pull request and is reviewed on its own terms. The
+      # principle was already written below for the compiler and implemented for
+      # nothing else: the first grouped pull request this repository received
+      # bundled a test-runner major that raises the Node floor above the version
+      # both CI jobs pin with two ordinary patches, and its gate reported green,
+      # so the only correct action on it was "do not merge" - which GITHUB
+      # section 12 says a dependency pull request must never need.
       toolchain:
         patterns:
           - '*'
+        update-types:
+          - minor
+          - patch
     ignore:
       # A compiler major is a migration, not a bump: it changes what the type
       # checker accepts and it moves the floor typescript-eslint supports. It

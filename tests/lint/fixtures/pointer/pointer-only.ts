@@ -46,11 +46,18 @@ declare const chosen: string;
 surface.addEventListener(chosen, handler);
 surface.addEventListener(`pointer${chosen}`, handler);
 
-// THE TWO STATED EVASIONS, carried here so the limit is tested rather than
-// merely admitted. Neither is reported, and the rule's own docstring says why
-// and says what closes each instead: the shipping lint reading the whole of
-// src/, and item M1's scan over the chrome. Both would read as deliberate to
-// any reviewer, which is the standard the boundary plugin is held to as well.
+// THE THREE STATED EVASIONS, carried here so each limit is tested rather than
+// merely admitted. None is reported, and the rule's own docstring says why and
+// says what closes each instead: the shipping lint reading the whole of src/,
+// and item M1's scan over the chrome. All three would read as deliberate to any
+// reviewer, which is the standard the boundary plugin is held to as well.
 const add = surface.addEventListener.bind(surface);
 add('mousedown', handler);
 surface.setAttribute('onmousedown', 'aim()');
+
+// The third: a handler property reached through a variable key. The property
+// node names a variable and not the handler, so there is nothing static to
+// judge, and the rule refuses to guess rather than reporting every computed
+// property in the project.
+const PROP = 'onmousedown';
+surface[PROP] = handler;
