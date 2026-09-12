@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +8,12 @@ import { createWorld } from '../../src/core/bodies';
 import { CAPTURE_KEY, installCaptureHooks } from '../../src/render/capture';
 import { compareTrees, readTree } from '../../scripts/output-fingerprint.mjs';
 import { asCanvas, CanvasRecorder, fakeCanvas } from './support/canvas-recorder';
+import {
+  buildCopiedProject,
+  copyProjectGraph,
+  removeCopiedProject,
+} from './support/isolated-project';
+import { testSourceWriteOffenders } from './support/test-source-write-hygiene';
 
 /**
  * Armour for the capture hooks, and for the sentence that governs them: they
@@ -25,7 +30,6 @@ import { asCanvas, CanvasRecorder, fakeCanvas } from './support/canvas-recorder'
  */
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
-const CAPTURE_SOURCE = path.join(PROJECT_ROOT, 'src', 'render', 'capture.ts');
 const VITE = path.join(PROJECT_ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 
 /**
@@ -67,15 +71,6 @@ function importClosure(entry: string): Set<string> {
     }
   }
   return closure;
-}
-
-function buildOnce(outDir: string): string {
-  execFileSync(
-    process.execPath,
-    [VITE, 'build', '--outDir', outDir, '--emptyOutDir'],
-    { cwd: PROJECT_ROOT, stdio: 'pipe' },
-  );
-  return outDir;
 }
 
 describe('PF-11 the capture hooks', () => {
@@ -193,25 +188,18 @@ describe('PF-11 the capture hooks', () => {
   });
 
   it('emits byte-identical bytes with the hooks stubbed out', { timeout: 240_000 }, () => {
-    const original = readFileSync(CAPTURE_SOURCE);
-    const outA = 'node_modules/.tmp/pf11-capture-with-hooks';
-    const outB = 'node_modules/.tmp/pf11-capture-without-hooks';
-    let stubbed = false;
+    const copied = copyProjectGraph(PROJECT_ROOT, 'pf11-capture');
     try {
-      const builtWith = readTree(path.join(PROJECT_ROOT, buildOnce(outA)));
-      writeFileSync(CAPTURE_SOURCE, 'export {};\n');
-      stubbed = true;
-      const builtWithout = readTree(path.join(PROJECT_ROOT, buildOnce(outB)));
+      const builtWith = readTree(buildCopiedProject(copied, VITE, 'with-hooks'));
+      expect(testSourceWriteOffenders(PROJECT_ROOT)).toEqual([]);
+      writeFileSync(path.join(copied.root, 'src', 'render', 'capture.ts'), 'export {};\n');
+      const builtWithout = readTree(buildCopiedProject(copied, VITE, 'without-hooks'));
       expect(builtWith.size).toBeGreaterThan(1);
       expect(builtWithout.size).toBe(builtWith.size);
       const comparison = compareTrees(builtWith, builtWithout);
       expect(comparison.identical, JSON.stringify(comparison.differing)).toBe(true);
     } finally {
-      if (stubbed) {
-        writeFileSync(CAPTURE_SOURCE, original);
-      }
-      rmSync(path.join(PROJECT_ROOT, outA), { recursive: true, force: true });
-      rmSync(path.join(PROJECT_ROOT, outB), { recursive: true, force: true });
+      removeCopiedProject(copied);
     }
   });
 });

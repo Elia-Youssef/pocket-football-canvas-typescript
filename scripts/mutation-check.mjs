@@ -2635,6 +2635,23 @@ export const EDITS = [
   },
   {
     item: 'E3',
+    name: 'the capture build stubs a disposable graph and not the checkout',
+    file: 'tests/unit/render-capture.test.ts',
+    find: "      writeFileSync(path.join(copied.root, 'src', 'render', 'capture.ts'), 'export {};\\n');",
+    replace:
+      "      writeFileSync(path.join(PROJECT_ROOT, 'src', 'render', 'capture.ts'), 'export {};\\n');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
+    name: 'the test write hygiene scanner keeps its live-write control',
+    file: 'tests/unit/support/test-source-write-hygiene.ts',
+    find: "  'writeFileSync',",
+    replace: "  'sourceWriteFileSync',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E3',
     name: 'the hooks register under the key the capture script reads',
     file: 'src/render/capture.ts',
     find: "export const CAPTURE_KEY = '__pfCapture';",
@@ -4392,6 +4409,14 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: 'src/render/effects.ts',
     find: 'export const MOTION_CAPTURE_KEY = \'__pfMotion\';',
     replace: 'export const MOTION_CAPTURE_KEY = \'__pfSomethingElse\';',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E5',
+    name: 'the motion installer stub lives in a disposable graph',
+    file: 'tests/unit/motion-capture.test.ts',
+    find: "      writeFileSync(copiedEffects, original.replace(INSTALLER, STUB), 'utf8');",
+    replace: "      writeFileSync(EFFECTS_SOURCE, original.replace(INSTALLER, STUB), 'utf8');",
     detectedBy: 'unit',
   },
   {

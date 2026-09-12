@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +14,12 @@ import {
   installMotionHooks,
 } from '../../src/render/effects';
 import { compareTrees, readTree } from '../../scripts/output-fingerprint.mjs';
+import {
+  buildCopiedProject,
+  copyProjectGraph,
+  removeCopiedProject,
+} from './support/isolated-project';
+import { testSourceWriteOffenders } from './support/test-source-write-hygiene';
 
 /**
  * Armour for the motion capture hooks, and for the sentence that governs them:
@@ -50,14 +55,6 @@ const NO_GOALS: ScoringReadout = {
   last: undefined,
   over: false,
 };
-
-function buildOnce(outDir: string): string {
-  execFileSync(process.execPath, [VITE, 'build', '--outDir', outDir, '--emptyOutDir'], {
-    cwd: PROJECT_ROOT,
-    stdio: 'pipe',
-  });
-  return outDir;
-}
 
 /** Every module under src/, so a scan for a name cannot miss one. */
 function sourceFiles(): string[] {
@@ -148,17 +145,14 @@ describe('PF-12 the motion capture hooks', () => {
   });
 
   it('emits byte-identical bytes with the installer stubbed out', { timeout: 240_000 }, () => {
-    const original = readFileSync(EFFECTS_SOURCE, 'utf8');
-    const outA = 'node_modules/.tmp/pf12-motion-with-hooks';
-    const outB = 'node_modules/.tmp/pf12-motion-without-hooks';
-    let stubbed = false;
+    const copied = copyProjectGraph(PROJECT_ROOT, 'pf12-motion');
     try {
-      const builtWith = readTree(path.join(PROJECT_ROOT, buildOnce(outA)));
+      const builtWith = readTree(buildCopiedProject(copied, VITE, 'with-hooks'));
       // The bundle is the game, so the absences asserted here are absences
       // from something rather than from an empty directory.
       const emitted = [...builtWith.keys()]
         .filter((name) => name.endsWith('.js'))
-        .map((name) => readFileSync(path.join(PROJECT_ROOT, outA, name), 'utf8'))
+        .map((name) => readFileSync(path.join(copied.root, 'with-hooks', name), 'utf8'))
         .join('\n');
       expect(emitted.length).toBeGreaterThan(1000);
       expect(emitted).toContain('pocket-football');
@@ -167,20 +161,18 @@ describe('PF-12 the motion capture hooks', () => {
       // The export is what a bundler follows. Take it away and the function is
       // unreachable from anywhere, so anything it contributed to the emitted
       // bytes would show up as a difference below.
+      const copiedEffects = path.join(copied.root, 'src', 'render', 'effects.ts');
+      const original = readFileSync(copiedEffects, 'utf8');
       expect(original).toContain(INSTALLER);
-      writeFileSync(EFFECTS_SOURCE, original.replace(INSTALLER, STUB), 'utf8');
-      stubbed = true;
-      const builtWithout = readTree(path.join(PROJECT_ROOT, buildOnce(outB)));
+      expect(testSourceWriteOffenders(PROJECT_ROOT)).toEqual([]);
+      writeFileSync(copiedEffects, original.replace(INSTALLER, STUB), 'utf8');
+      const builtWithout = readTree(buildCopiedProject(copied, VITE, 'without-hooks'));
       expect(builtWith.size).toBeGreaterThan(1);
       expect(builtWithout.size).toBe(builtWith.size);
       const comparison = compareTrees(builtWith, builtWithout);
       expect(comparison.identical, JSON.stringify(comparison.differing)).toBe(true);
     } finally {
-      if (stubbed) {
-        writeFileSync(EFFECTS_SOURCE, original, 'utf8');
-      }
-      rmSync(path.join(PROJECT_ROOT, outA), { recursive: true, force: true });
-      rmSync(path.join(PROJECT_ROOT, outB), { recursive: true, force: true });
+      removeCopiedProject(copied);
     }
   });
 });
