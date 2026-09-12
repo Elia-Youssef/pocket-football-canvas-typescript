@@ -33,8 +33,9 @@
  * pixel from a backing scale of one third upward and part of one below it, so
  * WHERE the band falls decides whether any whole device pixel of it is the
  * boundary's own colour. The scale is the layer's own, handed down from
- * `renderStaticPitch`; no transform is built here and no dimension is measured
- * here.
+ * `renderStaticPitch`, and the device grid it is snapped to is the transform's
+ * own, asked of `render/surface.ts`'s `deviceOriginY`; no transform is built
+ * here and no dimension is measured here.
  *
  * THE PASS ORDER is DESIGN section 7's: pitch, goal frames, effects behind,
  * entities, aim arrow, effects in front. All six live in `drawFrame` below.
@@ -72,7 +73,6 @@ import {
   GOAL_FRAME_DEPTH,
   GOAL_OPENING_HIGH,
   GOAL_OPENING_LOW,
-  LOGICAL_HEIGHT,
   WALL_THICKNESS,
 } from '../core/config';
 import type { AimPreview } from '../core/aiming';
@@ -80,7 +80,12 @@ import type { Body, World } from '../core/bodies';
 import type { AimGuide } from '../core/guide';
 import { BORDER, RADIUS, SPACE } from './tokens';
 import type { PitchPalette } from './tokens';
-import { applySurfaceTransform, backingRatio, type Surface } from './surface';
+import {
+  applySurfaceTransform,
+  backingRatio,
+  deviceOriginY,
+  type Surface,
+} from './surface';
 import { TAU, drawEntities } from './entities';
 import type { Facing, Glyphs } from './entities';
 import { drawAimArrow } from './arrow';
@@ -260,9 +265,24 @@ function onDevicePixel(designUnits: number, scale: number): number {
   return Math.round(designUnits * scale) / scale;
 }
 
-/** The same, through the flip, for a coordinate the transform measures down. */
+/**
+ * The same, through the flip, for a coordinate the transform measures down.
+ *
+ * THE ROW IS COUNTED FROM THE TRANSFORM'S OWN ORIGIN, which is why this is not
+ * `onDevicePixel` applied to the distance from the top. `render/surface.ts`
+ * draws design y at device row `deviceOriginY(scale) - y * scale`, and that
+ * origin is ROUNDED to the backing store's height: at a backing scale of 0.336
+ * the exact product is 241.92 and the origin is 242, so a row snapped to a
+ * whole pixel measured from an unrounded top lands 0.08 of a pixel off the
+ * grid it is drawn on, and the band straddles two pixels again. Asking the
+ * same function the transform asks is what keeps one grid.
+ */
 function onDeviceRow(designY: number, scale: number): number {
-  return LOGICAL_HEIGHT - onDevicePixel(LOGICAL_HEIGHT - designY, scale);
+  const originY = deviceOriginY(scale);
+  if (!Number.isFinite(originY) || scale <= 0) {
+    return designY;
+  }
+  return (originY - Math.round(originY - designY * scale)) / scale;
 }
 
 export function drawWalls(
@@ -489,6 +509,12 @@ export function drawFrame(
   }
   drawEntities(surface.context, palette, world, options?.facing, options?.glyphs);
   const aim = options?.aim;
+  // THE ACTING CIRCLE, RESOLVED ONCE. The arrow and the effects layer's
+  // maximum-power pulse are two strokes of ONE aim, so they take the same body:
+  // resolving the default twice is how they came apart in SPEC section 9's
+  // Hotseat, where the second human aims the opponent's circle and a pulse
+  // anchored on `world.player` drew a second arrow out of the wrong body.
+  const launcher = options?.launcher ?? world.player;
   // SPEC section 11's guide is part of the aim, so it lands inside the aim
   // pass and under the arrow: the arrow is the shot and the guide is the
   // advice about it, and advice does not paint over the thing it is about.
@@ -497,9 +523,9 @@ export function drawFrame(
     drawAimGuide(surface.context, palette, guide);
   }
   if (aim !== undefined) {
-    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);
+    drawAimArrow(surface.context, palette, launcher, aim);
   }
   if (effects !== undefined) {
-    effects.drawInFront(surface.context, palette, world, aim ?? null);
+    effects.drawInFront(surface.context, palette, launcher, aim ?? null);
   }
 }

@@ -359,78 +359,105 @@ export function createMatch(options: MatchOptions = {}): Match {
   }
 
   function dispatch(intent: MatchIntent): void {
-    if (intent.kind === 'configure') {
-      // SPEC section 9: the mode's numbers, applied from MENU, which is where
-      // SPEC section 7 says a match is configured. The scoreboard is rebuilt
-      // rather than mutated because its target is fixed at construction and a
-      // second way to set it would be a second place for it to be wrong; the
-      // world is the same object either way, so nothing that holds a
-      // reference to it is invalidated by a mode change.
-      if (state.kind === 'MENU') {
-        configured = configurationOf(intent.configuration);
-        scoring = createScoring(forwardedScoring(configured));
-        sim = createSimulation(forwardedSimulation(world, scoring, options));
-        putBack();
-        remaining = configured.duration;
-        opponentDelay = 0;
-        opponentReady = false;
+    applyIntent(intent);
+  }
+
+  /**
+   * Every intent, as a switch on its kind with no `default` branch, answering
+   * the kind it applied.
+   *
+   * THE MISSING `default` IS THE POINT, AND THE RETURN TYPE IS WHAT ENFORCES
+   * IT. This was an if-chain whose last arm was unguarded, so `quit` was
+   * whatever fell out of the bottom: a seventh `MatchIntent` added tomorrow
+   * would have taken that arm in silence and returned a live match to MENU.
+   * Written as a switch over the union, with no `default` and a return type
+   * that is not void, a seventh kind leaves one path through this function with
+   * no return in it, which the build refuses (`noImplicitReturns`). SPEC
+   * section 7's chart is the list; the type is how the list is enforced, and
+   * `dispatch` above discards the answer because the state is the real one.
+   */
+  function applyIntent(intent: MatchIntent): MatchIntent['kind'] {
+    switch (intent.kind) {
+      case 'configure': {
+        // SPEC section 9: the mode's numbers, applied from MENU, which is where
+        // SPEC section 7 says a match is configured. The scoreboard is rebuilt
+        // rather than mutated because its target is fixed at construction and a
+        // second way to set it would be a second place for it to be wrong; the
+        // world is the same object either way, so nothing that holds a
+        // reference to it is invalidated by a mode change.
+        if (state.kind === 'MENU') {
+          configured = configurationOf(intent.configuration);
+          scoring = createScoring(forwardedScoring(configured));
+          sim = createSimulation(forwardedSimulation(world, scoring, options));
+          putBack();
+          remaining = configured.duration;
+          opponentDelay = 0;
+          opponentReady = false;
+        }
+        return 'configure';
       }
-      return;
-    }
-    if (intent.kind === 'start') {
-      // MENU is where a match is configured (SPEC section 7); starting applies
-      // the configuration to a fresh match, which is a restart plus the
-      // opening kickoff.
-      if (state.kind === 'MENU') {
-        restart();
-        enterKickoff(sim.scoring.readout().nextTurn);
+      case 'start': {
+        // MENU is where a match is configured (SPEC section 7); starting applies
+        // the configuration to a fresh match, which is a restart plus the
+        // opening kickoff.
+        if (state.kind === 'MENU') {
+          restart();
+          enterKickoff(sim.scoring.readout().nextTurn);
+        }
+        return 'start';
       }
-      return;
-    }
-    if (intent.kind === 'launch') {
-      // SPEC section 5: a launch is a direction and a strength on the one
-      // power scale, applied to the side whose turn this is. SPEC section 7:
-      // MOVING is entered always, even for a short shot that contacts nothing,
-      // so the state machine has no special case.
-      if (state.kind === 'PLAYER_TURN') {
-        launch(sim.world.player, intent.angle, launchSpeed(intent.power));
-        state = { kind: 'MOVING', launchedBy: 'player' };
-      } else if (state.kind === 'OPPONENT_TURN') {
-        launch(sim.world.opponent, intent.angle, launchSpeed(intent.power));
-        opponentReady = false;
-        state = { kind: 'MOVING', launchedBy: 'opponent' };
+      case 'launch': {
+        // SPEC section 5: a launch is a direction and a strength on the one
+        // power scale, applied to the side whose turn this is. SPEC section 7:
+        // MOVING is entered always, even for a short shot that contacts nothing,
+        // so the state machine has no special case.
+        if (state.kind === 'PLAYER_TURN') {
+          launch(sim.world.player, intent.angle, launchSpeed(intent.power));
+          state = { kind: 'MOVING', launchedBy: 'player' };
+        } else if (state.kind === 'OPPONENT_TURN') {
+          launch(sim.world.opponent, intent.angle, launchSpeed(intent.power));
+          opponentReady = false;
+          state = { kind: 'MOVING', launchedBy: 'opponent' };
+        }
+        return 'launch';
       }
-      return;
-    }
-    if (intent.kind === 'pause') {
-      // The pause control and the hidden tab both arrive as this intent from
-      // later parts. Entering it zeroes nothing and steps no simulation; the
-      // update above refuses to step a paused match, and resuming returns to
-      // the exact state that was interrupted.
-      if (
-        state.kind === 'PLAYER_TURN' ||
-        state.kind === 'OPPONENT_TURN' ||
-        state.kind === 'MOVING' ||
-        state.kind === 'GOAL'
-      ) {
-        state = { kind: 'PAUSED', interrupted: state };
+      case 'pause': {
+        // The pause control and the hidden tab both arrive as this intent from
+        // later parts. Entering it zeroes nothing and steps no simulation; the
+        // update above refuses to step a paused match, and resuming returns to
+        // the exact state that was interrupted.
+        if (
+          state.kind === 'PLAYER_TURN' ||
+          state.kind === 'OPPONENT_TURN' ||
+          state.kind === 'MOVING' ||
+          state.kind === 'GOAL'
+        ) {
+          state = { kind: 'PAUSED', interrupted: state };
+        }
+        return 'pause';
       }
-      return;
-    }
-    if (intent.kind === 'resume') {
-      if (state.kind === 'PAUSED') {
-        state = state.interrupted;
+      case 'resume': {
+        if (state.kind === 'PAUSED') {
+          state = state.interrupted;
+        }
+        return 'resume';
       }
-      return;
-    }
-    // quit, SPEC section 7's other way out of PAUSED, and SPEC section 13's
-    // Change mode out of GAME_OVER. The second edge is the one PF-13 named
-    // and deliberately left unwired: its panel offers Change mode, and a
-    // button whose intent no state accepts is the dishonesty that part
-    // refused to ship. Nothing is reset here; the configuration that follows
-    // in MENU is what puts the match back.
-    if (state.kind === 'PAUSED' || state.kind === 'GAME_OVER') {
-      state = { kind: 'MENU' };
+      case 'quit': {
+        // SPEC section 7's other way out of PAUSED, and SPEC section 13's
+        // Change mode out of GAME_OVER. The second edge is the one PF-13 named
+        // and deliberately left unwired: its panel offers Change mode, and a
+        // button whose intent no state accepts is the dishonesty that part
+        // refused to ship. Nothing is reset here; the configuration that follows
+        // in MENU is what puts the match back.
+        //
+        // THE GUARD IS THE WHOLE OF THE EDGE. Quitting is legal from exactly the
+        // two states the chart draws it from; from any other state this intent
+        // is not an edge and the match stays where it is.
+        if (state.kind === 'PAUSED' || state.kind === 'GAME_OVER') {
+          state = { kind: 'MENU' };
+        }
+        return 'quit';
+      }
     }
   }
 

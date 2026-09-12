@@ -83,10 +83,17 @@ export type ModeChoice =
   | { readonly kind: 'ladder'; readonly rung: number }
   | { readonly kind: 'hotseat'; readonly target: number };
 
-/** SPEC section 9's default: a 60 second Quick Match at the lowest difficulty. */
+/**
+ * SPEC section 9's default: a 60 second Quick Match at the lowest difficulty.
+ *
+ * The length is `DEFAULT_DURATION` and not a second 60. One default stated
+ * twice is two places for SPEC section 9's number to be, and the pair would
+ * disagree the first time one of them was edited; the constant above is the one
+ * the stored settings and the menu already read.
+ */
 export const DEFAULT_MODE: ModeChoice = {
   kind: 'quick',
-  duration: 60,
+  duration: DEFAULT_DURATION,
   difficulty: 'casual',
 };
 
@@ -120,20 +127,44 @@ export const PLAYER_TWO = 'Player 2';
 /** The generic name a mode with no named opponent uses (SPEC section 12). */
 export const GENERIC_OPPONENT = 'Opponent';
 
+/**
+ * ONE CLAMP AND ONE ANSWER TO A MISSING ROW, for both ladder tables.
+ *
+ * The two functions below index two tables over the same positions, and they
+ * used to disagree about a position neither table has a row for: the rung threw
+ * and the difficulty answered Casual. Neither reading is wrong on its own and
+ * both are unreachable as the ladder ships - SPEC section 10 states six rungs
+ * and both tables are six long, so a clamped position always lands on a row -
+ * but two answers to one question are one answer too many, and the one that
+ * masks is the one that hides a table which has quietly become short.
+ *
+ * BOTH THROW, and this sentence is the whole of the rule. A position that
+ * reaches neither table is a table that no longer describes the ladder, which
+ * is a defect in this module rather than a player input to fall back from; the
+ * clamp already answers for every finite position, so what is left is a
+ * position that is not a number, which is not a rung either. Pinned in
+ * tests/unit/modes.test.ts.
+ */
+function ladderSlot(position: number): number {
+  return Math.min(Math.max(Math.trunc(position), 1), LADDER_TOTAL) - 1;
+}
+
+function ladderRow<Row>(table: readonly Row[], position: number, what: string): Row {
+  const row = table[ladderSlot(position)];
+  if (row === undefined) {
+    throw new Error(`the ladder has no ${what} at position ${String(position)}`);
+  }
+  return row;
+}
+
 /** The ladder rung a position names, clamped into the ladder. */
 export function rungAt(position: number): LadderOpponent {
-  const slot = Math.min(Math.max(Math.trunc(position), 1), LADDER_TOTAL) - 1;
-  const rung = LADDER[slot];
-  if (rung === undefined) {
-    throw new Error(`the ladder has no rung at position ${String(position)}`);
-  }
-  return rung;
+  return ladderRow(LADDER, position, 'rung');
 }
 
 /** The difficulty of a ladder rung, from SPEC section 10's own column. */
 export function difficultyAt(position: number): Difficulty {
-  const slot = Math.min(Math.max(Math.trunc(position), 1), LADDER_TOTAL) - 1;
-  return LADDER_DIFFICULTY[slot] ?? 'casual';
+  return ladderRow(LADDER_DIFFICULTY, position, 'difficulty');
 }
 
 /**
@@ -349,13 +380,22 @@ export interface Progress {
   readonly playedBefore: boolean;
 }
 
-/** A player who has never opened the game. */
-export const NEW_PROGRESS: Progress = {
+/**
+ * A player who has never opened the game.
+ *
+ * FROZEN. `readonly` is a compile-time promise and this object is handed out by
+ * reference: it is what `normaliseProgress` answers for every document it
+ * cannot use, and it is the `progress` field of `core/storage.ts`'s frozen
+ * `NEW_DATA`. A caller that wrote through one of those references would edit
+ * the defaults every later reader sees. Freezing makes the write throw where
+ * this runs, which is under ES module strict mode everywhere it ships.
+ */
+export const NEW_PROGRESS: Progress = Object.freeze({
   ladderRung: 1,
   howToDismissed: false,
   rotateHintDismissed: false,
   playedBefore: false,
-};
+});
 
 /**
  * The seam PF-10 lands the stored document behind. The composition root holds

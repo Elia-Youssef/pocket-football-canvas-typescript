@@ -40,12 +40,21 @@ import {
   elapsedFor,
   goalFrameOf,
   impactEnergy,
+  pairContact,
   regionOf,
   shakeMagnitude,
   wallBandsOf,
+  wallContact,
 } from '../../src/render/effects';
-import type { Effects, EffectsFrame, WallBand } from '../../src/render/effects';
-import { drawFrame } from '../../src/render/pitch';
+import type {
+  BodySample,
+  Effects,
+  EffectsFrame,
+  EffectsReadout,
+  WallBand,
+} from '../../src/render/effects';
+import { arrowGeometry, arrowPath, drawAimArrow, traceArrow } from '../../src/render/arrow';
+import { drawFrame, drawVignette } from '../../src/render/pitch';
 import type { PitchCacheCell, PitchLayer } from '../../src/render/pitch';
 import { attachSurface, backingRatio, resizeSurface } from '../../src/render/surface';
 import { PLAY_SURFACE } from '../../src/render/tokens';
@@ -718,7 +727,7 @@ describe('PF-12 the motion set, item E5', () => {
       expect(readout.celebration).toBeCloseTo(1.2, 9);
 
       const recorder = new CanvasRecorder();
-      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, null);
+      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, null);
       // The frame that was scored in, and only that one: the right mouth sits
       // outside the right field bound, at the opening's own extent.
       const pulse = recorder.calls('strokeRect').at(-1)?.args ?? [];
@@ -741,7 +750,7 @@ describe('PF-12 the motion set, item E5', () => {
       tick(effects, world, 1 / 60);
       effects.observe({ world, scoring: oneGoal('left'), elapsed: 1 / 60, reducedMotion: false });
       const recorder = new CanvasRecorder();
-      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, null);
+      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, null);
       expect(recorder.calls('strokeRect').at(-1)?.args[0]).toBe(FIELD_LEFT - GOAL_FRAME_DEPTH);
     });
 
@@ -877,7 +886,7 @@ describe('PF-12 the motion set, item E5', () => {
       const full = aimFromDrag(-180, 0);
       expect(full.aim.power01).toBe(1);
       const atMaximum = new CanvasRecorder();
-      effects.drawInFront(atMaximum.context, PLAY_SURFACE.floodlit, world, full);
+      effects.drawInFront(atMaximum.context, PLAY_SURFACE.floodlit, world.player, full);
       expect(atMaximum.calls('stroke')).toHaveLength(1);
       expect(atMaximum.values('strokeStyle')).toEqual([PLAY_SURFACE.floodlit.accent]);
       // Seven points, which is the arrow's own path and not a shape of its own.
@@ -887,13 +896,13 @@ describe('PF-12 the motion set, item E5', () => {
       const below = aimFromDrag(-100, 0);
       expect(below.aim.power01).toBeLessThan(1);
       const under = new CanvasRecorder();
-      effects.drawInFront(under.context, PLAY_SURFACE.floodlit, world, below);
+      effects.drawInFront(under.context, PLAY_SURFACE.floodlit, world.player, below);
       expect(under.calls('stroke')).toHaveLength(0);
 
       // And no aim at all draws no pulse, which is the other half of "at
       // maximum": a detector that fires on every frame is not a maximum.
       const idle = new CanvasRecorder();
-      effects.drawInFront(idle.context, PLAY_SURFACE.floodlit, world, null);
+      effects.drawInFront(idle.context, PLAY_SURFACE.floodlit, world.player, null);
       expect(idle.calls('stroke')).toHaveLength(0);
     });
   });
@@ -1194,7 +1203,7 @@ describe('PF-12 the motion set, item E5', () => {
       const effects = createEffects();
       const world = stagedImpact(effects, 600, 1 / 60);
       const front = new CanvasRecorder();
-      effects.drawInFront(front.context, PLAY_SURFACE.floodlit, world, null);
+      effects.drawInFront(front.context, PLAY_SURFACE.floodlit, world.player, null);
       expect(front.values('globalAlpha')[0]).toBeCloseTo(0.7, 12);
       expect(front.values('globalAlpha').at(-1)).toBe(1);
 
@@ -1223,7 +1232,7 @@ describe('PF-12 the motion set, item E5', () => {
       tick(goal, still, 1 / 60);
       goal.observe({ world: still, scoring: oneGoal('right'), elapsed: 1 / 60, reducedMotion: false });
       const party = new CanvasRecorder();
-      goal.drawInFront(party.context, PLAY_SURFACE.floodlit, still, null);
+      goal.drawInFront(party.context, PLAY_SURFACE.floodlit, still.player, null);
       // The impact pass runs first and has nothing to draw, so it only hands
       // the alpha back; the celebration's own weight is the next one set.
       const partyAlphas = party.values('globalAlpha').map(Number);
@@ -1239,7 +1248,7 @@ describe('PF-12 the motion set, item E5', () => {
       const full = aimFromDrag(-180, 0);
       const alphaAt = (): number[] => {
         const recorder = new CanvasRecorder();
-        effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, full);
+        effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, full);
         return recorder.values('globalAlpha').map(Number).filter((value) => value !== 1);
       };
       let peak = 0;
@@ -1298,7 +1307,7 @@ describe('PF-12 the motion set, item E5', () => {
         tick(effects, world, 0.01);
       }
       const recorder = new CanvasRecorder();
-      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, null);
+      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, null);
       const beforeStroke = recorder.ops
         .slice(0, recorder.ops.findIndex((op) => op.name === 'strokeRect'))
         .filter((op) => op.name === 'globalAlpha');
@@ -1383,5 +1392,696 @@ describe('PF-12 the motion set, item E5', () => {
       // pixels on a surface at one is three. That is the ratio cancelling.
       expect(recorder.calls('setTransform')[1]?.args).toEqual([1, 0, 0, 1, 6, 0]);
     });
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * The two contact predicates, the alpha invariant and the shared arrow tracer.
+ * ------------------------------------------------------------------------- */
+
+/** One body as a previous frame left it, built by hand for a boundary case. */
+function sampleAt(x: number, y: number, vx: number, vy: number): BodySample {
+  return { x, y, vx, vy };
+}
+
+/** A world with one body placed and moving, for a direct predicate call. */
+function bodyAt(
+  kind: 'player' | 'ball',
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+): World['player'] {
+  const world = createWorld();
+  const body = kind === 'ball' ? world.ball : world.player;
+  set(body.position, x, y);
+  setVelocity(body, vx, vy);
+  return body;
+}
+
+/**
+ * Every function under `src/render/` that leaves `globalAlpha` somewhere other
+ * than 1, read out of the source rather than listed by hand.
+ *
+ * The enclosing function is found by walking back to the nearest declaration in
+ * column zero, which is where every function in this layer is declared.
+ */
+function fadingPasses(): string[] {
+  const found = new Set<string>();
+  for (const relative of MODULES_THAT_DRAW) {
+    const text = withoutComments(readFileSync(path.join(PROJECT_ROOT, relative), 'utf8'));
+    const lines = text.split('\n');
+    lines.forEach((line, index) => {
+      const assignment = /globalAlpha\s*=\s*([^;]+);/.exec(line);
+      if (assignment === null || (assignment[1] ?? '').trim() === '1') {
+        return;
+      }
+      for (let above = index; above >= 0; above -= 1) {
+        const declaration = /^(?:export )?function ([A-Za-z0-9_$]+)\s*\(/.exec(lines[above] ?? '');
+        if (declaration !== null) {
+          found.add(`${relative.replace('src/render/', '')} ${declaration[1] ?? ''}`);
+          return;
+        }
+      }
+      found.add(`${relative} <top level>`);
+    });
+  }
+  return [...found].sort();
+}
+
+/**
+ * THE INVARIANT, STATED ONCE: EVERY PASS LEAVES `globalAlpha` AT 1.
+ *
+ * No pass here wraps itself in `save()`/`restore()`; each fades by hand and
+ * puts the alpha back at the end. That is one line per pass to forget, and a
+ * forgotten one does not fail: it tints whatever the NEXT pass draws, in a
+ * frame whose contents depend on what happened to be running, which is the
+ * kind of defect that shows up as an unexplained visual baseline flake three
+ * parts later. So the passes that fade are enumerated FROM THE SOURCE, every
+ * one of them is driven here with a state that makes it actually draw, and the
+ * context is asserted to come back at 1 afterwards. A seventh fading pass
+ * added tomorrow reddens the census below until it is driven too.
+ */
+const FADING_PASSES: readonly string[] = [
+  'effects.ts drawCelebration',
+  'effects.ts drawImpactFlashes',
+  'effects.ts drawMaximumPulse',
+  'effects.ts drawParticles',
+  'effects.ts drawTrail',
+  'effects.ts drawWallFlashes',
+  'pitch.ts drawVignette',
+];
+
+describe('PF-12 every pass leaves globalAlpha at 1', () => {
+  it('enumerates the fading passes from the source, and the list is that set', () => {
+    // THE CENSUS. The list above is the gate, so it is pinned as a value: a
+    // fading pass this file does not drive is a pass whose restore nothing
+    // checks, and a name left here after its pass is gone is a carve-out that
+    // outlived the code.
+    expect(fadingPasses()).toEqual([...FADING_PASSES]);
+    expect(FADING_PASSES).toHaveLength(7);
+    // The scan is non-vacuous in both directions: it finds these seven, and it
+    // does not find a function whose only assignment is the restore itself.
+    expect(fadingPasses()).not.toContain('effects.ts remaining');
+    expect(fadingPasses().every((entry) => entry.includes(' '))).toBe(true);
+  });
+
+  it('would see a pass that fades, and would not see one that only restores', () => {
+    // The positive and negative controls for the scanner, over sources it is
+    // handed rather than over the tree, so a scanner that had stopped scanning
+    // reports a compliant tree forever.
+    const scan = (text: string): string[] => {
+      const lines = withoutComments(text).split('\n');
+      const found: string[] = [];
+      lines.forEach((line, index) => {
+        const assignment = /globalAlpha\s*=\s*([^;]+);/.exec(line);
+        if (assignment === null || (assignment[1] ?? '').trim() === '1') {
+          return;
+        }
+        for (let above = index; above >= 0; above -= 1) {
+          const declaration = /^(?:export )?function ([A-Za-z0-9_$]+)\s*\(/.exec(
+            lines[above] ?? '',
+          );
+          if (declaration !== null) {
+            found.push(declaration[1] ?? '');
+            return;
+          }
+        }
+      });
+      return found;
+    };
+    expect(scan('function fades() {\n  context.globalAlpha = 0.5;\n}\n')).toEqual(['fades']);
+    expect(scan('export function fades() {\n  context.globalAlpha = left;\n}\n')).toEqual([
+      'fades',
+    ]);
+    expect(scan('function restores() {\n  context.globalAlpha = 1;\n}\n')).toEqual([]);
+    expect(scan('function commented() {\n  // context.globalAlpha = 0.5;\n}\n')).toEqual([]);
+  });
+
+  it('puts the alpha back after every one of them, driven so each really draws', () => {
+    const palette = PLAY_SURFACE.floodlit;
+
+    // drawTrail: a ball moving between two frames leaves segments to stroke.
+    const trail = new CanvasRecorder();
+    const trailEffects = createEffects();
+    const world = createWorld();
+    kickoff(world);
+    setVelocity(world.ball, 600, 0);
+    tick(trailEffects, world, 1 / 60);
+    set(world.ball.position, world.ball.position.x + 10, world.ball.position.y);
+    tick(trailEffects, world, 1 / 60);
+    trailEffects.drawBehind(trail.context, palette);
+    expect(trail.calls('stroke').length).toBeGreaterThan(0);
+    expect(trail.values('globalAlpha').at(-1)).toBe(1);
+    expect(trail.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+
+    // drawWallFlashes: a wall bounce staged through the real observation.
+    const wall = new CanvasRecorder();
+    const wallEffects = createEffects();
+    const bouncing = createWorld();
+    set(bouncing.ball.position, FIELD_LEFT + BALL_RADIUS + 4, 200);
+    setVelocity(bouncing.ball, -600, 0);
+    tick(wallEffects, bouncing, 1 / 60);
+    set(bouncing.ball.position, FIELD_LEFT + BALL_RADIUS, 200);
+    setVelocity(bouncing.ball, 552, 0);
+    tick(wallEffects, bouncing, 1 / 60);
+    wallEffects.drawBehind(wall.context, palette);
+    expect(wall.calls('fillRect').length).toBeGreaterThan(0);
+    expect(wall.values('globalAlpha').at(-1)).toBe(1);
+    expect(wall.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+
+    // drawImpactFlashes: the staged head-on collision this file already uses.
+    const impact = new CanvasRecorder();
+    const impactEffects = createEffects();
+    const hit = stagedImpact(impactEffects, 600, 1 / 60);
+    impactEffects.drawInFront(impact.context, palette, hit.player, null);
+    expect(impact.calls('arc').length).toBeGreaterThan(0);
+    expect(impact.values('globalAlpha').at(-1)).toBe(1);
+    expect(impact.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+
+    // drawCelebration and drawParticles: one goal, drawn in the same pass.
+    const party = new CanvasRecorder();
+    const goalEffects = createEffects();
+    const scored = createWorld();
+    goalEffects.observe({
+      world: scored,
+      scoring: oneGoal('left'),
+      elapsed: 1 / 60,
+      reducedMotion: false,
+    });
+    goalEffects.drawInFront(party.context, palette, scored.player, null);
+    expect(goalEffects.readout().celebration).toBeGreaterThan(0);
+    expect(goalEffects.readout().particles).toBeGreaterThan(0);
+    expect(party.calls('strokeRect')).toHaveLength(1);
+    expect(party.calls('arc').length).toBeGreaterThan(0);
+    expect(party.values('globalAlpha').at(-1)).toBe(1);
+    expect(party.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+    // THE CELEBRATION IS THE ONE PASS A LATER RESTORE WOULD COVER FOR, because
+    // the particles run after it and hand the alpha back themselves. So its own
+    // restore is read where it happens: the op straight after its one stroked
+    // rectangle has to be the alpha going home.
+    const celebrationAt = party.ops.findIndex((op) => op.name === 'strokeRect');
+    expect(celebrationAt).toBeGreaterThanOrEqual(0);
+    const restore = party.ops[celebrationAt + 1];
+    expect(restore?.kind).toBe('set');
+    expect(restore?.name).toBe('globalAlpha');
+    expect(restore?.args[0]).toBe(1);
+
+    // drawMaximumPulse: a full-power aim, which is the only aim it draws for.
+    const pulse = new CanvasRecorder();
+    const pulseEffects = createEffects();
+    const aiming = createWorld();
+    tick(pulseEffects, aiming, 1 / 60);
+    pulseEffects.drawInFront(pulse.context, palette, aiming.player, aimFromDrag(-180, 0));
+    expect(pulse.calls('stroke')).toHaveLength(1);
+    expect(pulse.values('globalAlpha').at(-1)).toBe(1);
+    expect(pulse.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+
+    // drawVignette: the one fading pass outside this module.
+    const vignette = new CanvasRecorder();
+    drawVignette(vignette.context, palette);
+    expect(vignette.calls('fillRect')).toHaveLength(1);
+    expect(vignette.values('globalAlpha')).toEqual([0.35, 1]);
+  });
+
+  it('leaves a whole frame at 1, which is the invariant a next frame depends on', () => {
+    // The same property over the composition rather than over one pass: a frame
+    // with every fading pass live in it ends with the context at 1, so the
+    // first pass of the NEXT frame draws at full strength.
+    const { recorder, surface, cache } = frameFixture();
+    const effects = createEffects();
+    const world = createWorld();
+    kickoff(world);
+    setVelocity(world.ball, 600, 0);
+    effects.observe({ world, scoring: oneGoal('left'), elapsed: 1 / 60, reducedMotion: false });
+    drawFrame(surface, cache, world, PLAY_SURFACE.floodlit, {
+      effects,
+      aim: aimFromDrag(-180, 0),
+    });
+    expect(recorder.values('globalAlpha').some((value) => value !== 1)).toBe(true);
+    expect(recorder.values('globalAlpha').at(-1)).toBe(1);
+  });
+});
+
+describe('PF-12 the two contact predicates, at their boundaries', () => {
+  /**
+   * `wallContact` and `pairContact` are the most delicate predicates in the
+   * renderer and they were graded only through the frames that happen to reach
+   * them. Both are exported and both are total, so they are graded here
+   * directly, at the boundary each one turns on, with literal inputs.
+   *
+   * THE FRAME LENGTH IS PART OF EVERY BOUND. A frame of `seconds` can have
+   * advanced the world by `seconds + 1/120` (the accumulator carries a
+   * remainder), so at a sixtieth the span is 0.025 and a body at 400 px/s
+   * could have covered 10 px plus the 1e-6 of slack.
+   */
+  it('reads a wall bounce at exactly one frame of travel, and not a hair beyond', () => {
+    const seconds = 1 / 60;
+    const span = seconds + 1 / 120;
+    expect(span).toBeCloseTo(0.025, 12);
+    const travel = 400 * span;
+    expect(travel).toBeCloseTo(10, 12);
+
+    // ON the bound: the circle's rim is exactly one frame of travel from the
+    // left field bound, it was moving left and it is moving right now.
+    const onTheBound = bodyAt('player', FIELD_LEFT + CIRCLE_RADIUS + travel, 300, 360, 0);
+    expect(
+      wallContact(onTheBound, sampleAt(onTheBound.position.x, 300, -400, 0), seconds),
+    ).toEqual({ x: FIELD_LEFT, y: 300, wall: 'left' });
+
+    // A tenth of a pixel past it, which is the same frame and the same
+    // reversal and is no longer a bounce: the slack is 1e-6, not a tenth.
+    const past = bodyAt('player', FIELD_LEFT + CIRCLE_RADIUS + travel + 0.1, 300, 360, 0);
+    expect(wallContact(past, sampleAt(past.position.x, 300, -400, 0), seconds)).toBeNull();
+
+    // THE DIRECTION GATE, both halves. A body still travelling into the wall
+    // has not bounced off it, and a body that was not travelling into it never
+    // met it; both are refused where the distance alone would admit them.
+    const still = bodyAt('player', FIELD_LEFT + CIRCLE_RADIUS, 300, -400, 0);
+    expect(wallContact(still, sampleAt(still.position.x, 300, -400, 0), seconds)).toBeNull();
+    const never = bodyAt('player', FIELD_LEFT + CIRCLE_RADIUS, 300, 360, 0);
+    expect(wallContact(never, sampleAt(never.position.x, 300, 0, 0), seconds)).toBeNull();
+
+    // THE GOAL OPENING IS NOT A WALL (SPEC section 6.4). A ball inside the
+    // mouth passes through the side wall rather than bouncing off it, so the
+    // side branches refuse it while the end walls still answer for it.
+    const inTheMouth = bodyAt('ball', FIELD_LEFT + BALL_RADIUS, 360, 360, 0);
+    expect(inTheMouth.position.y - BALL_RADIUS).toBeGreaterThanOrEqual(GOAL_OPENING_LOW);
+    expect(inTheMouth.position.y + BALL_RADIUS).toBeLessThanOrEqual(GOAL_OPENING_HIGH);
+    expect(
+      wallContact(inTheMouth, sampleAt(inTheMouth.position.x, 360, -400, 0), seconds),
+    ).toBeNull();
+    const highBall = bodyAt('ball', 600, FIELD_TOP - BALL_RADIUS, 0, -360);
+    expect(wallContact(highBall, sampleAt(600, highBall.position.y, 0, 400), seconds)).toEqual({
+      x: 600,
+      y: FIELD_TOP,
+      wall: 'top',
+    });
+
+    // ONE WALL PER BODY PER FRAME, and the x axis is tested first: a corner
+    // answers the side wall rather than depending on which comparison rounded.
+    const corner = bodyAt(
+      'player',
+      FIELD_LEFT + CIRCLE_RADIUS,
+      FIELD_BOTTOM + CIRCLE_RADIUS,
+      360,
+      360,
+    );
+    expect(
+      wallContact(
+        corner,
+        sampleAt(corner.position.x, corner.position.y, -400, -400),
+        seconds,
+      ),
+    ).toEqual({ x: FIELD_LEFT, y: FIELD_BOTTOM + CIRCLE_RADIUS, wall: 'left' });
+  });
+
+  it('reads a pair meeting at exactly the touching distance, and refuses a clean miss', () => {
+    // A QUARTER-SECOND FRAME, which is the clamped ceiling and the frame length
+    // the miss below was measured under: the whole point of the second gate is
+    // that a long frame turns a pass-by into a signature that looks like a
+    // meeting, so the case is taken at the length where it does.
+    const seconds = 0.25;
+    const world = createWorld();
+    const still = world.player;
+    const passing = world.ball;
+    set(still.position, 500, 360);
+    setVelocity(still, 0, 0);
+    expect(still.radius + passing.radius).toBe(52);
+
+    const meeting = (offset: number): ReturnType<typeof pairContact> => {
+      set(passing.position, 550, 360 + offset);
+      setVelocity(passing, 600, 0);
+      return pairContact(
+        still,
+        passing,
+        sampleAt(500, 360, 0, 0),
+        sampleAt(450, 360 + offset, 600, 0),
+        seconds,
+      );
+    };
+
+    // ON the bound: the closest the pair came was exactly the sum of the radii.
+    const touching = meeting(52);
+    expect(touching).not.toBeNull();
+    // The contact point is on the first body's own rim, toward the second.
+    const apart = Math.hypot(50, 52);
+    expect(touching?.x).toBeCloseTo(500 + (50 / apart) * 34, 9);
+    expect(touching?.y).toBeCloseTo(360 + (52 / apart) * 34, 9);
+
+    // A thousandth of a pixel past it is a miss, and eighteen units of clear
+    // air is the miss the second gate was built for: both were flashes before.
+    expect(meeting(52.001)).toBeNull();
+    expect(meeting(70)).toBeNull();
+
+    // THE CLOSING GATE. A pair that was already separating at the previous
+    // sample never met in this frame, whatever it is doing now.
+    expect(
+      pairContact(
+        still,
+        passing,
+        sampleAt(500, 360, 0, 0),
+        sampleAt(560, 360, 600, 0),
+        seconds,
+      ),
+    ).toBeNull();
+
+    // THE SEPARATING GATE. A pair still closing is mid-collision, one frame
+    // before the solver has pushed it apart, and has not finished meeting yet.
+    set(passing.position, 540, 360);
+    setVelocity(passing, -600, 0);
+    expect(
+      pairContact(
+        still,
+        passing,
+        sampleAt(500, 360, 0, 0),
+        sampleAt(600, 360, -600, 0),
+        seconds,
+      ),
+    ).toBeNull();
+
+    // AND THE TWO COINCIDENT REFUSALS, which keep a zero-length normal out of
+    // the answer: centres on one point before, and centres on one point now.
+    set(passing.position, 550, 360);
+    setVelocity(passing, 600, 0);
+    expect(
+      pairContact(still, passing, sampleAt(500, 360, 0, 0), sampleAt(500, 360, 600, 0), seconds),
+    ).toBeNull();
+    set(passing.position, 500, 360);
+    expect(
+      pairContact(still, passing, sampleAt(500, 360, 0, 0), sampleAt(450, 360, 600, 0), seconds),
+    ).toBeNull();
+  });
+});
+
+describe('PF-12 one arrow tracer, two drawings of it', () => {
+  it('traces the path as one closed subpath, and both callers use it', () => {
+    // `traceArrow` is the path convention: first point a moveTo, every other a
+    // lineTo, and the subpath closed. Graded directly, because the two callers
+    // agreeing with each other would agree just as well if both were wrong.
+    const direct = new CanvasRecorder();
+    traceArrow(direct.context, [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+      { x: 5, y: 6 },
+    ]);
+    expect(direct.ops.map((op) => op.name)).toEqual([
+      'beginPath',
+      'moveTo',
+      'lineTo',
+      'lineTo',
+      'closePath',
+    ]);
+    expect(direct.calls('moveTo')[0]?.args).toEqual([1, 2]);
+    expect(direct.calls('lineTo')[1]?.args).toEqual([5, 6]);
+    // An empty path opens and closes and draws nothing, which is what keeps a
+    // zero-length arrow from leaving a subpath open for the next pass.
+    const empty = new CanvasRecorder();
+    traceArrow(empty.context, []);
+    expect(empty.ops.map((op) => op.name)).toEqual(['beginPath', 'closePath']);
+
+    // AND THE TWO CALLERS TRACE THE SAME PATH FOR THE SAME AIM. The pulse used
+    // to carry its own copy of this loop, so a change to the point order would
+    // have re-traced the arrow and mis-traced the pulse.
+    const aim = aimFromDrag(-180, 0);
+    const world = createWorld();
+    kickoff(world);
+    const arrowRecorder = new CanvasRecorder();
+    drawAimArrow(arrowRecorder.context, PLAY_SURFACE.floodlit, world.player, aim);
+    const effects = createEffects();
+    tick(effects, world, 1 / 60);
+    const pulseRecorder = new CanvasRecorder();
+    effects.drawInFront(pulseRecorder.context, PLAY_SURFACE.floodlit, world.player, aim);
+    const geometry = arrowGeometry(aim.reach);
+    const expected = arrowPath(
+      world.player.position.x,
+      world.player.position.y,
+      aim.aim.angleRad,
+      geometry,
+    );
+    const traced = (recorder: CanvasRecorder): unknown[] =>
+      recorder.ops
+        .filter((op) => op.name === 'moveTo' || op.name === 'lineTo')
+        .map((op) => op.args);
+    const points = expected.map((point) => [point.x, point.y]);
+    expect(traced(arrowRecorder)).toEqual(points);
+    expect(traced(pulseRecorder)).toEqual(points);
+    expect(points).toHaveLength(7);
+  });
+});
+
+describe('PF-12 the maximum-power pulse follows the acting circle', () => {
+  it('draws one pulse, at the launcher, in a Hotseat frame', () => {
+    // SPEC SECTION 9's HOTSEAT AIMS THE OPPONENT'S CIRCLE on the second human's
+    // turn, and the arrow and the pulse are two strokes of ONE aim. The pulse
+    // read `world.player` whatever the frame said, so a full-power aim from the
+    // second circle drew a second arrow out of the first one: two arrows on the
+    // pitch, one of them belonging to nobody.
+    const { recorder, surface, cache } = frameFixture();
+    const effects = createEffects();
+    const world = createWorld();
+    kickoff(world);
+    effects.observe({ world, scoring: NO_GOALS, elapsed: 1 / 60, reducedMotion: false });
+    const aim = aimFromDrag(-180, 0);
+    expect(aim.aim.power01).toBe(1);
+    drawFrame(surface, cache, world, PLAY_SURFACE.floodlit, {
+      effects,
+      aim,
+      launcher: world.opponent,
+    });
+    // The frame draws entity markers with the same primitives, so the arrows
+    // are counted as the seven-point subpaths they are rather than as every
+    // moveTo on the surface.
+    const geometry = arrowGeometry(aim.reach);
+    const pathAt = (body: World['player']): ReadonlyArray<readonly [number, number]> =>
+      arrowPath(body.position.x, body.position.y, aim.aim.angleRad, geometry).map(
+        (point) => [point.x, point.y] as const,
+      );
+    const atOpponent = pathAt(world.opponent);
+    const atPlayer = pathAt(world.player);
+    expect(atOpponent).toHaveLength(7);
+    const subpaths = (taken: CanvasRecorder): unknown[][][] => {
+      const found: unknown[][][] = [];
+      let current: unknown[][] | null = null;
+      for (const op of taken.ops) {
+        if (op.name === 'moveTo') {
+          current = [[...op.args]];
+          found.push(current);
+          continue;
+        }
+        if (op.name === 'lineTo' && current !== null) {
+          current.push([...op.args]);
+          continue;
+        }
+        current = null;
+      }
+      return found.filter((subpath) => subpath.length === 7);
+    };
+    // TWO ARROW-SHAPED SUBPATHS AND NO MORE: the outline and its pulse, both at
+    // the opponent's circle, and neither at the player's.
+    const drawn = subpaths(recorder);
+    expect(drawn).toHaveLength(2);
+    for (const subpath of drawn) {
+      expect(subpath).toEqual(atOpponent.map((point) => [...point]));
+      expect(subpath).not.toEqual(atPlayer.map((point) => [...point]));
+    }
+
+    // AND THE DEFAULT IS UNCHANGED: with no launcher named, both are drawn at
+    // the player's circle, which is every mode but Hotseat.
+    const plain = frameFixture();
+    const plainEffects = createEffects();
+    plainEffects.observe({ world, scoring: NO_GOALS, elapsed: 1 / 60, reducedMotion: false });
+    drawFrame(plain.surface, plain.cache, world, PLAY_SURFACE.floodlit, {
+      effects: plainEffects,
+      aim,
+    });
+    const plainDrawn = subpaths(plain.recorder);
+    expect(plainDrawn).toHaveLength(2);
+    for (const subpath of plainDrawn) {
+      expect(subpath).toEqual(atPlayer.map((point) => [...point]));
+    }
+  });
+});
+
+describe('PF-12 the event log is handed out live, which the interface states', () => {
+  it('answers the same array every time, and it keeps changing under a holder', () => {
+    // THE ALIASING IS THE CONTRACT, so it is pinned rather than described. A
+    // caller that took this for a snapshot would read events that arrived after
+    // it asked, and would lose the oldest ones once the log reached its bound.
+    const effects = createEffects();
+    const held = effects.events();
+    expect(held).toHaveLength(0);
+    expect(effects.events()).toBe(held);
+    stagedImpact(effects, 600, 1 / 60);
+    expect(held.length).toBeGreaterThan(0);
+    expect(effects.events()).toBe(held);
+    // A caller that wants a snapshot takes one, which is the documented way out
+    // and the control that keeps the assertion above from being about nothing.
+    const snapshot = [...effects.events()];
+    stagedImpact(effects, 600, 1 / 60, 700, 200);
+    expect(effects.events().length).toBeGreaterThan(snapshot.length);
+    expect(snapshot).toHaveLength(1);
+  });
+});
+
+describe('PF-12 a paused match charges the effects clock nothing', () => {
+  /**
+   * SPEC section 7: entering PAUSED "zeroes nothing and steps no simulation",
+   * and this module states its own clock as advancing by the seconds the world
+   * advanced by. A paused world advances by none, so the composition root
+   * observes the frame and charges zero.
+   *
+   * TWO HALVES, GRADED SEPARATELY. That charging zero really freezes the layer
+   * is a property of this module and is driven here over the real effects. That
+   * the root charges zero while the match is paused is a property of the
+   * composition root, which no unit test can import - it is the bundler's entry
+   * and it runs on import - so it is read out of its source instead.
+   */
+  /**
+   * Every field of the readout, enumerated so that a sixth accumulator cannot
+   * arrive invisibly. It is a `Record` over the type's own keys, so a field
+   * added to `EffectsReadout` is a COMPILE error here until it is named, and
+   * the test below then holds it still across a pause like the rest.
+   *
+   * The first version of this test named five fields by hand and the layer had
+   * six that move; the one it did not name, `trailSamples`, was the one that
+   * grew without bound.
+   */
+  const EVERY_READOUT_FIELD: Readonly<Record<keyof EffectsReadout, true>> = {
+    now: true,
+    trailLength: true,
+    trailSamples: true,
+    shakeEnergy: true,
+    impactFlashes: true,
+    wallFlashes: true,
+    particles: true,
+    celebration: true,
+    draws: true,
+    refusals: true,
+  };
+
+  /** A minute of paused frames at sixty a second, which is a real pause. */
+  const PAUSED_FRAMES = 3600;
+
+  it('freezes the clock and every field of the readout for a frame worth no time', () => {
+    const effects = createEffects();
+    const world = createWorld();
+    kickoff(world);
+    // A goal, so there is a celebration, a burst of particles and a shake all
+    // running: something that would visibly age if the clock kept going.
+    effects.observe({
+      world,
+      scoring: oneGoal('left'),
+      elapsed: 1 / 60,
+      reducedMotion: false,
+    });
+    const running = effects.readout();
+    expect(running.celebration).toBeGreaterThan(0);
+    expect(running.particles).toBeGreaterThan(0);
+    const before = { ...running };
+
+    // A minute of would-be frames, every one of them charged nothing, which is
+    // what a paused match hands this layer - and a pause has no length limit.
+    for (let frame = 0; frame < PAUSED_FRAMES; frame += 1) {
+      effects.observe({ world, scoring: oneGoal('left'), elapsed: 0, reducedMotion: false });
+    }
+    const after = effects.readout();
+    // EVERY FIELD, from the type rather than from a list somebody kept up to
+    // date: the readout is the whole of what this layer retains, so a field
+    // that moved while the clock stood still is state a pause is accumulating.
+    const fields = Object.keys(EVERY_READOUT_FIELD) as ReadonlyArray<keyof EffectsReadout>;
+    expect(Object.keys(after).sort()).toEqual([...fields].sort());
+    for (const field of fields) {
+      expect(after[field], field).toBe(before[field]);
+    }
+    // Named for the reader as well, because the loop above says nothing about
+    // which fields exist if the readout ever answers an empty object.
+    expect(fields).toHaveLength(10);
+    expect(after.now).toBe(before.now);
+    expect(after.trailSamples).toBe(before.trailSamples);
+
+    // THE CONTROL: the same frames charged the time they would have taken run
+    // the celebration out entirely, so the assertions above are about the zero
+    // and not about a layer that never ages.
+    const ticking = createEffects();
+    ticking.observe({ world, scoring: oneGoal('left'), elapsed: 1 / 60, reducedMotion: false });
+    expect(ticking.readout().celebration).toBeGreaterThan(0);
+    for (let frame = 0; frame < 200; frame += 1) {
+      ticking.observe({ world, scoring: oneGoal('left'), elapsed: 1 / 60, reducedMotion: false });
+    }
+    expect(ticking.readout().now).toBeGreaterThan(before.now);
+    expect(ticking.readout().celebration).toBe(0);
+    expect(ticking.readout().particles).toBe(0);
+  });
+
+  it('keeps the trail bounded by its own window however long the pause is', () => {
+    // THE FIELD THE CLOCK CANNOT AGE. Every trail sample is stamped with `now`
+    // and dropped once `now` has moved past its life, so a frame charged
+    // nothing can push a sample and can expire none: the push is the one thing
+    // in `observe` that a frozen clock does not stop. Before the guard, a pause
+    // grew the list by one sample per frame for as long as it lasted - 3,601
+    // after this minute - and `expire`, `drawTrail` and the length sum walk
+    // every one of them on every frame of the pause.
+    const effects = createEffects();
+    const world = createWorld();
+    kickoff(world);
+    setVelocity(world.ball, 600, 0);
+    for (let frame = 0; frame < 12; frame += 1) {
+      set(world.ball.position, 300 + frame * 10, 360);
+      effects.observe({ world, scoring: NO_GOALS, elapsed: 1 / 60, reducedMotion: false });
+    }
+    const moving = effects.readout().trailSamples;
+    expect(moving).toBe(11);
+
+    for (let frame = 0; frame < PAUSED_FRAMES; frame += 1) {
+      effects.observe({ world, scoring: NO_GOALS, elapsed: 0, reducedMotion: false });
+    }
+    expect(effects.readout().trailSamples).toBe(moving);
+    expect(effects.readout().trailSamples).toBeLessThan(PAUSED_FRAMES);
+
+    // THE LIVE-CLOCK CONTROL: the same frames charged their own time keep the
+    // list at the window's own length, which is what "bounded by its own
+    // window" means and what the pause must not be allowed to escape.
+    const ticking = createEffects();
+    const running = createWorld();
+    kickoff(running);
+    setVelocity(running.ball, 600, 0);
+    for (let frame = 0; frame < PAUSED_FRAMES; frame += 1) {
+      set(running.ball.position, 300 + (frame % 60), 360);
+      ticking.observe({ world: running, scoring: NO_GOALS, elapsed: 1 / 60, reducedMotion: false });
+    }
+    expect(ticking.readout().trailSamples).toBe(11);
+    expect(ticking.readout().now).toBeCloseTo(PAUSED_FRAMES / 60, 6);
+
+    // AND REDUCED MOTION IS UNTOUCHED: every lifetime is zero there, so the
+    // sample the moving frame takes expires in the same frame it was taken.
+    const still = createEffects();
+    const quiet = createWorld();
+    setVelocity(quiet.ball, 600, 0);
+    for (let frame = 0; frame < 10; frame += 1) {
+      set(quiet.ball.position, 300 + frame * 10, 360);
+      still.observe({ world: quiet, scoring: NO_GOALS, elapsed: 1 / 60, reducedMotion: true });
+    }
+    expect(still.readout().trailSamples).toBe(0);
+    for (let frame = 0; frame < 100; frame += 1) {
+      still.observe({ world: quiet, scoring: NO_GOALS, elapsed: 0, reducedMotion: true });
+    }
+    expect(still.readout().trailSamples).toBe(0);
+  });
+
+  it('is what the composition root hands it while the match is paused', () => {
+    // THE ROOT'S HALF, READ OUT OF ITS SOURCE. `src/main.ts` is the bundler's
+    // entry and runs on import, so a unit test that imported it would boot the
+    // game; the gate is three lines long and its absence is invisible to every
+    // other assertion in the suite, which is why it is pinned as text.
+    const root = withoutComments(readFileSync(path.join(PROJECT_ROOT, 'src/main.ts'), 'utf8'));
+    expect(root).toContain("const frozen = reading.state.kind === 'PAUSED';");
+    expect(root).toContain('elapsed: frozen ? 0 : elapsed,');
+    // The readout is taken ONCE and both fields come off it, so the state the
+    // gate reads and the scoring the layer is handed are the same frame.
+    expect(root).toContain('const reading = match.readout();');
+    expect(root).toContain('scoring: reading.scoring,');
+    // And the shape that shipped before it, which is what this must not be.
+    expect(root).not.toContain('scoring: match.readout().scoring,\n      elapsed,');
   });
 });

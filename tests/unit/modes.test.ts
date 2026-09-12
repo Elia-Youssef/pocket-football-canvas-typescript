@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { ACE, CASUAL, LADDER, PRO } from '../../src/core/ai';
@@ -46,7 +50,18 @@ import type { Difficulty, ModeChoice, Progress } from '../../src/core/modes';
  * to answer for every shape a stored document can come back in, because SPEC
  * section 16's document arrives at PF-10 behind this same interface and a
  * document read from storage is untrusted input.
+ *
+ * TWO ASSERTIONS READ THE MODULE'S OWN SOURCE, and they are the two whose
+ * property is structural rather than behavioural: that one number is stated
+ * once and read, not stated twice and kept equal by hand. No comparison of
+ * values can see the difference while the copies agree, which is every moment
+ * before the edit that makes them disagree.
  */
+
+const MODES_SOURCE = readFileSync(
+  path.resolve(fileURLToPath(import.meta.url), '../../../src/core/modes.ts'),
+  'utf8',
+);
 
 describe('PF-9 the modes, SPEC section 9', () => {
   it('offers the durations and the targets the section states, and no others', () => {
@@ -55,6 +70,30 @@ describe('PF-9 the modes, SPEC section 9', () => {
     expect(DEFAULT_DURATION).toBe(60);
     expect(DEFAULT_TARGET).toBe(3);
     expect(DEFAULT_MODE).toEqual({ kind: 'quick', duration: 60, difficulty: 'casual' });
+  });
+
+  it('states the section default length once, and the default mode reads it', () => {
+    // TWO LITERALS FOR ONE NUMBER IS ONE TOO MANY, and no comparison of values
+    // can tell a derived 60 from a copied one: both pass while the two are
+    // equal, which is exactly the window in which a copy is harmless and the
+    // day after an edit is when it is not. So the tie is read out of the source
+    // instead. `DEFAULT_MODE` names the constant; the assertion above holds the
+    // constant to SPEC section 9's number.
+    expect(MODES_SOURCE).toMatch(
+      /export const DEFAULT_MODE: ModeChoice = \{\n {2}kind: 'quick',\n {2}duration: DEFAULT_DURATION,\n/,
+    );
+    if (DEFAULT_MODE.kind !== 'quick') {
+      throw new Error('SPEC section 9 makes the default mode a Quick Match');
+    }
+    expect(DEFAULT_MODE.duration).toBe(DEFAULT_DURATION);
+    // The positive control: the shape this pattern is supposed to refuse is the
+    // one that shipped, and a pattern that had stopped matching would report a
+    // tied tree forever.
+    expect(
+      /export const DEFAULT_MODE: ModeChoice = \{\n {2}kind: 'quick',\n {2}duration: DEFAULT_DURATION,\n/.test(
+        "export const DEFAULT_MODE: ModeChoice = {\n  kind: 'quick',\n  duration: 60,\n",
+      ),
+    ).toBe(false);
   });
 
   it('builds a Quick Match with a clock and no target', () => {
@@ -180,6 +219,34 @@ describe('PF-9 the ladder, SPEC section 10', () => {
       expect(difficultyAt(index + 1)).toBe(difficulty);
       expect(difficultyOf({ kind: 'ladder', rung: index + 1 })).toBe(difficulty);
     }
+  });
+
+  it('answers a position with no row the same way in both tables', () => {
+    // THE TWO TABLES ARE INDEXED THE SAME WAY AND ANSWER THE SAME WAY. They
+    // used to disagree about a position that reaches neither: the rung threw
+    // and the difficulty answered Casual, so a difficulty column that had
+    // quietly become short would have been masked while the rung beside it
+    // raised. Both throw now, and both take the same clamp to get there.
+    expect(LADDER_DIFFICULTY).toHaveLength(LADDER.length);
+    expect(LADDER_DIFFICULTY).toHaveLength(6);
+    // The clamp is what makes the refusal unreachable for an ordered position:
+    // every one of these lands on a row, at both ends, past both, and at the
+    // two infinities, which the two comparisons order like any other number.
+    for (const position of [
+      -99, 0, 0.5, 1, 3.7, 6, 6.9, 99, 1e9,
+      Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY,
+    ]) {
+      expect(() => rungAt(position), String(position)).not.toThrow();
+      expect(() => difficultyAt(position), String(position)).not.toThrow();
+      expect(difficultyAt(position), String(position)).toBe(
+        LADDER_DIFFICULTY[LADDER.indexOf(rungAt(position))],
+      );
+    }
+    // What is left is a position that is not a number, which is not a rung
+    // either: NaN is ordered by neither comparison, so the clamp passes it
+    // through and both tables miss. One reading, stated once in the module.
+    expect(() => rungAt(Number.NaN)).toThrow(/the ladder has no rung/);
+    expect(() => difficultyAt(Number.NaN)).toThrow(/the ladder has no difficulty/);
   });
 
   it('advances on a win, restarts on a loss, and replays a draw', () => {

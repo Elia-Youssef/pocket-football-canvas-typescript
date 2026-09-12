@@ -68,7 +68,19 @@ import { createAimControls } from './ui/components/aim-controls';
 import type { GameOverContext } from './ui/components/game-over-panel';
 import { mountChrome } from './ui/layout';
 
-export const GAME_ID = 'pocket-football';
+/**
+ * The marker the compiled module stamps on the document, which is how a browser
+ * test tells a served bundle from a running one.
+ *
+ * NOT EXPORTED, BECAUSE NOTHING IMPORTS THIS MODULE. `main.ts` is the
+ * composition root: it is the bundler's entry, it runs on import, and no other
+ * module names it. An export here was a promise to a caller that does not
+ * exist, and one nothing could grade - a unit test importing this file would
+ * boot the game. What holds the value is `tests/browser/scaffold.spec.ts`,
+ * which reads the attribute off the running page, which is the only place the
+ * marker means anything.
+ */
+const GAME_ID = 'pocket-football';
 
 /** SPEC section 18: the chrome theme chooses the pitch's brightness variant. */
 const THEME_QUERY = '(prefers-color-scheme: dark)';
@@ -193,7 +205,8 @@ function applyViewport(): void {
   root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';
 }
 
-export function boot(): void {
+/** Stamp the marker. Called below, on import, and by nothing outside this file. */
+function boot(): void {
   document.documentElement.dataset['game'] = GAME_ID;
 }
 
@@ -476,14 +489,33 @@ function mountPlaySurface(
    * resize and by a theme change, which advance no time at all. There is no
    * effects layer at all until a mode has started a match, which is the one
    * state where nothing on the pitch is moving by construction.
+   *
+   * A PAUSED MATCH CHARGES THE EFFECTS CLOCK NOTHING. SPEC section 7 says of
+   * PAUSED that entering it "zeroes nothing and steps no simulation", and
+   * `render/effects.ts` states its own clock as advancing by the seconds the
+   * world advanced by. The world advances by none while the match is paused, so
+   * the pass observes the frame and charges no time: a celebration or a trail
+   * interrupted by a pause resumes exactly where it stopped, instead of having
+   * aged out behind the overlay while the pitch under it was frozen. The frame
+   * is still observed rather than skipped, because the layer samples each body
+   * to derive its contacts and a skipped frame would leave it comparing the
+   * next real frame against a stale sample.
+   *
+   * MENU AND GAME_OVER ARE FROZEN TOO AND ARE DELIBERATELY NOT GATED HERE.
+   * Neither is a state play resumes from, so neither has anything to resume:
+   * the celebration still running when the whistle goes is meant to finish, and
+   * a match left for the menu is replaced by a fresh effects layer the moment
+   * the next one starts. The pause is the one freeze that has another side.
    */
   const refresh = (elapsed: number): void => {
     input.refresh(elapsed);
     controls.sync(elapsed, input.preview(), input.allowed());
+    const reading = match.readout();
+    const frozen = reading.state.kind === 'PAUSED';
     context.effects()?.observe({
       world,
-      scoring: match.readout().scoring,
-      elapsed,
+      scoring: reading.scoring,
+      elapsed: frozen ? 0 : elapsed,
       reducedMotion: reducedMotionInForce(),
     });
   };
@@ -615,6 +647,19 @@ function mount(host: HTMLElement): void {
     chrome.sync();
   }
 
+  // THE SURFACE IS MOUNTED BEFORE THE CHROME, AND FIVE CLOSURES HERE NAME A
+  // `chrome` DECLARED BELOW IT. That is a real temporal dependency and it is
+  // written down rather than left to be re-derived: `pauseNow` above, and the
+  // theme, size, hint and reset callbacks in the `mountChrome` options, all
+  // read `chrome`, and every one of them is a callback the platform raises. The
+  // earliest any of them can run is a pointer press or a key, which is a task
+  // after this whole function has returned, so the binding is always
+  // initialised by then. The order cannot simply be swapped: the chrome's own
+  // options call `play.render()` and `play.setScale()`, so the two mounts refer
+  // to each other and one of them has to be second. What would break this is a
+  // closure here being CALLED during the mount rather than stored by it, which
+  // would reach the binding in its temporal dead zone and raise; the two mount
+  // functions store their callbacks and call none of them.
   const play = mountPlaySurface(host, {
     match,
     glyphs: () => glyphsForOpponent(setup.opponentName),

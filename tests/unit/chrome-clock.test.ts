@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { ceilingSeconds, formatClock, formatNumber } from '../../src/ui/components/clock';
+import {
+  ceilingSeconds,
+  formatClock,
+  formatNumber,
+  hostLocales,
+} from '../../src/ui/components/clock';
 
 /**
  * The clock face, SPEC section 12: `MM:SS`, ceiling-rounded, so it reads
@@ -125,6 +130,50 @@ describe('PF-13 the match clock face', () => {
       vi.stubGlobal('navigator', { languages: ['en-US'] });
       expect(formatNumber(7)).toBe('7');
       expect(arabic).not.toBe('7');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('PF-13 the host language list, item M1', () => {
+  /**
+   * QUALITY-BAR section 11 wants the locale list stated rather than defaulted,
+   * and `hostLocales` is the half of that statement that reads the platform.
+   * It was exported and read only from inside its own module, so nothing held
+   * it to an answer: a version that returned `navigator.language` as a string,
+   * or the live array by reference, would have passed every gate.
+   */
+  it('reads the host list, copies it, and answers for a host that names none', () => {
+    vi.stubGlobal('navigator', { languages: ['fr-CA', 'en-US'] });
+    try {
+      expect(hostLocales()).toEqual(['fr-CA', 'en-US']);
+      // A COPY, NOT THE PLATFORM'S OWN ARRAY. The formatter cache keys on this
+      // list, so a caller handed the live one would compare it against itself
+      // after the platform changed it and would never rebuild.
+      const taken = hostLocales();
+      expect(taken).not.toBe(navigator.languages);
+      vi.stubGlobal('navigator', { languages: ['ar-EG'] });
+      expect(taken).toEqual(['fr-CA', 'en-US']);
+      expect(hostLocales()).toEqual(['ar-EG']);
+      // A host with the property missing, which is a real platform state and
+      // not a defensive hypothetical: `navigator.languages` is absent in a
+      // worker on some engines.
+      vi.stubGlobal('navigator', {});
+      expect(hostLocales()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('answers no host at all with no locales, rather than raising', () => {
+    // The unit suite itself runs with no `navigator` on some configurations,
+    // which is the case this guard exists for; the documented fallback the
+    // module appends is what the formatters then resolve against.
+    vi.stubGlobal('navigator', undefined);
+    try {
+      expect(hostLocales()).toEqual([]);
+      expect(formatNumber(7)).toBe('7');
     } finally {
       vi.unstubAllGlobals();
     }

@@ -10,6 +10,7 @@ import { createMatch } from '../../src/core/match';
 import { set } from '../../src/core/vec2';
 import { createAimControls } from '../../src/ui/components/aim-controls';
 import { mountChrome } from '../../src/ui/layout';
+import { chromeOptions, modeWiring } from './support/chrome-options';
 import {
   censusControls,
   findAllByTag,
@@ -211,7 +212,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     const installed = installFakeDocument();
     try {
       const host = installed.document.createElement('div');
-      mountChrome(host as unknown as HTMLElement, { match: createMatch(), onThemeChange: () => undefined });
+      mountChrome(host as unknown as HTMLElement, chromeOptions());
       const root = host as unknown as FakeElement;
       expect(findAllByTag(root, 'CANVAS')).toEqual([]);
       expect(findAllByTag(root, 'BUTTON').length).toBeGreaterThan(0);
@@ -236,22 +237,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       // SPEC section 2.1's portrait hint and the four play-surface sizes
       // QUALITY-BAR section 4 offers; nothing that was here was removed or
       // renamed at any of them.
-      mountChrome(host as unknown as HTMLElement, {
-        match: createMatch(),
-        onThemeChange: () => undefined,
-        modes: {
-          initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
-          guideOn: true,
-          onStart: () => undefined,
-          onPlayAgain: () => undefined,
-          onChangeMode: () => undefined,
-          onNextOpponent: () => undefined,
-          onRestartLadder: () => undefined,
-          onHowToDismissed: () => undefined,
-          ladderRung: () => 1,
-          gameOver: () => ({ opponentName: 'Opponent' }),
-        },
-      });
+      mountChrome(host as unknown as HTMLElement, chromeOptions());
       const census = censusControls(host as unknown as FakeElement);
       // ENUMERATED BY FOCUSABILITY, not by tag. The helper walked BUTTON and
       // INPUT alone until this vehicle, so a `<select>`, a `<textarea>`, an
@@ -319,10 +305,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     try {
       const document = installed.document;
       const host = document.createElement('div');
-      mountChrome(host as unknown as HTMLElement, {
-        match: createMatch(),
-        onThemeChange: () => undefined,
-      });
+      mountChrome(host as unknown as HTMLElement, chromeOptions());
       const root = host as unknown as FakeElement;
       const panel = findByMarker(root, 'panel-settings');
       if (panel === undefined) {
@@ -492,22 +475,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         // The chrome as the composition root mounts it, mode menu included,
         // which is the same mount the freeze above censuses; a mount without
         // the menu builds fewer panels and would count a page nobody ships.
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-          modes: {
-            initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
-            guideOn: true,
-            onStart: () => undefined,
-            onPlayAgain: () => undefined,
-            onChangeMode: () => undefined,
-            onNextOpponent: () => undefined,
-            onRestartLadder: () => undefined,
-            onHowToDismissed: () => undefined,
-            ladderRung: () => 1,
-            gameOver: () => ({ opponentName: 'Opponent' }),
-          },
-        });
+        mountChrome(host as unknown as HTMLElement, chromeOptions());
         const controls = createAimControls({
           onAim: () => undefined,
           onLaunch: () => undefined,
@@ -533,22 +501,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     const installed = installFakeDocument();
     try {
       const host = installed.document.createElement('div');
-      mountChrome(host as unknown as HTMLElement, {
-        match: createMatch(),
-        onThemeChange: () => undefined,
-        modes: {
-          initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
-          guideOn: true,
-          onStart: () => undefined,
-          onPlayAgain: () => undefined,
-          onChangeMode: () => undefined,
-          onNextOpponent: () => undefined,
-          onRestartLadder: () => undefined,
-          onHowToDismissed: () => undefined,
-          ladderRung: () => 1,
-          gameOver: () => ({ opponentName: 'Opponent' }),
-        },
-      });
+      mountChrome(host as unknown as HTMLElement, chromeOptions());
       const aim = createAimControls({
         onAim: () => undefined,
         onLaunch: () => undefined,
@@ -571,7 +524,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     try {
       const host = installed.document.createElement('div');
       const match = createMatch();
-      const chrome = mountChrome(host as unknown as HTMLElement, { match, onThemeChange: () => undefined });
+      const chrome = mountChrome(host as unknown as HTMLElement, chromeOptions({ match }));
       const root = host as unknown as FakeElement;
       const pausePanel = findByMarker(root, 'panel-pause');
       const pauseControl = findByMarker(root, 'pause');
@@ -609,10 +562,7 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     try {
       const host = installed.document.createElement('div');
       const match = createMatch();
-      const chrome = mountChrome(host as unknown as HTMLElement, {
-        match,
-        onThemeChange: () => undefined,
-      });
+      const chrome = mountChrome(host as unknown as HTMLElement, chromeOptions({ match }));
       const root = host as unknown as FakeElement;
       const pausePanel = findByMarker(root, 'panel-pause');
       const settingsPanel = findByMarker(root, 'panel-settings');
@@ -658,10 +608,21 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     try {
       const host = installed.document.createElement('div');
       const match = createMatch({ target: 1 });
-      const chrome = mountChrome(host as unknown as HTMLElement, {
-        match,
-        onThemeChange: () => undefined,
-      });
+      // SPEC section 13's Play Again is the composition root's, not the
+      // wiring's: the root restarts the match in place and syncs. Wired here
+      // the way the root wires it, because the mode menu is always mounted and
+      // the panel's action is the one the menu supplied.
+      const chrome = mountChrome(
+        host as unknown as HTMLElement,
+        chromeOptions({
+          match,
+          modes: modeWiring({
+            onPlayAgain: () => {
+              match.restart();
+            },
+          }),
+        }),
+      );
       const root = host as unknown as FakeElement;
       const gamePanel = findByMarker(root, 'panel-game-over');
       const pauseControl = findByMarker(root, 'pause');
@@ -670,6 +631,11 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
       // the turn-flow tests use to set up a scenario place the ball before
       // the right mouth with the speed to finish the job.
       match.dispatch({ kind: 'start' });
+      // The composition root syncs every frame, so the menu is put away the
+      // frame the match starts and hands its focus back before anything else
+      // opens. Driving straight from the mount to GAME_OVER without it would
+      // reach the whistle with the menu still open, which no frame driver can.
+      chrome.sync();
       set(match.world.ball.position, 1100, 360);
       setVelocity(match.world.ball, 400, 0);
       let guard = 0;
@@ -702,17 +668,25 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
     try {
       const host = installed.document.createElement('div');
       let reRendered = 0;
-      mountChrome(host as unknown as HTMLElement, {
-        match: createMatch(),
-        onThemeChange: () => {
-          reRendered += 1;
-        },
-      });
+      mountChrome(
+        host as unknown as HTMLElement,
+        chromeOptions({
+          onThemeChange: () => {
+            reRendered += 1;
+          },
+        }),
+      );
       const root = host as unknown as FakeElement;
-      const inputs = findAllByTag(root, 'INPUT');
+      const settingsPanel = findByMarker(root, 'panel-settings');
+      if (settingsPanel === undefined) {
+        throw new Error('the settings panel is not in the chrome');
+      }
+      const inputs = findAllByTag(settingsPanel, 'INPUT');
       // Seven from PF-14: the three theme radios, then the four play-surface
       // sizes. The theme group is still the first three and is named here, so
-      // an index below cannot quietly land on a different control.
+      // an index below cannot quietly land on a different control. Scoped to
+      // the settings panel, because the mode menu the composition root always
+      // mounts carries inputs of its own and none of them is a theme.
       expect(inputs).toHaveLength(7);
       expect(inputs.map((input) => input.parentElement?.tagName)).toEqual([
         'LABEL',

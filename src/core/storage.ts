@@ -175,7 +175,7 @@ export interface GameData {
  * The aim guide's default is SPEC section 11's function of the difficulty
  * rather than a second copy of its answer.
  */
-export const NEW_SETTINGS: Settings = {
+export const NEW_SETTINGS: Settings = Object.freeze({
   mode: 'quick',
   duration: DEFAULT_DURATION,
   target: DEFAULT_TARGET,
@@ -186,7 +186,7 @@ export const NEW_SETTINGS: Settings = {
   volume: 1,
   motion: 'system',
   surfaceScale: 100,
-};
+});
 
 /** One answer per mode, built by name so the four are total by construction. */
 function mapRecords(build: (mode: ModeKind) => ModeRecord | null): Records {
@@ -198,21 +198,38 @@ function mapRecords(build: (mode: ModeKind) => ModeRecord | null): Records {
   };
 }
 
-export const NEW_RECORDS: Records = mapRecords(() => null);
+export const NEW_RECORDS: Records = Object.freeze(mapRecords(() => null));
 
-export const NEW_COUNTERS: Counters = {
+export const NEW_COUNTERS: Counters = Object.freeze({
   matchesPlayed: 0,
   goalsFor: 0,
   goalsAgainst: 0,
-};
+});
 
-/** A player who has never opened the game, in every field the document has. */
-export const NEW_DATA: GameData = {
+/**
+ * A player who has never opened the game, in every field the document has.
+ *
+ * FROZEN, AND SO IS EVERY DEFAULT IT IS MADE OF. `readonly` is a compile-time
+ * promise and this module hands the object itself out: `data()` returns `held`,
+ * which IS this constant until something is saved, and `clear()` puts it back.
+ * A caller that wrote through the returned reference would edit the defaults
+ * every later reader sees, for the life of the page, and TypeScript would say
+ * nothing about it the moment the reference passed through an `unknown` or a
+ * JSON round trip. Freezing makes the write throw where the module runs, which
+ * is under ES module strict mode everywhere this ships.
+ *
+ * THE FREEZE REACHES THE WHOLE DOCUMENT because every field of it is one of the
+ * frozen constants above: the shallowness of `Object.freeze` would otherwise
+ * leave `data().settings.theme` writable, which is the field a caller is most
+ * likely to reach for. `NEW_PROGRESS` is frozen in `core/modes.ts`, where it is
+ * declared, for the same reason and by the same rule.
+ */
+export const NEW_DATA: GameData = Object.freeze({
   progress: NEW_PROGRESS,
   settings: NEW_SETTINGS,
   records: NEW_RECORDS,
   counters: NEW_COUNTERS,
-};
+});
 
 /* ---------------------------------------------------------------------------
  * The normalise door. Nothing below trusts anything it is handed.

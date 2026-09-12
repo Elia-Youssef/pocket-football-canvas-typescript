@@ -10,7 +10,7 @@ import {
   planShot,
   respond,
 } from '../../src/core/ai'; // the opponent routine
-import type { OpponentProfile } from '../../src/core/ai'; // the opponent's profile shape // the opponent routine
+import type { OpponentProfile } from '../../src/core/ai'; // the opponent's profile shape
 import { createWorld, everyBodyStopped, launch } from '../../src/core/bodies';
 import {
   BALL_RADIUS,
@@ -253,6 +253,67 @@ describe('PF-8 the reachable cone, item D3', () => {
     expect(choice.y).toBeCloseTo(reference.y, 12);
     expect(choice.x).toBeCloseTo(1, 12); // the far side, straight down the pitch
     expect(choice.solidity).toBeCloseTo(1, 12);
+  });
+
+  it('refuses a side projected at exactly the touching distance, which is the strict test', () => {
+    // SPEC SECTION 8.1 WRITES ITS REACHABLE TEST WITH A STRICT `>`, and this is
+    // the case that tells the two operators apart: the offset projected on the
+    // ideal side is EXACTLY the touching distance, so `>` refuses it and `>=`
+    // admits it. The ideal side here is (1, 0) because the target is the left
+    // goal and the strike point is the far one, so the projection is just the
+    // x offset and 52 is a literal rather than an arithmetic accident.
+    const ball = { x: 640, y: 360 };
+    const striker = { x: 692, y: 390 };
+    expect(striker.x - ball.x).toBe(TOUCHING);
+    expect(TOUCHING).toBe(52);
+    const choice = chooseStrikeSide(striker, ball, TARGET);
+    const reference = clampToCone(striker, ball, TARGET, MIN_STRIKE_SOLIDITY);
+    expect(choice.clamped).toBe(true);
+    expect(reference.clamped).toBe(true);
+    expect(choice.x).toBeCloseTo(reference.x, 12);
+    expect(choice.y).toBeCloseTo(reference.y, 12);
+    // The refusal is not marginal: the ideal's cosine is 0.8661855858 at this
+    // gap and the cone wants 0.9482048885, so it misses by a wide margin. The
+    // side that made it is the clamped one, at the floor.
+    const gap = distance(striker, ball);
+    expect(gap).toBeCloseTo(60.0333240792, 9);
+    expect(TOUCHING / gap).toBeCloseTo(0.8661855858, 9);
+    expect(coneBound(gap, MIN_STRIKE_SOLIDITY)).toBeCloseTo(0.9482048885, 9);
+    expect(choice.solidity).toBeCloseTo(0.25, 9);
+    // AND THE ONE CONFIGURATION WHERE THE STRICT TEST IS NOT APPLIED, which the
+    // module's header names: a striker already ON the touching distance, on the
+    // ideal side's own axis, has no path left to arrive along. The transfer
+    // there is 0/0 rather than 0, and both the routine and the independent
+    // reference read it as the dead-centre strike it geometrically is.
+    const resting = { x: 692, y: 360 };
+    expect(distance(resting, ball)).toBe(TOUCHING);
+    const contact = chooseStrikeSide(resting, ball, TARGET);
+    const restingReference = clampToCone(resting, ball, TARGET, MIN_STRIKE_SOLIDITY);
+    expect(contact.clamped).toBe(false);
+    expect(restingReference.clamped).toBe(false);
+    expect(contact.x).toBeCloseTo(1, 12);
+    expect(contact.solidity).toBe(1);
+    expect(restingReference.solidity).toBe(1);
+    // The bound is 1 at exactly the touching distance and above the bare
+    // reachability cosine at every gap past it, which is what makes one test
+    // carry both rules and why the refusal above needs no second comparison.
+    //
+    // THE SAMPLES START INSIDE THE FIRST HALF PIXEL, because that is where the
+    // two curves are close enough for the claim to be worth making: the margin
+    // is the thing that closes, not the inequality. It is zero at 52, and the
+    // three samples below 52.5 are the ones that say "strictly above" rather
+    // than "comfortably above somewhere else".
+    expect(coneBound(TOUCHING, MIN_STRIKE_SOLIDITY)).toBeCloseTo(1, 12);
+    for (const wider of [52.000001, 52.01, 52.1, 52.25, 52.5, 55, 60, 80, 120, 300, 600, 1160]) {
+      expect(coneBound(wider, MIN_STRIKE_SOLIDITY), String(wider)).toBeGreaterThan(
+        TOUCHING / wider,
+      );
+    }
+    // And the margin itself, pinned where the module's header quotes it, so a
+    // sentence that says 0.0046 is a sentence a test holds to the arithmetic.
+    expect(coneBound(52.1, MIN_STRIKE_SOLIDITY) - TOUCHING / 52.1).toBeCloseTo(0.0018925, 7);
+    expect(coneBound(52.25, MIN_STRIKE_SOLIDITY) - TOUCHING / 52.25).toBeCloseTo(0.0046243, 7);
+    expect(coneBound(60, MIN_STRIKE_SOLIDITY) - TOUCHING / 60).toBeCloseTo(0.0818097, 7);
   });
 
   it('clamps to the closest admissible side when the striker stands between ball and goal', () => {

@@ -212,6 +212,49 @@ describe('PF-9 the aim guide, SPEC section 11', () => {
     }
   });
 
+  it('answers a ball nobody can locate with the degenerate path, not a refusal', () => {
+    // THE THIRD INPUT, WHICH IS DELIBERATELY NOT GUARDED. The door refuses a
+    // direction and a starting point and says in as many words that the ball's
+    // position is left to the arithmetic below it; this pins the answer that
+    // decision produces, so the asymmetry is a reading somebody can check
+    // rather than a gap somebody has to re-derive. A guard added at the door
+    // would turn every case here into the empty path and redden this test,
+    // which is the point of writing it down.
+    //
+    // WHY IT IS THIS ANSWER. Every comparison against a NaN discriminant is
+    // false, so `distanceToContact` falls through to zero and reports a contact
+    // where the circle already stands: a two-point path of zero length, a
+    // contact at the start, and no bounce. It draws nothing and predicts
+    // nothing, which is why it is survivable; it is not the empty path.
+    for (const angle of [degrees(45), degrees(135), degrees(200), degrees(310)]) {
+      for (const [x, y] of [
+        [Number.NaN, 360],
+        [640, Number.NaN],
+        [Number.POSITIVE_INFINITY, 360],
+        [640, Number.NEGATIVE_INFINITY],
+      ] as const) {
+        const world = placed([300, 360], [640, 360]);
+        set(world.ball.position, x, y);
+        const guide = predictGuide(world.player, world.ball, angle);
+        expect(guide.path).toHaveLength(2);
+        expect(guide.path[0]).toEqual({ x: 300, y: 360 });
+        expect(guide.path[1]).toEqual({ x: 300, y: 360 });
+        expect(guide.contact).toEqual({ x: 300, y: 360 });
+        expect(guide.bounce).toBeUndefined();
+      }
+    }
+    // And a ball whose RADIUS is not a number takes the same path through the
+    // same arithmetic, which is the half a position-only guard would still miss.
+    const world = placed([300, 360], [640, 360]);
+    (world.ball as { radius: number }).radius = Number.NaN;
+    const guide = predictGuide(world.player, world.ball, degrees(45));
+    expect(guide.contact).toEqual({ x: 300, y: 360 });
+    // The control that keeps all of this from passing over a broken fixture: a
+    // locatable ball out of the line of the shot predicts a real bounce.
+    const sound = placed([300, 360], [640, 100]);
+    expect(predictGuide(sound.player, sound.ball, degrees(45)).bounce).toBe('top');
+  });
+
   it('never predicts a second bounce, swept over the whole circle', () => {
     // THE NEGATIVE CONTROL FOR "EXACTLY ONE". Every direction, from a grid of
     // starting points, with the ball moved out of the way and left in it.

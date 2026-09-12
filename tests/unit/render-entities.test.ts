@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { createWorld } from '../../src/core/bodies';
 import { CIRCLE_RADIUS } from '../../src/core/config';
-import { drawEntities, glyphsForOpponent, kickoffFacing } from '../../src/render/entities';
+import {
+  DEFAULT_GLYPHS,
+  drawEntities,
+  facingToward,
+  glyphsForOpponent,
+  kickoffFacing,
+} from '../../src/render/entities';
 import { PLAY_SURFACE } from '../../src/render/tokens';
 import { CanvasRecorder } from './support/canvas-recorder';
 
@@ -224,5 +230,65 @@ describe('PF-11 the three bodies', () => {
     for (const distance of centres) {
       expect(distance[0]).toBeCloseTo(18 * 1.05, 9);
     }
+  });
+});
+
+describe('PF-11 the two entity values the frame is built from', () => {
+  /**
+   * `DEFAULT_GLYPHS` and `facingToward` are exported and were read only from
+   * inside their own module, so nothing outside it held either to a value.
+   * Both carry a SPEC section 4 statement: the pair of kickoff initials, and
+   * the direction a circle looks in, which is an angle in DESIGN space with y
+   * UP. A `facingToward` written for canvas coordinates would point every
+   * marker at the mirror image of where it is going and every test that reads
+   * it back through the same function would agree with it.
+   */
+  it('names the two kickoff glyphs SPEC section 4 states, and nothing else', () => {
+    expect(DEFAULT_GLYPHS).toEqual({ player: 'P', opponent: 'O' });
+    expect(Object.keys(DEFAULT_GLYPHS)).toEqual(['player', 'opponent']);
+    // The opponent's is the fallback the named-opponent derivation falls back
+    // TO, which is the one relationship between the two exports.
+    expect(glyphsForOpponent('   ').opponent).toBe(DEFAULT_GLYPHS.opponent);
+    expect(glyphsForOpponent('Meridian').player).toBe(DEFAULT_GLYPHS.player);
+    expect(glyphsForOpponent('Meridian').opponent).toBe('M');
+  });
+
+  it('measures a facing in design space, y up, in all four quadrants', () => {
+    // The four axes, by literal, with the y terms the way design space reads
+    // them: up the pitch is a POSITIVE quarter turn, not a negative one.
+    expect(facingToward(0, 0, 10, 0)).toBe(0);
+    expect(facingToward(0, 0, 0, 10)).toBeCloseTo(Math.PI / 2, 12);
+    expect(facingToward(0, 0, -10, 0)).toBeCloseTo(Math.PI, 12);
+    expect(facingToward(0, 0, 0, -10)).toBeCloseTo(-Math.PI / 2, 12);
+    // And the four diagonals, which is where a mirrored reading agrees on two
+    // of the axes and disagrees everywhere else.
+    expect(facingToward(100, 100, 110, 110)).toBeCloseTo(Math.PI / 4, 12);
+    expect(facingToward(100, 100, 90, 110)).toBeCloseTo((3 * Math.PI) / 4, 12);
+    expect(facingToward(100, 100, 90, 90)).toBeCloseTo((-3 * Math.PI) / 4, 12);
+    expect(facingToward(100, 100, 110, 90)).toBeCloseTo(-Math.PI / 4, 12);
+    // It is translation invariant, which is what makes it a direction rather
+    // than a position, and a point on itself has no direction to give.
+    expect(facingToward(500, 360, 560, 420)).toBe(facingToward(0, 0, 60, 60));
+    expect(facingToward(500, 360, 500, 360)).toBe(0);
+    // The kickoff facings are this function over the world, so the two agree
+    // by construction rather than by two readings of the same geometry.
+    const world = createWorld();
+    const facing = kickoffFacing(world);
+    expect(facing.player).toBe(
+      facingToward(
+        world.player.position.x,
+        world.player.position.y,
+        world.ball.position.x,
+        world.ball.position.y,
+      ),
+    );
+    expect(facing.opponent).toBe(
+      facingToward(
+        world.opponent.position.x,
+        world.opponent.position.y,
+        world.ball.position.x,
+        world.ball.position.y,
+      ),
+    );
   });
 });

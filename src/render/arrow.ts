@@ -128,6 +128,35 @@ export function arrowPath(
   ];
 }
 
+/**
+ * The arrow's path, traced onto a context as one closed subpath.
+ *
+ * IT LIVES HERE BECAUSE THE PATH CONVENTION DOES. `arrowPath` returns points in
+ * a fixed order starting at the base, and turning that order into `moveTo` and
+ * `lineTo` calls is part of the convention rather than a detail of whoever is
+ * drawing: the same six-line loop was written out twice, here and in the
+ * maximum-power pulse in `effects.ts`, so a change to the order or to the
+ * closing rule would have re-traced one drawing and mis-traced the other. One
+ * tracer, two callers, and the pulse is the arrow's own outline by construction.
+ *
+ * The caller owns the style and the stroke or fill that follows; this opens the
+ * path and closes it and does nothing else.
+ */
+export function traceArrow(
+  context: CanvasRenderingContext2D,
+  path: readonly ArrowPoint[],
+): void {
+  context.beginPath();
+  for (const [index, point] of path.entries()) {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  }
+  context.closePath();
+}
+
 function channelAt(hex: string, at: number): number {
   const value = Number.parseInt(hex.slice(at, at + 2), 16);
   return Number.isFinite(value) ? value : 0;
@@ -193,21 +222,10 @@ export function drawAimArrow(
   if (geometry.shaftLength <= 0) {
     return;
   }
-  const path = arrowPath(
-    body.position.x,
-    body.position.y,
-    preview.aim.angleRad,
-    geometry,
+  traceArrow(
+    context,
+    arrowPath(body.position.x, body.position.y, preview.aim.angleRad, geometry),
   );
-  context.beginPath();
-  for (const [index, point] of path.entries()) {
-    if (index === 0) {
-      context.moveTo(point.x, point.y);
-    } else {
-      context.lineTo(point.x, point.y);
-    }
-  }
-  context.closePath();
   if (preview.launchable) {
     context.fillStyle = rampColour(palette, preview.aim.power01);
     context.fill();

@@ -78,7 +78,7 @@ import { ballFitsOpening } from '../core/goals';
 import type { GoalMouth, ScoringReadout } from '../core/goals';
 import { createRng } from '../core/rng';
 import type { Rng } from '../core/rng';
-import { arrowGeometry, arrowPath } from './arrow';
+import { arrowGeometry, arrowPath, traceArrow } from './arrow';
 import { TAU } from './entities';
 import { BORDER, RADIUS, SPACE, duration } from './tokens';
 import type { PitchPalette } from './tokens';
@@ -274,11 +274,24 @@ export interface EffectsFrame {
   shake(renderedHeight: number): ShakeOffset;
   /** DESIGN section 7's effects-behind-entities pass. */
   drawBehind(context: CanvasRenderingContext2D, palette: PitchPalette): void;
-  /** DESIGN section 7's effects-in-front pass, after the aim arrow. */
+  /**
+   * DESIGN section 7's effects-in-front pass, after the aim arrow.
+   *
+   * `launcher` IS THE BODY THE AIM BELONGS TO, not the world. The only thing
+   * this pass reads from a body is where the maximum-power pulse is drawn, and
+   * the pulse is the aim arrow's own outline, so it has to start at the circle
+   * the arrow starts at. Taking the world instead meant reading `world.player`,
+   * which is right in every mode except SPEC section 9's Hotseat, where the
+   * second human aims the opponent's circle: the arrow moved and the pulse
+   * stayed, so a full-power aim drew a second arrow out of a body nobody was
+   * aiming. Naming the acting body in the signature is what makes that
+   * impossible rather than remembered; `render/pitch.ts` hands it the same body
+   * it hands `drawAimArrow`.
+   */
   drawInFront(
     context: CanvasRenderingContext2D,
     palette: PitchPalette,
-    world: World,
+    launcher: Body,
     aim: AimPreview | null,
   ): void;
 }
@@ -296,7 +309,23 @@ export interface EffectsObservation {
 export interface Effects extends EffectsFrame {
   observe(observation: EffectsObservation): void;
   readout(): EffectsReadout;
-  /** The derived events, newest last, bounded so a long match cannot grow. */
+  /**
+   * The derived events, newest last, bounded so a long match cannot grow.
+   *
+   * THE LIVE LOG, NOT A COPY, AND THAT IS THE CONTRACT. One array is handed to
+   * every caller and it keeps changing under them: `observe` appends to it, and
+   * once it reaches its bound it drops from the front, so a reference held
+   * across frames GAINS events at the end and LOSES them from the start. The
+   * `readonly` element type is what stops a caller writing to it; it says
+   * nothing about the array standing still.
+   *
+   * WHY IT IS NOT A COPY. The reader is a capture script sampling once a frame
+   * for the length of a recording, and a copy per sample is an allocation in
+   * the frame budget for a guarantee nobody asked for. A caller that wants a
+   * snapshot takes one: `[...effects.events()]` at the moment it cares about.
+   * tests/unit/render-effects.test.ts pins the aliasing, so the reading is
+   * checkable rather than a sentence.
+   */
   events(): readonly EffectEvent[];
 }
 
@@ -959,17 +988,31 @@ export function createEffects(options: EffectsOptions = {}): Effects {
         particle.y += particle.vy * seconds;
       }
 
-      // The trail samples the ball wherever it is, every frame, and the window
-      // in force at the moment of the sample decides whether it survives. A
-      // ball at rest leaves every sample on one point, so the trail has no
-      // length rather than a special case that hides it.
-      trail.push({
-        x: world.ball.position.x,
-        y: world.ball.position.y,
-        radius: world.ball.radius,
-        at: now,
-        life: effectSeconds('ballTrail', reducedMotion),
-      });
+      // The trail samples the ball wherever it is, on every frame that is worth
+      // time, and the window in force at the moment of the sample decides
+      // whether it survives. A ball at rest leaves every sample on one point,
+      // so the trail has no length rather than a special case that hides it.
+      //
+      // A FRAME WORTH NO TIME TAKES NO SAMPLE, and the guard is the same
+      // `seconds > 0` the contact passes above rather than a rule of its own.
+      // Every sample is stamped with `now` and expires when `now` has moved
+      // past its life, so on a frame charged nothing the stamp cannot age: the
+      // push would run and the expiry could not, and the list would grow for as
+      // long as the charge stayed zero. SPEC section 7's PAUSED is exactly that
+      // frame, a hidden tab included, and a pause has no length limit; measured
+      // before the guard, sixty seconds of pause at 60 fps left 3,601 live
+      // samples for `expire`, `drawTrail` and the length sum to walk every
+      // frame. Nothing else changes: a zero-second frame moves no ball, so the
+      // sample it would have taken is the one already at the head of the list.
+      if (seconds > 0) {
+        trail.push({
+          x: world.ball.position.x,
+          y: world.ball.position.y,
+          radius: world.ball.radius,
+          at: now,
+          life: effectSeconds('ballTrail', reducedMotion),
+        });
+      }
       ageOut();
       sampleWorld(world);
     },
@@ -999,7 +1042,7 @@ export function createEffects(options: EffectsOptions = {}): Effects {
     drawInFront(
       context: CanvasRenderingContext2D,
       palette: PitchPalette,
-      world: World,
+      launcher: Body,
       aim: AimPreview | null,
     ): void {
       drawImpactFlashes(context, palette, impacts, now);
@@ -1007,7 +1050,7 @@ export function createEffects(options: EffectsOptions = {}): Effects {
         drawCelebration(context, palette, celebration, now);
       }
       drawParticles(context, palette, particles, now);
-      drawMaximumPulse(context, palette, world.player, aim, now, pulsePeriod);
+      drawMaximumPulse(context, palette, launcher, aim, now, pulsePeriod);
     },
 
     readout(): EffectsReadout {
@@ -1027,6 +1070,7 @@ export function createEffects(options: EffectsOptions = {}): Effects {
     },
 
     events(): readonly EffectEvent[] {
+      // The live log by reference, which the interface above states and pins.
       return log;
     },
   };
@@ -1231,16 +1275,12 @@ function drawMaximumPulse(
   context.globalAlpha = PULSE_PEAK_ALPHA * wave;
   context.strokeStyle = palette.accent;
   context.lineWidth = BORDER.thick;
-  context.beginPath();
-  const path = arrowPath(body.position.x, body.position.y, aim.aim.angleRad, geometry);
-  for (const [index, point] of path.entries()) {
-    if (index === 0) {
-      context.moveTo(point.x, point.y);
-    } else {
-      context.lineTo(point.x, point.y);
-    }
-  }
-  context.closePath();
+  // The arrow's own tracer, from the module that owns the path convention, so
+  // the pulse is the arrow's outline rather than a second reading of it.
+  traceArrow(
+    context,
+    arrowPath(body.position.x, body.position.y, aim.aim.angleRad, geometry),
+  );
   context.stroke();
   context.globalAlpha = 1;
 }

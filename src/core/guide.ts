@@ -193,6 +193,28 @@ export function predictGuide(circle: Body, ball: Body, angleRad: number): AimGui
   // from a direction of NaN, and without the second every point carries the
   // starting point's own NaN across, and `tests/unit/aim-guide.test.ts` fails
   // on each of them on its own.
+  //
+  // THE THIRD INPUT IS NOT GUARDED, AND THAT IS A DECISION RATHER THAN AN
+  // OVERSIGHT. The ball's position is read by `distanceToContact` and by
+  // nothing else, and its answer for a ball nobody can locate is zero: every
+  // comparison against a NaN discriminant is false, so the function falls
+  // through to `near >= 0 ? near : 0` and reports a contact where the circle
+  // already stands. The prediction is then the degenerate two-point path
+  // [start, start] with the start as its contact point, which draws nothing and
+  // predicts nothing. That is the reading this module ships, and
+  // tests/unit/aim-guide.test.ts pins it; a guard added here would change it,
+  // which is why it is written down rather than assumed.
+  //
+  // WHY IT IS LEFT AS IT IS. All three inputs are equally unreachable in the
+  // shipped game: the composition root builds its match with
+  // `onNonFinite: 'repair'`, so a body whose position stops being a number is
+  // put back before any frame reads it, and the angle comes from an aim model
+  // that is total by construction. The two above earn their guard from the
+  // blast radius of the value rather than from its likelihood - a direction or
+  // a start point poisons every point of the path, where the ball poisons one
+  // comparison - and a third refusal would be a branch this suite could only
+  // reach by constructing the same unreachable input, at the cost of changing
+  // an answer that is already total.
   if (!Number.isFinite(angleRad)) {
     return NO_GUIDE;
   }

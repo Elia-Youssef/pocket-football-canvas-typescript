@@ -32,9 +32,12 @@
  * first time either changed. The stored value arrives as an option, is applied
  * once at mount and is what the reset puts back.
  *
- * THE MODE WIRING IS OPTIONAL, AND ITS ABSENCE IS HONEST. A composition that
- * supplies no modes gets no menu, and the game-over panel's mode actions stay
- * refused in place: SPEC section 13's Change mode needs somewhere to change to.
+ * NOTHING HERE IS OPTIONAL, AND THAT IS THE CHANGE THIS FILE HAS MOST OF. The
+ * wiring used to take seven optional members and the one composition that mounts
+ * a chrome supplied all seven, so the absent cases were branches nothing shipping
+ * took: a menu that could be missing, a game-over panel wired two ways, a theme
+ * that fell back to System here as well as at the store that owns it. They are
+ * gone, and `ChromeOptions` below says what the composition root does.
  *
  * NO BREAKPOINT IS DECIDED HERE. QUALITY-BAR section 5's four names are
  * resolved in `ui/breakpoints.ts` and written onto the root element by the
@@ -82,6 +85,21 @@ export interface ModeWiring {
   readonly gameOver: () => GameOverContext;
 }
 
+/**
+ * Everything the chrome is wired with. EVERY FIELD IS REQUIRED, and that is a
+ * decision rather than an oversight.
+ *
+ * Seven of these were optional and the one composition that mounts a chrome
+ * supplied all seven every time, so the absent cases were seven branches
+ * nothing shipping ever took: each a defaulting rule stated here as well as at
+ * the store that owns it, and each a way for a test to mount a chrome the game
+ * does not have. A theme that falls back to System is the stored document's
+ * decision and not the wiring's, and a mode menu that can be absent is a game
+ * with no way to start a match. Required, the type says what the composition
+ * root does, and `tests/unit/support/chrome-options.ts` is the ONE place a test
+ * fills the fields it does not care about, so a field added here is added once
+ * there rather than in every mount.
+ */
 export interface ChromeOptions {
   /** The match the chrome reads. The only state source there is. */
   readonly match: Match;
@@ -93,30 +111,26 @@ export interface ChromeOptions {
    * the root by whoever read it: two writers of `data-theme` would be two
    * places for the canvas variant and the chrome theme to disagree.
    */
-  readonly initialTheme?: ThemeChoice;
+  readonly initialTheme: ThemeChoice;
   /**
    * QUALITY-BAR section 4's play-surface size, raised when it is changed. The
    * chrome owns the control and the composition root owns the fit, because a
    * CSS box is not something anything under `ui/` may measure or set.
    */
-  readonly onSurfaceScaleChange?: (percent: number) => void;
-  /** The stored size the control opens on. The new-player value otherwise. */
-  readonly initialSurfaceScale?: number;
-  /**
-   * SPEC section 2.1's portrait hint, as the stored document left it. A
-   * composition that stores nothing shows it, which is what a player who has
-   * never dismissed it sees.
-   */
-  readonly hintDismissed?: boolean;
+  readonly onSurfaceScaleChange: (percent: number) => void;
+  /** The stored size the control opens on. */
+  readonly initialSurfaceScale: number;
+  /** SPEC section 2.1's portrait hint, as the stored document left it. */
+  readonly hintDismissed: boolean;
   /** Raised when the hint is put away, so the dismissal can be persisted. */
-  readonly onHintDismissed?: () => void;
+  readonly onHintDismissed: () => void;
   /**
    * SPEC section 17's Reset all data, raised after the panel's own
-   * confirmation. Absent in a composition that stores nothing.
+   * confirmation.
    */
-  readonly onResetData?: () => void;
-  /** SPEC section 9's mode menu, absent in a composition that has none. */
-  readonly modes?: ModeWiring;
+  readonly onResetData: () => void;
+  /** SPEC section 9's mode menu, which every composition that plays has. */
+  readonly modes: ModeWiring;
 }
 
 export interface Chrome {
@@ -179,10 +193,10 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
 
   const hint = createPortraitHint({
     onDismiss: () => {
-      options.onHintDismissed?.();
+      options.onHintDismissed();
     },
   });
-  hint.setDismissed(options.hintDismissed ?? false);
+  hint.setDismissed(options.hintDismissed);
 
   const settings = createSettingsPanel({
     onThemeChange: (theme) => {
@@ -190,7 +204,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       options.onThemeChange();
     },
     onSurfaceScaleChange: (percent) => {
-      options.onSurfaceScaleChange?.(percent);
+      options.onSurfaceScaleChange(percent);
     },
     // THE CHROME'S OWN DEFAULTS GO BACK BEFORE THE DATA GOES. The chrome owns
     // the theme, the size control and the hint, so each is put where a new
@@ -204,36 +218,33 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       settings.selectSurfaceScale(NEW_SURFACE_SCALE);
       hint.setDismissed(false);
       options.onThemeChange();
-      options.onSurfaceScaleChange?.(NEW_SURFACE_SCALE);
-      options.onResetData?.();
+      options.onSurfaceScaleChange(NEW_SURFACE_SCALE);
+      options.onResetData();
     },
     onClose: () => settings.hide(),
     onEscape: () => settings.hide(),
   });
-  const theme = options.initialTheme ?? NEW_THEME;
+  const theme = options.initialTheme;
   applyTheme(theme);
   settings.select(theme);
-  settings.selectSurfaceScale(options.initialSurfaceScale ?? NEW_SURFACE_SCALE);
+  settings.selectSurfaceScale(options.initialSurfaceScale);
 
   const howTo = createHowToPanel({
     onClose: () => dismissHowTo(),
     onEscape: () => dismissHowTo(),
   });
 
-  const mode: ModePanel | undefined =
-    modes === undefined
-      ? undefined
-      : createModePanel({
-          initial: modes.initial,
-          guideOn: modes.guideOn,
-          onStart: (choice, guideOn) => {
-            modes.onStart(choice, guideOn);
-            sync();
-          },
-          onHowToPlay: () => {
-            showHowToPlay();
-          },
-        });
+  const mode: ModePanel = createModePanel({
+    initial: modes.initial,
+    guideOn: modes.guideOn,
+    onStart: (choice, guideOn) => {
+      modes.onStart(choice, guideOn);
+      sync();
+    },
+    onHowToPlay: () => {
+      showHowToPlay();
+    },
+  });
 
   const pause = createPausePanel({
     onResume: () => {
@@ -257,14 +268,6 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   const game = createGameOverPanel(gameOverOptions());
 
   function gameOverOptions(): GameOverPanelOptions {
-    if (modes === undefined) {
-      return {
-        onPlayAgain: () => {
-          match.restart();
-          sync();
-        },
-      };
-    }
     return {
       onPlayAgain: () => {
         modes.onPlayAgain();
@@ -288,14 +291,14 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   /** SPEC section 19: putting How to Play away is the dismissal that persists. */
   function dismissHowTo(): void {
     howTo.hide();
-    modes?.onHowToDismissed();
+    modes.onHowToDismissed();
   }
 
   function showHowToPlay(): void {
     // The anchor is whatever is honest to come back to: the menu's own button
     // while the menu is open, and the pause control otherwise, so focus never
     // lands on the document body when the overlay closes.
-    const anchor = mode !== undefined && mode.isOpen() ? menuAnchor(mode) : hud.pause;
+    const anchor = mode.isOpen() ? menuAnchor(mode) : hud.pause;
     howTo.show(anchor);
   }
 
@@ -311,22 +314,20 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
     const readout = match.readout();
     hud.update(readout);
     if (readout.state.kind === 'GAME_OVER') {
-      game.update(readout, modes?.gameOver());
+      game.update(readout, modes.gameOver());
       if (!game.isOpen()) {
         game.show(hud.pause);
       }
     } else if (game.isOpen()) {
       game.hide();
     }
-    if (mode !== undefined) {
-      const inMenu = readout.state.kind === 'MENU';
-      if (inMenu && !mode.isOpen()) {
-        // Derived on every open, never pushed: see `ModeWiring.ladderRung`.
-        mode.setLadderRung(modes?.ladderRung() ?? 1);
-        mode.show(hud.pause);
-      } else if (!inMenu && mode.isOpen()) {
-        mode.hide();
-      }
+    const inMenu = readout.state.kind === 'MENU';
+    if (inMenu && !mode.isOpen()) {
+      // Derived on every open, never pushed: see `ModeWiring.ladderRung`.
+      mode.setLadderRung(modes.ladderRung());
+      mode.show(hud.pause);
+    } else if (!inMenu && mode.isOpen()) {
+      mode.hide();
     }
     const paused = readout.state.kind === 'PAUSED';
     if (paused && !pause.isOpen()) {
@@ -368,9 +369,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
   // presses meant for the overlay above it.
   host.insertBefore(hint.root, host.firstChild);
   host.insertBefore(hud.root, hint.root);
-  if (mode !== undefined) {
-    host.append(mode.root);
-  }
+  host.append(mode.root);
   host.append(pause.root, settings.root, howTo.root, game.root);
 
   sync();
@@ -388,7 +387,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
     },
 
     setGuide(on: boolean): void {
-      mode?.setGuide(on);
+      mode.setGuide(on);
     },
   };
 }

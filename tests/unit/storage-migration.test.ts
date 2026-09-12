@@ -86,6 +86,85 @@ function versionTwo(data: GameData): string {
   return serialiseData(data);
 }
 
+describe('PF-10 the new-player defaults are handed out frozen', () => {
+  /**
+   * `data()` returns the module's own `NEW_DATA` by reference until something
+   * is saved, and `clear()` puts it straight back, so a caller that wrote
+   * through the returned object would be editing the defaults every later
+   * reader sees for the life of the page. `readonly` is a compile-time promise
+   * and says nothing once the reference has passed through an `unknown`, which
+   * is exactly what a stored document does on the way in.
+   *
+   * STRICT MODE IS WHY THIS IS A THROW AND NOT A SILENT NO-OP. Every module in
+   * this project is an ES module and every ES module is strict, so a write to a
+   * frozen property raises rather than being dropped; the casts below are how a
+   * test reaches a property the type system has already refused.
+   */
+  it('refuses a write through the document a fresh store hands back', () => {
+    const store = createDataStore(() => createBacking());
+    const data = store.data();
+    expect(data).toBe(NEW_DATA);
+    expect(Object.isFrozen(data)).toBe(true);
+    expect(() => {
+      (data as { progress: unknown }).progress = { ladderRung: 6 };
+    }).toThrow(TypeError);
+    // The freeze reaches the whole document, not just its outermost object:
+    // every field of it is one of the frozen defaults, which is the half a
+    // shallow freeze would leave open and the half a caller reaches first.
+    expect(() => {
+      (data.settings as { theme: string }).theme = 'dark';
+    }).toThrow(TypeError);
+    expect(() => {
+      (data.progress as { ladderRung: number }).ladderRung = 6;
+    }).toThrow(TypeError);
+    expect(() => {
+      (data.counters as { matchesPlayed: number }).matchesPlayed = 99;
+    }).toThrow(TypeError);
+    expect(() => {
+      (data.records as { quick: unknown }).quick = { goalsFor: 9, goalsAgainst: 0 };
+    }).toThrow(TypeError);
+    // And nothing was edited by the attempts, which is the assertion the throw
+    // is for: a store that answered a mutated default would answer it forever.
+    expect(store.data()).toEqual(NEW_DATA);
+    expect(NEW_DATA.progress.ladderRung).toBe(1);
+    expect(NEW_DATA.settings.theme).toBe('system');
+    expect(NEW_DATA.counters.matchesPlayed).toBe(0);
+    expect(NEW_DATA.records.quick).toBeNull();
+  });
+
+  it('freezes each of the five defaults on its own, where it is declared', () => {
+    // Named one by one, because `NEW_DATA` being frozen says nothing about a
+    // default some other module reaches directly: `normaliseProgress` answers
+    // `NEW_PROGRESS` for every document it cannot use, and `normaliseSettings`
+    // answers `NEW_SETTINGS` the same way.
+    for (const [name, value] of [
+      ['NEW_DATA', NEW_DATA],
+      ['NEW_SETTINGS', NEW_SETTINGS],
+      ['NEW_RECORDS', NEW_RECORDS],
+      ['NEW_COUNTERS', NEW_COUNTERS],
+      ['NEW_PROGRESS', NEW_PROGRESS],
+    ] as const) {
+      expect(Object.isFrozen(value), name).toBe(true);
+    }
+    // The control: an ordinary object of the same shape is NOT frozen, so the
+    // assertion above is about these five and not about every object.
+    expect(Object.isFrozen({ ...NEW_COUNTERS })).toBe(false);
+    expect(() => {
+      ({ ...NEW_COUNTERS }).matchesPlayed = 1;
+    }).not.toThrow();
+  });
+
+  it('leaves a clear back on the frozen defaults rather than on a copy', () => {
+    const backing = createBacking();
+    const store = createDataStore(() => backing);
+    store.save({ ...NEW_DATA, counters: { matchesPlayed: 4, goalsFor: 9, goalsAgainst: 2 } });
+    expect(store.data().counters.matchesPlayed).toBe(4);
+    store.clear();
+    expect(store.data()).toBe(NEW_DATA);
+    expect(Object.isFrozen(store.data())).toBe(true);
+  });
+});
+
 describe('PF-10 saved state is one namespaced versioned document, item I1', () => {
   it('names one key, namespaced by the game and carrying no version', () => {
     expect(STORAGE_KEY).toBe('pocket-football:save');

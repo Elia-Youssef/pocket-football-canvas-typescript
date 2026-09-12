@@ -11,7 +11,23 @@
  * reachable by a straight launch exactly when the striker arrives from
  * outside it:
  *
- *   reachable(side) = dot(striker - ball, side) >= strikerRadius + ballRadius
+ *   reachable(side) = dot(striker - ball, side) > strikerRadius + ballRadius
+ *
+ * The comparison is STRICT, as section 8.1 writes it, and the code below is
+ * strict with it at every separation the rule can be applied at: `coneBound`
+ * sits STRICTLY above the bare `TOUCHING / gap` cosine at every gap past the
+ * touching distance, so a side whose projection is exactly the touching
+ * distance is refused and clamped like any other unreachable one. The margin
+ * is what closes rather than the inequality: it is 0 at 52 px, 0.0019 at 52.1,
+ * 0.0046 from 52.25 px up and 0.08 by the 60 px a layout of the grid below
+ * actually presents, so the two operators differ only in the limit and the
+ * refusal above is not a near thing anywhere a striker stands.
+ * There is one configuration where the test is not applied at all, and it is
+ * named here rather than left to be found: a striker already ON the touching
+ * distance, on the ideal side's own axis, has no path left to arrive along, so
+ * the quantity below is 0/0 rather than 0 and `strikeSolidity` reads it as the
+ * dead-centre strike it geometrically is. Both cases are pinned by literal
+ * coordinates in tests/unit/ai-aim.test.ts.
  *
  * The left-hand side is a LENGTH IN PIXELS, the striker's offset projected on
  * the strike side, compared against the touching distance in pixels; it is
@@ -28,9 +44,10 @@
  * `ball + TOUCHING * side`. The centre path meets the contact disc where
  * `|offset + t * step| = TOUCHING`, and the two roots of that quadratic
  * multiply to `gap^2 - TOUCHING^2`, so the aim point is the FIRST of them
- * exactly when `dot(offset, side) >= TOUCHING` - the reachable test above,
- * derivable at no other aim distance. Reaching it, the contact normal is
- * -side exactly and the ball departs along -side as section 8.1 states. The
+ * exactly when `dot(offset, side) >= TOUCHING`, which the strict reachable test
+ * above implies and which is derivable at no other aim distance. Reaching it,
+ * the contact normal is -side exactly and the ball departs along -side as
+ * section 8.1 states. The
  * ball's own surface point, 18 px along the side, enters the disc earlier and
  * at a normal pulled toward the striker's approach. Both readings are
  * measured over the same population in tests/unit/ai-aim.test.ts, the 96

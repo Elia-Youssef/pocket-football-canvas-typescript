@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { aimFromDrag } from '../../src/core/aiming';
+import { aimFromDrag, pressLandsOn } from '../../src/core/aiming';
+import { createWorld, kickoff } from '../../src/core/bodies';
 import { arrowGeometry, arrowPath } from '../../src/render/arrow';
 
 /**
@@ -159,6 +160,67 @@ describe('PF-5 the aim vector, item C2', () => {
       // facing where it was rather than turning it to this value.
       expect(Number.isFinite(preview.aim.angleRad)).toBe(true);
       expect(arrowGeometry(preview.reach).shaftLength).toBe(0);
+    }
+  });
+});
+
+describe('PF-5 the press that begins an aim, item C1', () => {
+  /**
+   * `pressLandsOn` is the hit test item C1's whole sentence rests on, and until
+   * this block it was graded only through `aimingBegins`, which asks it about
+   * one body in one state. Its own three properties are the disc it uses, the
+   * rim it includes and the coordinate it refuses, and each of them is a
+   * separate way to be wrong: a radius read from the wrong body makes the ball
+   * a handle, a strict comparison makes the rim itself dead, and a comparison
+   * written the other way round makes a press nobody can locate a press on
+   * everything.
+   *
+   * THE RADII ARE SPEC SECTIONS 4's, WRITTEN OUT. A circle is 34 and the ball
+   * is 18, so the offsets below are literals rather than expressions over the
+   * body under test.
+   */
+  it('is the body own disc, rim included, and refuses a coordinate that is not one', () => {
+    const world = createWorld();
+    kickoff(world);
+    const circle = world.player;
+    const ball = world.ball;
+    expect(circle.radius).toBe(34);
+    expect(ball.radius).toBe(18);
+    const at = circle.position;
+
+    // The centre, and every direction out to the rim.
+    expect(pressLandsOn(circle, at.x, at.y)).toBe(true);
+    expect(pressLandsOn(circle, at.x + 33.9, at.y)).toBe(true);
+    expect(pressLandsOn(circle, at.x, at.y - 33.9)).toBe(true);
+    // THE RIM ITSELF COUNTS, in both axes and on the diagonal: the comparison
+    // is `<=` and a strict one would leave the outermost ring of a 44 px
+    // target unusable. 34 = hypot(30.6, 14.8) to twelve places is not exact in
+    // binary, so the diagonal case is taken at an exact Pythagorean triple
+    // scaled to the radius instead.
+    expect(pressLandsOn(circle, at.x + 34, at.y)).toBe(true);
+    expect(pressLandsOn(circle, at.x - 34, at.y)).toBe(true);
+    expect(pressLandsOn(circle, at.x, at.y + 34)).toBe(true);
+    expect(pressLandsOn(circle, at.x + 20.4, at.y + 27.2)).toBe(true);
+    expect(Math.hypot(20.4, 27.2)).toBeCloseTo(34, 12);
+    // And a hair outside it, which is the control that keeps the four above
+    // from passing for a predicate that answers true to everything.
+    expect(pressLandsOn(circle, at.x + 34.001, at.y)).toBe(false);
+    expect(pressLandsOn(circle, at.x + 25, at.y + 25)).toBe(false);
+    expect(pressLandsOn(circle, at.x + 200, at.y)).toBe(false);
+
+    // THE RADIUS IS THE BODY'S OWN. The ball is half the circle, so a press
+    // 25 px from a centre lands on one and misses the other; a hit test that
+    // had fixed on the circle radius would answer true to both.
+    expect(pressLandsOn(ball, ball.position.x + 25, ball.position.y)).toBe(false);
+    expect(pressLandsOn(ball, ball.position.x + 18, ball.position.y)).toBe(true);
+
+    // A PRESS NOBODY CAN LOCATE IS NOT A PRESS ON ANYTHING, which is what the
+    // comparison being written round this way buys: every comparison against a
+    // NaN is false, so the answer is no rather than yes.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(pressLandsOn(circle, bad, at.y), String(bad)).toBe(false);
+      expect(pressLandsOn(circle, at.x, bad), String(bad)).toBe(false);
+      expect(pressLandsOn(circle, bad, bad), String(bad)).toBe(false);
     }
   });
 });

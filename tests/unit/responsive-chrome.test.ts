@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { createMatch } from '../../src/core/match';
 import { NEW_SETTINGS, SURFACE_SCALES } from '../../src/core/storage';
 import { BREAKPOINTS } from '../../src/ui/breakpoints';
 import { createPortraitHint } from '../../src/ui/components/portrait-hint';
 import { mountChrome } from '../../src/ui/layout';
+import { chromeOptions } from './support/chrome-options';
 import { FakeText, censusControls, findByMarker, installFakeDocument } from './support/chrome-dom';
 import type { FakeElement } from './support/chrome-dom';
 
@@ -303,10 +303,7 @@ describe('PF-14 the responsive chrome', () => {
         const stage = installed.document.createElement('div');
         stage.dataset['pf'] = 'stage';
         host.appendChild(stage);
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-        });
+        mountChrome(host as unknown as HTMLElement, chromeOptions());
         const order = host.children.map((child) =>
           child instanceof FakeText ? '' : (child.dataset['pf'] ?? ''),
         );
@@ -321,14 +318,15 @@ describe('PF-14 the responsive chrome', () => {
       try {
         const host = installed.document.createElement('div');
         let dismissed = 0;
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-          hintDismissed: true,
-          onHintDismissed: () => {
-            dismissed += 1;
-          },
-        });
+        mountChrome(
+          host as unknown as HTMLElement,
+          chromeOptions({
+            hintDismissed: true,
+            onHintDismissed: () => {
+              dismissed += 1;
+            },
+          }),
+        );
         const root = host as unknown as FakeElement;
         expect(findByMarker(root, 'portrait-hint')?.hidden).toBe(true);
         expect(dismissed).toBe(0);
@@ -343,10 +341,7 @@ describe('PF-14 the responsive chrome', () => {
       const installed = installFakeDocument();
       try {
         const host = installed.document.createElement('div');
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-        });
+        mountChrome(host as unknown as HTMLElement, chromeOptions());
         const root = host as unknown as FakeElement;
         expect(SURFACE_SCALES).toEqual([100, 125, 150, 200]);
         for (const percent of SURFACE_SCALES) {
@@ -368,12 +363,15 @@ describe('PF-14 the responsive chrome', () => {
       try {
         const host = installed.document.createElement('div');
         const raised: number[] = [];
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-          initialSurfaceScale: 150,
-          onSurfaceScaleChange: (percent) => raised.push(percent),
-        });
+        mountChrome(
+          host as unknown as HTMLElement,
+          chromeOptions({
+            initialSurfaceScale: 150,
+            onSurfaceScaleChange: (percent) => {
+              raised.push(percent);
+            },
+          }),
+        );
         const root = host as unknown as FakeElement;
         expect(findByMarker(root, 'surface-scale-150')?.checked).toBe(true);
         expect(findByMarker(root, 'surface-scale-100')?.checked).toBe(false);
@@ -406,16 +404,19 @@ describe('PF-14 the responsive chrome', () => {
         const host = installed.document.createElement('div');
         const raised: number[] = [];
         let cleared = 0;
-        mountChrome(host as unknown as HTMLElement, {
-          match: createMatch(),
-          onThemeChange: () => undefined,
-          initialSurfaceScale: 200,
-          hintDismissed: true,
-          onSurfaceScaleChange: (percent) => raised.push(percent),
-          onResetData: () => {
-            cleared += 1;
-          },
-        });
+        mountChrome(
+          host as unknown as HTMLElement,
+          chromeOptions({
+            initialSurfaceScale: 200,
+            hintDismissed: true,
+            onSurfaceScaleChange: (percent) => {
+              raised.push(percent);
+            },
+            onResetData: () => {
+              cleared += 1;
+            },
+          }),
+        );
         const root = host as unknown as FakeElement;
         expect(findByMarker(root, 'portrait-hint')?.hidden).toBe(true);
         findByMarker(root, 'reset-data')?.dispatch('click');

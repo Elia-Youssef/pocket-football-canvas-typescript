@@ -38,7 +38,21 @@ export interface Panel {
   show(invoker?: HTMLElement): void;
   /** Close the panel and hand focus back to whoever opened it. */
   hide(): void;
-  /** The controls, in tab order; the census and the focus move read it. */
+  /**
+   * The controls, in tab order; the census and the focus move read it.
+   *
+   * THE LIVE LIST, NOT A COPY, AND THAT IS THE CONTRACT. One array is handed to
+   * every caller and `addControl` appends to it, so a reference taken before a
+   * panel finished building itself keeps growing as the rest of it lands. The
+   * `readonly` element type is what stops a caller writing to the array; it
+   * says nothing about the array standing still.
+   *
+   * WHY IT IS NOT A COPY. Every caller reads it and none keeps it: the wiring
+   * asks for it to find a control by marker at the moment a panel opens, and
+   * the censuses ask for it to count what is there now. Both want the present
+   * state, which is what the live list is; a caller that wants a snapshot takes
+   * one with a spread. tests/unit/chrome-panels.test.ts pins the aliasing.
+   */
   controls(): readonly HTMLElement[];
 }
 
@@ -122,6 +136,7 @@ export function createPanel(options: PanelOptions): Panel {
     },
 
     controls(): readonly HTMLElement[] {
+      // The live list by reference, which the interface above states and pins.
       return added;
     },
   };
