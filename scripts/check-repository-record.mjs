@@ -160,6 +160,7 @@ export const SUBJECT_PATTERN = /^(?:PF-[0-9]+|ENG-[0-9]+|fix|docs|ci|deps): [a-z
 
 export const CLOSES_PATTERN =
   /^Closes: (?:None|[A-Z][A-Z0-9-]*[a-z]?(?:, [A-Z][A-Z0-9-]*[a-z]?)*)$/;
+export const SUBJECT_LIMIT = 72;
 
 // Any `<word>-by:` line is a trailer, and this repository takes none of them,
 // with exactly one waiver: dependabot appends its own sign-off to every commit
@@ -175,22 +176,32 @@ const DEPENDABOT_LOGIN = 'dependabot[bot]';
 const DEPENDABOT_AUTHOR = /^dependabot\[bot\] <\d+\+dependabot\[bot\]@users\.noreply\.github\.com>$/;
 const GITHUB_COMMITTER = /^GitHub <noreply@github\.com>$/;
 const DEPENDABOT_SUBJECT = /^deps: Bump /;
+const SQUASH_PULL_REQUEST_SUFFIX = / \(#[1-9][0-9]*\)$/;
 
-const TEXT_EXTENSIONS = new Set([
-  '.md', '.csv', '.py', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.mts', '.cts',
-  '.jsx', '.json', '.yml', '.yaml', '.html', '.css', '.txt', '.sh', '.xml',
-  '.svg', '.toml', '.ini',
+// Unknown extensions are text unless the bytes say otherwise. An allowlist
+// grows stale silently: the record scan skipped .rst, .markdown, .snap and
+// .tsv until a finding named the gap. The explicit binary list documents the
+// formats which cannot be decoded as repository prose, while a NUL byte
+// recognises an unfamiliar binary format without treating its bytes as UTF-8.
+const BINARY_EXTENSIONS = new Set([
+  '.7z', '.avi', '.bmp', '.class', '.dll', '.dmg', '.exe', '.gif', '.gz',
+  '.ico', '.jar', '.jpeg', '.jpg', '.mp3', '.mp4', '.pdf', '.png', '.tar',
+  '.ttf', '.wav', '.webm', '.webp', '.woff', '.woff2', '.zip',
 ]);
 
-const failures = [];
-
-function fail(message) {
-  failures.push(message);
-  console.log(`  FAIL  ${message}`);
-}
-
-function ok(message) {
-  console.log(`  ok    ${message}`);
+export function createReporter(write = console.log) {
+  const failures = [];
+  return {
+    failures,
+    write,
+    fail(message) {
+      failures.push(message);
+      write(`  FAIL  ${message}`);
+    },
+    ok(message) {
+      write(`  ok    ${message}`);
+    },
+  };
 }
 
 /**
@@ -292,14 +303,12 @@ export function isReservedBasename(name) {
   return RESERVED.has(name.toLowerCase());
 }
 
-/** Text by extension, plus dotfiles and extensionless files such as CODEOWNERS. */
+/**
+ * Every unrecognised extension is text. Binary formats are explicitly denied,
+ * and checkTracked adds a NUL-byte guard before it decodes the remaining files.
+ */
 export function isTextPath(relative) {
-  const base = path.basename(relative);
-  const extension = path.extname(base).toLowerCase();
-  if (TEXT_EXTENSIONS.has(extension)) {
-    return true;
-  }
-  return extension === '' || base.startsWith('.');
+  return !BINARY_EXTENSIONS.has(path.extname(relative).toLowerCase());
 }
 
 export function isAscii(value) {
@@ -333,14 +342,22 @@ export function findControlByte(value) {
   return null;
 }
 
+/** GITHUB section 4: the generated squash suffix is outside the human limit. */
+export function subjectWithoutPullRequestSuffix(subject) {
+  return subject.replace(SQUASH_PULL_REQUEST_SUFFIX, '');
+}
+
 /** GITHUB section 4, applied to a commit subject or a pull request title. */
 export function checkSubject(subject) {
   const problems = [];
   if (!isAscii(subject)) {
     problems.push('is not ASCII');
   }
-  if (subject.length > 80) {
-    problems.push(`is ${String(subject.length)} characters, the ceiling is 80`);
+  const handwritten = subjectWithoutPullRequestSuffix(subject);
+  if (handwritten.length > SUBJECT_LIMIT) {
+    problems.push(
+      `is ${String(handwritten.length)} handwritten characters, the ceiling is ${String(SUBJECT_LIMIT)}`,
+    );
   }
   if (subject.endsWith('.')) {
     problems.push('ends in a full stop');
@@ -378,36 +395,43 @@ export function isDependabotPullRequest() {
 
 /**
  * Dependabot owns this generated message shape, including upstream release
- * notes. The caller must separately establish the pull request's author from
- * GitHub event data before granting this exception.
+ * notes. The immutable author, committer, subject and trailing sign-off are
+ * all required, so a history walk reaches the same verdict on every branch
+ * without inheriting a pull request environment variable.
  */
 export function isDependabotCommit({ author, committer, message }) {
+  const lines = message.replace(/\n+$/, '').split('\n');
   return (
     DEPENDABOT_AUTHOR.test(author) &&
     GITHUB_COMMITTER.test(committer) &&
-    DEPENDABOT_SUBJECT.test(message)
+    DEPENDABOT_SUBJECT.test(lines[0] ?? '') &&
+    DEPENDENCY_TRAILER.test(lines.at(-1) ?? '')
   );
 }
 
 /** GITHUB section 4, applied to a whole message or a pull request body. */
 export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
   const problems = [];
-  const closes = lines.filter((line) => line.startsWith('Closes:'));
+  const structured = lines.map((line) => ({ raw: line, trimmed: line.trim() }));
+  const closes = structured.filter(({ trimmed }) => trimmed.startsWith('Closes:'));
   if (closes.length === 0 && requireCloses) {
     problems.push('must contain exactly one Closes: line');
   } else if (closes.length > 1) {
     problems.push(`contains ${String(closes.length)} Closes: lines, the rule is one`);
-  } else if (closes.length === 1 && !CLOSES_PATTERN.test(closes[0])) {
-    problems.push(`has an invalid Closes: line: ${JSON.stringify(closes[0])}`);
+  } else if (
+    closes.length === 1 &&
+    (closes[0].raw !== closes[0].trimmed || !CLOSES_PATTERN.test(closes[0].trimmed))
+  ) {
+    problems.push(`has a malformed Closes: line: ${JSON.stringify(closes[0].raw)}`);
   }
-  for (const line of lines) {
-    if (!TRAILER_PATTERN.test(line)) {
+  for (const { raw, trimmed } of structured) {
+    if (!TRAILER_PATTERN.test(trimmed)) {
       continue;
     }
-    if (dependencyUpdate && DEPENDENCY_TRAILER.test(line)) {
+    if (dependencyUpdate && raw === trimmed && DEPENDENCY_TRAILER.test(trimmed)) {
       continue;
     }
-    problems.push(`carries a trailer, which this repository takes none of: ${JSON.stringify(line)}`);
+    problems.push(`carries a trailer, which this repository takes none of: ${JSON.stringify(raw)}`);
   }
   return problems;
 }
@@ -423,21 +447,22 @@ export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
  * branch out of the signature is what makes the property structural rather
  * than remembered.
  */
-export function checkCommitRecord(
-  { author, committer, message },
-  { allowDependabotGeneratedMetadata = false } = {},
-) {
+export function checkCommitRecord({ author, committer, message }) {
   const problems = [];
-  const generatedDependabot =
-    allowDependabotGeneratedMetadata && isDependabotCommit({ author, committer, message });
+  const generatedDependabot = isDependabotCommit({ author, committer, message });
   const fields = [
     ['author', author],
     ['committer', committer],
-    ...(generatedDependabot ? [] : [['message', message]]),
+    ['message', message],
   ];
   for (const [label, value] of fields) {
-    for (const hit of scanRecord(value)) {
-      problems.push(`${label} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+    if (!isAscii(value)) {
+      problems.push(`${label} is not ASCII`);
+    }
+    if (label !== 'message' || !generatedDependabot) {
+      for (const hit of scanRecord(value)) {
+        problems.push(`${label} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+      }
     }
     const control = findControlByte(value);
     if (control !== null) {
@@ -470,40 +495,48 @@ export function checkCommitRecord(
   return problems;
 }
 
-function git(...args) {
-  return execFileSync('git', args, {
-    cwd: PROJECT_ROOT,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 64 * 1024 * 1024,
-  });
+export function createGit(root = PROJECT_ROOT) {
+  return (...args) =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+    });
 }
 
-function checkBranch(branch) {
-  console.log('== 1. branch name ==');
+export function checkBranch(branch, reporter = createReporter()) {
+  reporter.write('== 1. branch name ==');
   if (branch === '') {
-    ok('no branch reported, branch check skipped');
+    reporter.ok('no branch reported, branch check skipped');
     return;
   }
+  if (!isAscii(branch)) {
+    reporter.fail('branch name is not ASCII');
+  }
   for (const hit of scanRecord(branch)) {
-    fail(`branch name contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+    reporter.fail(`branch name contains ${JSON.stringify(hit.text)} (${hit.reason})`);
   }
   if (!BRANCH_PATTERN.test(branch)) {
-    fail(
+    reporter.fail(
       `branch name ${JSON.stringify(branch)} is not an allowed shape: main, ` +
         'pf-n-slug, eng-n-slug, fix-slug, docs-slug, ci-slug or dependabot/...',
     );
   }
-  ok(`branch ${JSON.stringify(branch)} checked`);
+  reporter.ok(`branch ${JSON.stringify(branch)} checked`);
 }
 
-function checkTracked() {
-  console.log('== 2. tracked files: names, paths and content ==');
+export function checkTracked({
+  root = PROJECT_ROOT,
+  runGit = createGit(root),
+  reporter = createReporter(),
+} = {}) {
+  reporter.write('== 2. tracked files: names, paths and content ==');
   let listing;
   try {
-    listing = git('ls-files', '-z');
+    listing = runGit('ls-files', '-z');
   } catch (error) {
-    fail(`cannot list tracked files: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+    reporter.fail(`cannot list tracked files: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
     return 0;
   }
   const tracked = listing.split('\0').filter((entry) => entry !== '');
@@ -512,46 +545,47 @@ function checkTracked() {
   for (const relative of tracked) {
     const base = path.basename(relative);
     if (isReservedBasename(base)) {
-      fail(`${relative} is local-only configuration and must never be committed`);
+      reporter.fail(`${relative} is local-only configuration and must never be committed`);
     }
     for (const segment of relative.split('/')) {
       if (isReservedBasename(segment)) {
-        fail(`${relative} sits under a local-only path and must never be committed`);
+        reporter.fail(`${relative} sits under a local-only path and must never be committed`);
       }
     }
     for (const hit of scanPath(relative)) {
-      fail(`path ${relative} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+      reporter.fail(`path ${relative} contains ${JSON.stringify(hit.text)} (${hit.reason})`);
     }
     if (!isTextPath(relative)) {
       continue;
     }
     let raw;
     try {
-      raw = readFileSync(path.join(PROJECT_ROOT, relative));
+      raw = readFileSync(path.join(root, relative));
     } catch (error) {
       // A tracked path with nothing behind it. Named, because a raw ENOENT
       // stack from a gate reads as the gate being broken rather than as the
       // working tree being incomplete.
-      fail(
+      reporter.fail(
         `${relative} is tracked but missing from the working tree, so its ` +
           `content cannot be checked: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
       );
       continue;
     }
-    if (
-      !TEXT_EXTENSIONS.has(path.extname(relative).toLowerCase()) &&
-      raw.subarray(0, 4096).includes(0)
-    ) {
+    if (raw.includes(0)) {
       continue;
     }
     scanned += 1;
-    for (const hit of scanContent(raw.toString('utf8'))) {
-      fail(
+    const text = raw.toString('utf8');
+    if (!isAscii(text)) {
+      reporter.fail(`${relative} is not ASCII`);
+    }
+    for (const hit of scanContent(text)) {
+      reporter.fail(
         `${relative}:${String(hit.line)} contains ${JSON.stringify(hit.text)} (${hit.reason})`,
       );
     }
   }
-  ok(`${String(tracked.length)} tracked paths, ${String(scanned)} of them scanned as text`);
+  reporter.ok(`${String(tracked.length)} tracked paths, ${String(scanned)} of them scanned as text`);
   return tracked.length;
 }
 
@@ -573,22 +607,46 @@ export function parseCommitLog(log) {
   const fragments = [];
   for (const commit of log.split(RECORD_SEPARATOR).filter((entry) => entry.trim() !== '')) {
     const parts = commit.replace(/^\n/, '').split(UNIT_SEPARATOR);
-    if (parts.length < 6) {
+    if (parts.length < 7) {
       fragments.push(commit);
       continue;
     }
-    const [full, authorName, authorEmail, committerName, committerEmail] = parts;
+    const [full, parents, authorName, authorEmail, committerName, committerEmail] = parts;
     records.push({
-      sha: full.slice(0, 8),
+      sha: full,
+      parents,
       author: `${authorName} <${authorEmail}>`,
       committer: `${committerName} <${committerEmail}>`,
       // Rejoined, not destructured: a unit byte inside the message splits it
-      // into extra fields, and taking only the sixth would silently drop
+      // into extra fields, and taking only the seventh would silently drop
       // everything after the byte from every scan downstream.
-      message: parts.slice(5).join(UNIT_SEPARATOR),
+      message: parts.slice(6).join(UNIT_SEPARATOR),
     });
   }
   return { records, fragments };
+}
+
+/**
+ * GitHub adds one synthetic merge commit to a pull request merge ref. It is
+ * not history a contributor authored, but every other merge is. GitHub keeps
+ * the pull request author while signing it as committer, so the checked-out
+ * tip, two parents, GitHub committer and a subject naming those exact parents
+ * are all required. Weakening any one would let a historical merge avoid the
+ * record scan.
+ */
+export function isSyntheticMergeTip(record, head) {
+  const parents = record.parents.split(' ').filter((parent) => parent !== '');
+  const subject = /^Merge ([0-9a-f]{40}) into ([0-9a-f]{40})$/.exec(
+    record.message.split('\n')[0] ?? '',
+  );
+  return (
+    record.sha === head &&
+    parents.length === 2 &&
+    record.committer === 'GitHub <noreply@github.com>' &&
+    subject !== null &&
+    subject[1] === parents[1] &&
+    subject[2] === parents[0]
+  );
 }
 
 /**
@@ -651,93 +709,102 @@ export function shallowState(read) {
   return { refusal: shallowRefusal(output) };
 }
 
-function checkCommits() {
-  console.log('== 3. every commit reachable from the checked-out revision ==');
+export function checkCommits({
+  runGit = createGit(),
+  reporter = createReporter(),
+} = {}) {
+  reporter.write('== 3. every commit reachable from the checked-out revision ==');
 
   const { refusal } = shallowState(() =>
-    git('rev-parse', '--is-shallow-repository'),
+    runGit('rev-parse', '--is-shallow-repository'),
   );
   if (refusal !== null) {
-    fail(refusal);
+    reporter.fail(refusal);
     return 0;
   }
 
+  let head;
   let log;
   try {
-    log = git(
+    head = runGit('rev-parse', 'HEAD').trim();
+    log = runGit(
       'log',
-      '--no-merges',
-      `--format=${['%H', '%an', '%ae', '%cn', '%ce', '%B'].join(UNIT_SEPARATOR)}${RECORD_SEPARATOR}`,
+      `--format=${['%H', '%P', '%an', '%ae', '%cn', '%ce', '%B'].join(UNIT_SEPARATOR)}${RECORD_SEPARATOR}`,
     );
   } catch (error) {
-    ok(`no commits to read yet (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`);
+    reporter.ok(`no commits to read yet (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`);
     return 0;
   }
 
   const { records, fragments } = parseCommitLog(log);
   for (const fragment of fragments) {
-    fail(
+    reporter.fail(
       `commit record fragment ${JSON.stringify(fragment.slice(0, 40))} does not parse; ` +
         'a separator control byte inside a commit message is the only source of one',
     );
   }
-  const allowDependabotGeneratedMetadata = isDependabotPullRequest();
-  for (const { sha, author, committer, message } of records) {
-    for (const problem of checkCommitRecord(
-      { author, committer, message },
-      { allowDependabotGeneratedMetadata },
-    )) {
-      fail(`commit ${sha} ${problem}`);
+  for (const record of records) {
+    if (isSyntheticMergeTip(record, head)) {
+      reporter.ok(`synthetic merge tip ${record.sha.slice(0, 8)} exempted; historical merges remain scanned`);
+      continue;
+    }
+    for (const problem of checkCommitRecord(record)) {
+      reporter.fail(`commit ${record.sha.slice(0, 8)} ${problem}`);
     }
   }
-  ok(`${String(records.length)} commits checked from the checked-out revision`);
+  reporter.ok(`${String(records.length)} commits checked from the checked-out revision`);
   return records.length;
 }
 
-function checkPullRequest() {
-  console.log('== 4. pull request title and body ==');
-  const title = process.env['PULL_REQUEST_TITLE'] ?? '';
-  const body = process.env['PULL_REQUEST_BODY'] ?? '';
-  const generatedDependabot = isDependabotPullRequest();
+export function checkPullRequest({
+  environment = process.env,
+  reporter = createReporter(),
+} = {}) {
+  reporter.write('== 4. pull request title and body ==');
+  const title = environment['PULL_REQUEST_TITLE'] ?? '';
+  const body = environment['PULL_REQUEST_BODY'] ?? '';
+  const generatedDependabot = environment['PULL_REQUEST_AUTHOR'] === DEPENDABOT_LOGIN;
   let checked = 0;
 
   if (title !== '') {
     checked += 1;
+    for (const hit of scanRecord(title)) {
+      reporter.fail(`pull request title contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+    }
     if (!generatedDependabot) {
-      for (const hit of scanRecord(title)) {
-        fail(`pull request title contains ${JSON.stringify(hit.text)} (${hit.reason})`);
-      }
       for (const problem of checkSubject(title)) {
-        fail(`pull request title ${problem}`);
+        reporter.fail(`pull request title ${problem}`);
       }
-      const titleControl = findControlByte(title);
-      if (titleControl !== null) {
-        fail(`pull request title carries control byte 0x${titleControl.toString(16).padStart(2, '0')}`);
-      }
+    } else if (!isAscii(title)) {
+      reporter.fail('pull request title is not ASCII');
+    }
+    const titleControl = findControlByte(title);
+    if (titleControl !== null) {
+      reporter.fail(`pull request title carries control byte 0x${titleControl.toString(16).padStart(2, '0')}`);
     }
   }
   if (body !== '') {
     checked += 1;
+    for (const hit of scanRecord(body)) {
+      reporter.fail(`pull request body contains ${JSON.stringify(hit.text)} (${hit.reason})`);
+    }
+    if (!isAscii(body)) {
+      reporter.fail('pull request body is not ASCII');
+    }
+    const bodyControl = findControlByte(body);
+    if (bodyControl !== null) {
+      reporter.fail(`pull request body carries control byte 0x${bodyControl.toString(16).padStart(2, '0')}`);
+    }
     if (!generatedDependabot) {
-      for (const hit of scanRecord(body)) {
-        fail(`pull request body contains ${JSON.stringify(hit.text)} (${hit.reason})`);
-      }
-      if (!isAscii(body)) {
-        fail('pull request body is not ASCII');
-      }
-      const bodyControl = findControlByte(body);
-      if (bodyControl !== null) {
-        fail(`pull request body carries control byte 0x${bodyControl.toString(16).padStart(2, '0')}`);
-      }
       for (const problem of checkBody(body.split(/\r?\n/), {
         requireCloses: true,
         dependencyUpdate: false,
       })) {
-        fail(`pull request body ${problem}`);
+        reporter.fail(`pull request body ${problem}`);
       }
     }
   }
-  ok(`${String(checked)} supplied values checked`);
+  reporter.ok(`${String(checked)} supplied values checked`);
 }
 
 /** Case-folded on Windows, where two spellings of a path are one directory. */
@@ -759,62 +826,81 @@ function samePath(left, right) {
  * only honest answer, and it is also the message that tells a first-time
  * contributor what is actually wrong.
  */
-function checkRepositoryIdentity() {
-  console.log('== 0. the repository under test ==');
+export function checkRepositoryIdentity({
+  root = PROJECT_ROOT,
+  runGit = createGit(root),
+  reporter = createReporter(),
+} = {}) {
+  reporter.write('== 0. the repository under test ==');
   let toplevel;
   try {
-    toplevel = git('rev-parse', '--show-toplevel').trim();
+    toplevel = runGit('rev-parse', '--show-toplevel').trim();
   } catch (error) {
-    fail(
+    reporter.fail(
       'there is no git repository at this project root, so the branch, the ' +
         `history and the tracked file list cannot be read: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
     );
     return false;
   }
-  if (!samePath(toplevel, PROJECT_ROOT)) {
-    fail(
+  if (!samePath(toplevel, root)) {
+    reporter.fail(
       `this project is not its own repository: git reports ${toplevel} as the ` +
-        `repository root, and this check only judges ${PROJECT_ROOT}. Run it ` +
+        `repository root, and this check only judges ${root}. Run it ` +
         'from a clone of this project, or initialise one here first.',
     );
     return false;
   }
-  ok(`repository root is this project, ${toplevel}`);
+  reporter.ok(`repository root is this project, ${toplevel}`);
   return true;
 }
 
-export function main() {
-  if (!checkRepositoryIdentity()) {
-    console.log(`\n${String(failures.length)} FAILURE(S)`);
-    return 1;
+/**
+ * Run each exported orchestration step against one repository. The defaults
+ * are the checkout that owns this script; tests pass a fixture root and
+ * capture output without changing process-wide state.
+ */
+export function runRecordGate({
+  root = PROJECT_ROOT,
+  runGit = createGit(root),
+  environment = process.env,
+  write = console.log,
+} = {}) {
+  const reporter = createReporter(write);
+  if (!checkRepositoryIdentity({ root, runGit, reporter })) {
+    reporter.write(`\n${String(reporter.failures.length)} FAILURE(S)`);
+    return { status: 1, failures: [...reporter.failures], tracked: 0, commits: 0, branch: '' };
   }
 
-  let branch = process.env['REPOSITORY_BRANCH'] ?? '';
+  let branch = environment['REPOSITORY_BRANCH'] ?? '';
   if (branch === '') {
     try {
-      branch = git('branch', '--show-current').trim();
+      branch = runGit('branch', '--show-current').trim();
     } catch (error) {
-      console.log(
+      reporter.write(
         `  note  no branch available: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
       );
     }
   }
 
-  checkBranch(branch);
-  const tracked = checkTracked();
-  const commits = checkCommits();
-  checkPullRequest();
+  checkBranch(branch, reporter);
+  const tracked = checkTracked({ root, runGit, reporter });
+  const commits = checkCommits({ runGit, reporter });
+  checkPullRequest({ environment, reporter });
 
-  console.log('');
-  if (failures.length > 0) {
-    console.log(`${String(failures.length)} FAILURE(S)`);
-    return 1;
+  reporter.write('');
+  if (reporter.failures.length > 0) {
+    reporter.write(`${String(reporter.failures.length)} FAILURE(S)`);
+    return { status: 1, failures: [...reporter.failures], tracked, commits, branch };
   }
-  console.log(
+  reporter.write(
     `record: PASS, ${String(tracked)} tracked files and ${String(commits)} commits clean` +
       `${branch === '' ? '' : `, on branch ${branch}`}`,
   );
-  return 0;
+  return { status: 0, failures: [], tracked, commits, branch };
+}
+
+export function main() {
+  return runRecordGate().status;
 }
 
 const entry = process.argv[1];
