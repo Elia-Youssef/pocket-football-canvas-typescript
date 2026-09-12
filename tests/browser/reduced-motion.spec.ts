@@ -1,8 +1,21 @@
 import { expect, test } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 
-import { advance, playUntil, scores, startMatch, turnText } from './support/game';
-import type { MatchSetup } from './support/game';
+import {
+  A_WHOLE_TEST,
+  EVERY_PIXEL,
+  FRAME_MS,
+  SETTLE,
+  advance,
+  centres,
+  nextFrames,
+  pauseClock,
+  playUntil,
+  scores,
+  startMatch,
+  turnText,
+} from './support/game';
+import type { Centres, MatchSetup } from './support/game';
 
 /**
  * Item E6, method T, evidence `playwright/reduced-motion`:
@@ -61,97 +74,45 @@ import type { MatchSetup } from './support/game';
  */
 
 /**
- * Starvation budgets rather than correctness ones. These tests read the whole
- * canvas back pixel for pixel and drive real shots to rest, and the mutation
- * harness runs this suite with a build going beside it.
+ * THE BUDGETS, THE FILLS AND THE READING COME FROM `support/game.ts`, which is
+ * where the design space and SPEC section 18's fills already live. The copies
+ * that used to sit here were a second place for a palette change to be missed,
+ * and the reading they drove searched the WHOLE canvas, so each circle's
+ * bounding box quietly included the goal frame painted in the same team tint.
  */
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
-
-/** SPEC section 18's fills, as the bytes they are read back as. */
-const PLAYER_FILL = [0x55, 0x90, 0xce] as const;
-const OPPONENT_FILL = [0x6e, 0x17, 0x12] as const;
-const BALL_FILL = [0xfa, 0xfa, 0xf8] as const;
-
-/** The centre of each body, in design units, from the drawn pixels. */
-interface Centres {
-  readonly player: { x: number; y: number };
-  readonly opponent: { x: number; y: number };
-  readonly ball: { x: number; y: number };
-}
 
 /** What one scripted turn produced, for the two modes to be compared on. */
 interface Turn {
   readonly states: readonly string[];
   readonly centres: Centres;
+  /** Frames the drive charged, and the page time it actually consumed. */
+  readonly frames: number;
+  readonly elapsedMs: number;
 }
 
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let index = 0; index < times; index += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
+/**
+ * One coordinate at a tenth of a design unit. The comparison the tests make of
+ * these is an equality between two arms rather than a measurement of either,
+ * and a tenth is the resolution the reading was rounded to before it moved
+ * into the shared module.
+ */
+function tenths(centre: { x: number; y: number }): { x: number; y: number } {
+  return { x: Math.round(centre.x * 10) / 10, y: Math.round(centre.y * 10) / 10 };
 }
 
-/** Every body's centre in one read, so the three come from one frame. */
-async function centres(page: Page): Promise<Centres> {
-  return page.evaluate(
-    (fills) => {
-      const canvas = document.querySelector('[data-pf="play-surface"]');
-      if (!(canvas instanceof HTMLCanvasElement)) {
-        throw new Error('the play surface is not in the document');
-      }
-      const context = canvas.getContext('2d');
-      if (context === null) {
-        throw new Error('the play surface has no 2d context');
-      }
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      const scaleX = canvas.width / 1280;
-      const scaleY = canvas.height / 720;
-      const measure = (wanted: readonly number[], tolerance: number): { x: number; y: number } => {
-        let minX = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        for (let row = 0; row < canvas.height; row += 1) {
-          for (let column = 0; column < canvas.width; column += 1) {
-            const at = (row * canvas.width + column) * 4;
-            if (
-              Math.abs(Number(pixels[at]) - Number(wanted[0])) > tolerance ||
-              Math.abs(Number(pixels[at + 1]) - Number(wanted[1])) > tolerance ||
-              Math.abs(Number(pixels[at + 2]) - Number(wanted[2])) > tolerance
-            ) {
-              continue;
-            }
-            const designX = column / scaleX;
-            const designY = 720 - row / scaleY;
-            minX = Math.min(minX, designX);
-            maxX = Math.max(maxX, designX);
-            minY = Math.min(minY, designY);
-            maxY = Math.max(maxY, designY);
-          }
-        }
-        return {
-          x: Math.round(((minX + maxX) / 2) * 10) / 10,
-          y: Math.round(((minY + maxY) / 2) * 10) / 10,
-        };
-      };
-      return {
-        // The two team fills are far from anything else on the pitch; the
-        // ball's white is three bytes from the boundary token, so it is
-        // matched tightly enough to tell the two apart.
-        player: measure(fills.player, 6),
-        opponent: measure(fills.opponent, 6),
-        ball: measure(fills.ball, 2),
-      };
-    },
-    { player: PLAYER_FILL, opponent: OPPONENT_FILL, ball: BALL_FILL },
-  );
+async function restingCentres(page: Page): Promise<Centres> {
+  // EVERY PIXEL, because this reading IS the assertion. The shared reading
+  // samples every third pixel by default, which is a ninth of the cost and a
+  // bounding box that can sit up to about a design unit and a half from the
+  // one every pixel gives; the drives in this suite want that trade and this
+  // comparison does not, because what it claims is that two motion modes came
+  // to rest in the SAME place.
+  const scene = await centres(page, EVERY_PIXEL);
+  return {
+    player: tenths(scene.player),
+    opponent: tenths(scene.opponent),
+    ball: tenths(scene.ball),
+  };
 }
 
 /**
@@ -195,16 +156,25 @@ async function scriptedTurn(page: Page, power: string): Promise<Turn> {
   // turn, so a reading taken a few frames after the handover would be taken at
   // a different point of the match in each mode; driving one frame at a time
   // and stopping at the handover puts both readings on the same frame.
+  //
+  // THE PAGE'S CLOCK IS STOPPED BEFORE THIS LOOP RUNS, so the frames below are
+  // the only ones there are, and the two readings taken either side of the loop
+  // are what lets the test say so. With the clock ticking, the guard between
+  // two driven frames is a round trip the machine also drives frames in, and
+  // the two arms are then compared after different amounts of match.
+  const before = await page.evaluate(() => Date.now());
   let handedOver = false;
-  for (let frame = 0; frame < 200 && !handedOver; frame += 1) {
+  let frames = 0;
+  for (; frames < 200 && !handedOver; frames += 1) {
     await advance(page, 1);
     handedOver = (await turnText(page)) === 'OPPONENT IS AIMING';
   }
   expect(handedOver).toBe(true);
+  const elapsedMs = (await page.evaluate(() => Date.now())) - before;
   const states = await page.evaluate(
     () => (window as unknown as { __pfStates?: string[] }).__pfStates ?? [],
   );
-  return { states, centres: await centres(page) };
+  return { states, centres: await restingCentres(page), frames, elapsedMs };
 }
 
 /**
@@ -218,6 +188,16 @@ async function scriptedTurn(page: Page, power: string): Promise<Turn> {
  * counted in frames misses the shot it was opened for. The preference is set
  * on the context, which is what a real platform does, so the stylesheet and the
  * composition root read the same answer.
+ *
+ * AND WHERE THE TEST OWNS THE CLOCK, IT IS STOPPED THE MOMENT THE MATCH IS
+ * RUNNING. An installed clock is not a stopped one; it keeps advancing with
+ * real time and keeps firing frames, so a drive that looks frame by frame is
+ * also being driven by the machine, and the amount of match that happens
+ * between two round trips is whatever the machine had time for. That is the
+ * race behind the WebKit flake this file carries on record, and it is what
+ * `pauseClock` removes: from here on the ONLY time the page sees is the time
+ * `advance` and `fastForward` hand it. The match is started first, because
+ * reaching a running match is a wait on real frames.
  */
 async function inMotionMode<T>(
   browser: Browser,
@@ -242,6 +222,7 @@ async function inMotionMode<T>(
     await startMatch(page, setup);
     await expect(page.locator('[data-pf="turn"]')).toHaveText('YOUR TURN', SETTLE);
     if (ownClock) {
+      await pauseClock(page);
       await advance(page, 10);
     } else {
       await nextFrames(page, 10);
@@ -365,6 +346,23 @@ interface Held {
   readonly span: number;
 }
 
+/**
+ * SPEC section 6.4 freezes the world for 1.2 s after a goal, as a literal,
+ * because a bound asserted against the symbol that defines it passes for
+ * whatever value the symbol takes; and the step the celebration is sampled in,
+ * small enough that a dozen samples fit well inside that freeze.
+ */
+const CELEBRATION_HOLD_MS = 1200;
+const SAMPLE_STEP_MS = 25;
+
+/** What one sampled celebration produced, in both motion modes. */
+interface Celebration {
+  readonly images: string[];
+  readonly goals: number;
+  /** Page time between the first sample and the last, on the page's own clock. */
+  readonly spanMs: number;
+}
+
 /** What one sampling run saw: two static features, and one that must move. */
 interface SurfaceSamples {
   readonly still: readonly string[];
@@ -431,6 +429,18 @@ test.describe('PF-12 reduced motion, item E6', () => {
       {},
       true,
     );
+    // THE DRIVE ADMITTED NO REAL TIME, in either arm, and that is asserted
+    // before anything is compared: every frame the loop charged is FRAME_MS
+    // long, so a page whose clock is stopped advances by exactly that many
+    // milliseconds and one whose clock is still ticking advances by more.
+    // Without it the two arms are compared after different amounts of match.
+    for (const [mode, turn] of [
+      ['reduce', reduced],
+      ['no-preference', full],
+    ] as const) {
+      expect(turn.frames, mode).toBeGreaterThan(0);
+      expect(turn.elapsedMs, mode).toBe(turn.frames * FRAME_MS);
+    }
     // THE SEQUENCE OF STATES, in order, with no state added, dropped or
     // reordered. This is the clause a blanket animation cancel breaks.
     expect(reduced.states).toEqual(full.states);
@@ -566,7 +576,7 @@ test.describe('PF-12 reduced motion, item E6', () => {
     // scene can change from frame to frame except the celebration, which is
     // the burst and the goal-frame pulse. The samples are taken in fiftieths
     // of a second of the test's own clock, so a dozen of them fit inside it.
-    const toTheGoal = async (page: Page): Promise<{ images: string[]; goals: number }> => {
+    const toTheGoal = async (page: Page): Promise<Celebration> => {
       // Caught within ONE driven frame of the goal, because SPEC section 6.4
       // freezes the world for only 1.2 s and a batched drive could spend most
       // of that before it noticed. The sampling window below has to sit inside
@@ -589,24 +599,36 @@ test.describe('PF-12 reduced motion, item E6', () => {
       // celebration against the kickoff that follows it. Sampling only while
       // the readout still says GOAL cannot: everything below is inside one
       // celebration on every engine.
+      //
+      // AND THE PAGE'S OWN CLOCK IS RECORDED BESIDE EVERY SAMPLE, because the
+      // readout alone cannot say the window was inside the hold: the clock was
+      // installed and not stopped until PF-15's fix, so between the guard and
+      // the capture real time reached the page, fired frames, and could expire
+      // the hold with the loop still believing it was inside one celebration.
+      // That is the WebKit flake on record. With the clock stopped, the stamps
+      // below are the steps this loop drove and nothing else, and the span they
+      // cover is asserted against SPEC section 6.4's own 1.2 s.
       const images: string[] = [];
+      const stamps: number[] = [];
       while (images.length < 12 && (await turnText(page)) === 'GOAL') {
-        await page.clock.fastForward(25);
+        await page.clock.fastForward(SAMPLE_STEP_MS);
         if ((await turnText(page)) !== 'GOAL') {
           break;
         }
-        images.push(
-          await page.evaluate(() => {
-            const canvas = document.querySelector('[data-pf="play-surface"]');
-            if (!(canvas instanceof HTMLCanvasElement)) {
-              throw new Error('the play surface is not in the document');
-            }
-            return canvas.toDataURL();
-          }),
-        );
+        const sample = await page.evaluate(() => {
+          const canvas = document.querySelector('[data-pf="play-surface"]');
+          if (!(canvas instanceof HTMLCanvasElement)) {
+            throw new Error('the play surface is not in the document');
+          }
+          return { image: canvas.toDataURL(), at: Date.now() };
+        });
+        images.push(sample.image);
+        stamps.push(sample.at);
       }
       const board = await scores(page);
-      return { images, goals: board.player + board.opponent };
+      const first = stamps[0] ?? 0;
+      const last = stamps[stamps.length - 1] ?? 0;
+      return { images, goals: board.player + board.opponent, spanMs: last - first };
     };
     const reduced = await inMotionMode(
       browser,
@@ -635,6 +657,31 @@ test.describe('PF-12 reduced motion, item E6', () => {
     // about what changed BETWEEN frames of one celebration.
     expect(reduced.images.length).toBeGreaterThanOrEqual(2);
     expect(full.images.length).toBeGreaterThanOrEqual(2);
+    // THE WHOLE SAMPLED SPAN LIES INSIDE SPEC SECTION 6.4's HOLD, and it is
+    // made of the test's own steps alone. The span between the first stamp and
+    // the last is asserted to be exactly the steps this loop drove, which is
+    // only true of a page whose clock is stopped, and then to be inside the
+    // 1.2 s the section freezes the world for, which is what makes every
+    // sample a sample of one celebration on every engine and under any load.
+    for (const [mode, arm] of [
+      ['reduce', reduced],
+      ['no-preference', full],
+    ] as const) {
+      expect(arm.spanMs, mode).toBe((arm.images.length - 1) * SAMPLE_STEP_MS);
+      expect(arm.spanMs, mode).toBeGreaterThan(0);
+      expect(arm.spanMs, mode).toBeLessThan(CELEBRATION_HOLD_MS);
+    }
+    // The measurement itself, recorded on the run rather than only asserted
+    // about, because this test's whole subject is a window that used to be
+    // decided by the machine: a reader of a report can see what the sampled
+    // span actually was on the engine that reported it.
+    test.info().annotations.push({
+      type: 'sampled span',
+      description:
+        `reduce ${String(reduced.spanMs)} ms over ${String(reduced.images.length)} samples, ` +
+        `no-preference ${String(full.spanMs)} ms over ${String(full.images.length)} samples, ` +
+        `hold ${String(CELEBRATION_HOLD_MS)} ms`,
+    });
     // The celebration is already over the moment it is born: one image, over
     // the whole sampled window.
     expect([...new Set(reduced.images)]).toHaveLength(1);

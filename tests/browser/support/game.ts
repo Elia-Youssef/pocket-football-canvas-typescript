@@ -146,7 +146,16 @@ export async function startMatch(page: Page, setup: MatchSetup = {}): Promise<vo
   });
 }
 
-/** Let the page draw, for a reading that is of a frame and not of a gap. */
+/**
+ * Let the frame driver draw, so a reading is of a frame and not of a gap.
+ *
+ * TEN OF THEM AT THE START OF A TEST is the pattern most callers use, and the
+ * reason is the surface: it is sized by a resize observer whose first callback
+ * lands after the document has loaded, so a baseline captured before that is
+ * of a scene at another scale, and a comparison against it reads a resize as a
+ * change. The specs that read the canvas back then compare colour rather than
+ * alpha, so an antialiased edge cannot pass for something drawn.
+ */
 export async function nextFrames(page: Page, count = 2): Promise<void> {
   await page.evaluate(async (times) => {
     for (let index = 0; index < times; index += 1) {
@@ -164,6 +173,54 @@ export async function advance(page: Page, frames: number): Promise<void> {
   for (let index = 0; index < frames; index += 1) {
     await page.clock.fastForward(FRAME_MS);
   }
+}
+
+/**
+ * How far ahead of the moment it is read the pause target sits, in
+ * milliseconds of the page's own clock.
+ *
+ * A target the ticking clock has already passed is refused as the past, and
+ * the read and the pause are two round trips, so the margin has to outlast a
+ * round trip on the slowest engine under load. It is not paid for in
+ * simulation: the jump collapses every pending timer onto the target and runs
+ * it once, so the page is charged ONE frame however far the target is, and
+ * QUALITY-BAR section 7's delta ceiling decides what that one frame is worth.
+ */
+export const PAUSE_TARGET_MS = 2000;
+
+/**
+ * Stop the installed clock, so that from here on the only time the page sees
+ * is the time the test hands it.
+ *
+ * AN INSTALLED CLOCK IS NOT A STOPPED ONE. It keeps advancing with real time
+ * and keeps firing frames (measured at the PF-14 close: 1.5 s of real waiting
+ * advanced it 1.5 s and fired 94 frames on Chromium and 50 on WebKit), so a
+ * window a test believes it is driving frame by frame is being driven by the
+ * machine as well, and any premise of the form "nothing ran between these two
+ * readings" is unenforced. `tests/browser/orientation.spec.ts` states the same
+ * reasoning at length and was the first test here to need it.
+ *
+ * EVERY DRIVEN TEST THAT INSTALLS THE CLOCK NOW STOPS IT, and that is a rule
+ * rather than a habit: `tests/unit/browser-spec-hygiene.test.ts` reads the spec
+ * files and reports an install site that is not followed by this call. The
+ * evidence it was needed is on record twice, in the WebKit particle flake and
+ * in a Quick Match that reached FULL TIME while a max-drag test waited for the
+ * handover.
+ *
+ * THE MATCH IS STARTED FIRST, AND THEN THE FRAMES ARE THE TEST'S. Every
+ * control the chrome owns syncs the readouts in its own handler, so a match
+ * still STARTS under a stopped clock; what a stopped clock removes is the
+ * simulation, so anything the SIMULATION produces - the turn leaving the
+ * player, the whistle, and every pixel on the canvas - arrives on a driven
+ * frame and nowhere else. A test that used to reach one of those by waiting
+ * now drives it, which is the premise being made true rather than assumed.
+ *
+ * THE PAUSE OUTLIVES A NAVIGATION. It is recorded as an init script, so a
+ * document opened after it starts paused as well; one call covers a test that
+ * starts several matches.
+ */
+export async function pauseClock(page: Page): Promise<void> {
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + PAUSE_TARGET_MS);
 }
 
 /** A cheap stamp of everything the play surface is drawing right now. */
@@ -190,6 +247,20 @@ async function surfaceStamp(page: Page): Promise<number> {
 const SETTLE_STEP_MS = 100;
 
 /**
+ * The pixel step the readings below sample the surface at, and what it costs.
+ *
+ * THREE IS A COST DECISION AND ONE IS A RESOLUTION DECISION, so the caller
+ * makes it. A circle is 68 design units across, so every third pixel still
+ * samples hundreds of them; but a bounding box read on a lattice can miss the
+ * outermost covered pixel on each side, which moves the centre by up to about
+ * one design unit and a half at this step. A drive takes dozens of these
+ * reads, so a drive asks for the cheap one; a test whose subject IS the
+ * resting position asks for every pixel and pays for it once.
+ */
+export const SCAN_STEP = 3;
+export const EVERY_PIXEL = 1;
+
+/**
  * Drive until the surface stops changing on its own, and answer the steps it
  * took. Every motion SPEC section 14 states is event driven and expires, so a
  * scene carrying no aim and no outstanding event settles to one image.
@@ -205,8 +276,12 @@ const SETTLE_STEP_MS = 100;
 export async function settleSurface(page: Page, budget = 40): Promise<number> {
   let previous = await surfaceStamp(page);
   for (let step = 1; step <= budget; step += 1) {
+    // The jump IS the frame: a fast forward moves every pending timer onto its
+    // target and runs it, so the animation frame the driver was waiting on has
+    // already run and drawn by the time this returns. Waiting on two more
+    // would be waiting for frames only real time can deliver, and every caller
+    // of this helper now drives a STOPPED clock, where there are none.
     await page.clock.fastForward(SETTLE_STEP_MS);
-    await nextFrames(page, 2);
     const current = await surfaceStamp(page);
     if (current === previous) {
       return step;
@@ -266,10 +341,39 @@ export interface Centres {
   readonly ball: Centre;
 }
 
-/** Every body's centre in one read, so the three come from one frame. */
-export async function centres(page: Page): Promise<Centres> {
+/**
+ * What the readings below share, named once rather than spelt into each of
+ * them: a circle's fill is far from anything else on the pitch, the ball's
+ * white is three bytes from the boundary token so it is matched tightly enough
+ * to tell the two apart, and the two goal frames carry the team tints and live
+ * outside the field bounds, so a circle is searched for inside the field.
+ */
+const FILL_TOLERANCE = 6;
+const BALL_TOLERANCE = 2;
+const GOAL_TINT_LOW = 100;
+const GOAL_TINT_HIGH = 1180;
+
+/** The design space and the bands, as one argument for a page task. */
+const SURFACE_READING = {
+  width: LOGICAL_WIDTH,
+  height: LOGICAL_HEIGHT,
+  low: GOAL_TINT_LOW,
+  high: GOAL_TINT_HIGH,
+};
+
+/**
+ * Every body's centre in one read, so the three come from one frame.
+ *
+ * THE SAMPLING STEP IS THE CALLER'S, because it is a resolution and not a
+ * detail. `SCAN_STEP` is what a drive wants: dozens of reads at a ninth of the
+ * cost, and a centre that can sit up to about a design unit and a half from
+ * the one every pixel would give. A test whose assertion IS the resting
+ * position asks for `EVERY_PIXEL`, and item E6's equality between two motion
+ * modes is exactly that test.
+ */
+export async function centres(page: Page, step: number = SCAN_STEP): Promise<Centres> {
   return page.evaluate(
-    (fills) => {
+    (input) => {
       const canvas = document.querySelector('[data-pf="play-surface"]');
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error('the play surface is not in the document');
@@ -279,8 +383,8 @@ export async function centres(page: Page): Promise<Centres> {
         throw new Error('the play surface has no 2d context');
       }
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-      const scaleX = canvas.width / 1280;
-      const scaleY = canvas.height / 720;
+      const scaleX = canvas.width / input.reading.width;
+      const scaleY = canvas.height / input.reading.height;
       const measure = (
         wanted: readonly number[],
         tolerance: number,
@@ -290,18 +394,18 @@ export async function centres(page: Page): Promise<Centres> {
         let maxX = Number.NEGATIVE_INFINITY;
         let minY = Number.POSITIVE_INFINITY;
         let maxY = Number.NEGATIVE_INFINITY;
-        // Every third pixel: a circle is 68 design units across, so this still
-        // samples hundreds of them and moves the centroid by far less than one
-        // unit, at a ninth of the cost. A drive takes dozens of these reads.
-        for (let row = 0; row < canvas.height; row += 3) {
-          for (let column = 0; column < canvas.width; column += 3) {
+        // The step the caller asked for. See the header above: three samples
+        // hundreds of pixels of a 68 unit circle at a ninth of the cost, and
+        // one is what a resting-position equality is worth paying for.
+        for (let row = 0; row < canvas.height; row += input.step) {
+          for (let column = 0; column < canvas.width; column += input.step) {
             const slot = (row * canvas.width + column) * 4;
             const designX = column / scaleX;
             // The two goal frames carry the two team tints and live OUTSIDE
             // the field bounds, so the search runs inside the pitch: a frame
             // counted as part of a circle drags its centre a hundred units
             // toward the goal and every aim taken from it is wrong.
-            if (insideOnly && (designX <= 100 || designX >= 1180)) {
+            if (insideOnly && (designX <= input.reading.low || designX >= input.reading.high)) {
               continue;
             }
             if (
@@ -311,7 +415,7 @@ export async function centres(page: Page): Promise<Centres> {
             ) {
               continue;
             }
-            const designY = 720 - row / scaleY;
+            const designY = input.reading.height - row / scaleY;
             minX = Math.min(minX, designX);
             maxX = Math.max(maxX, designX);
             minY = Math.min(minY, designY);
@@ -324,12 +428,132 @@ export async function centres(page: Page): Promise<Centres> {
         // The two goal frames carry the team tints, so a circle is searched
         // for inside the field alone; the ball is white, no frame is, and a
         // ball in the net is exactly where a goal has to be able to find it.
-        player: measure(fills.player, 6, true),
-        opponent: measure(fills.opponent, 6, true),
-        ball: measure(fills.ball, 2, false),
+        player: measure(input.player, input.circleTolerance, true),
+        opponent: measure(input.opponent, input.circleTolerance, true),
+        ball: measure(input.ball, input.ballTolerance, false),
       };
     },
-    { player: PLAYER_FILL, opponent: OPPONENT_FILL, ball: BALL_FILL },
+    {
+      player: PLAYER_FILL,
+      opponent: OPPONENT_FILL,
+      ball: BALL_FILL,
+      circleTolerance: FILL_TOLERANCE,
+      ballTolerance: BALL_TOLERANCE,
+      reading: SURFACE_READING,
+      step,
+    },
+  );
+}
+
+/** What one dispatched aim attempt saw, phase by phase. */
+export interface AimAttempt {
+  readonly pressedAt: Centre;
+  readonly afterDown: string;
+  readonly afterMove: string;
+  readonly afterEnd: string;
+  /** The turn readout on either side of the attempt, read in the same task. */
+  readonly turnBefore: string;
+  readonly turnAfter: string;
+}
+
+/**
+ * A press, a drag and an end, dispatched at the play surface with the pressed
+ * circle's own coordinates read IN THE SAME PAGE TASK. The phase is sampled
+ * after each event, because a lock that let the press through and tidied up
+ * afterwards is not a lock.
+ *
+ * THE READING IS INLINE AND NOT A CALL TO `centres` ABOVE, and that is the
+ * whole reason this helper exists here rather than as two steps in the spec. A
+ * page task cannot close over a module function, so a shared reading would be
+ * a second round trip, and the phases this is used in are exactly the ones
+ * where the body is MOVING: between a separate read and a separate press the
+ * circle has gone, the press lands on empty pitch, and a refusal test that
+ * pressed nothing passes for the wrong reason. Everything the reading needs
+ * is handed in, so the tolerances and the bands have one home.
+ */
+export async function dispatchAim(
+  page: Page,
+  units: number,
+  ending: 'pointerup' | 'pointercancel',
+  fill: readonly number[],
+): Promise<AimAttempt> {
+  return page.evaluate(
+    (input) => {
+      const canvas = document.querySelector('[data-pf="play-surface"]');
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error('the play surface is not in the document');
+      }
+      const context = canvas.getContext('2d');
+      if (context === null) {
+        throw new Error('the play surface has no 2d context');
+      }
+      const readout = document.querySelector('[data-pf="turn"]');
+      if (!(readout instanceof HTMLElement)) {
+        throw new Error('the turn readout is not in the document');
+      }
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const scaleX = canvas.width / input.reading.width;
+      const scaleY = canvas.height / input.reading.height;
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (let row = 0; row < canvas.height; row += input.step) {
+        for (let column = 0; column < canvas.width; column += input.step) {
+          const slot = (row * canvas.width + column) * 4;
+          const designX = column / scaleX;
+          if (designX <= input.reading.low || designX >= input.reading.high) {
+            continue;
+          }
+          if (
+            Math.abs(Number(pixels[slot]) - Number(input.fill[0])) > input.tolerance ||
+            Math.abs(Number(pixels[slot + 1]) - Number(input.fill[1])) > input.tolerance ||
+            Math.abs(Number(pixels[slot + 2]) - Number(input.fill[2])) > input.tolerance
+          ) {
+            continue;
+          }
+          const designY = input.reading.height - row / scaleY;
+          minX = Math.min(minX, designX);
+          maxX = Math.max(maxX, designX);
+          minY = Math.min(minY, designY);
+          maxY = Math.max(maxY, designY);
+        }
+      }
+      const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      const rect = canvas.getBoundingClientRect();
+      const clientX = rect.left + (centre.x * rect.width) / input.reading.width;
+      const clientY =
+        rect.top + ((input.reading.height - centre.y) * rect.height) / input.reading.height;
+      const across = (input.units * rect.width) / input.reading.width;
+      const fire = (type: string, x: number): void => {
+        canvas.dispatchEvent(
+          new PointerEvent(type, { pointerId: 1, clientX: x, clientY, bubbles: true }),
+        );
+      };
+      const phase = (): string => canvas.dataset['pfAim'] ?? '';
+      const turnBefore = readout.textContent ?? '';
+      fire('pointerdown', clientX);
+      const afterDown = phase();
+      fire('pointermove', clientX + across);
+      const afterMove = phase();
+      fire(input.ending, clientX + across);
+      return {
+        pressedAt: centre,
+        afterDown,
+        afterMove,
+        afterEnd: phase(),
+        turnBefore,
+        turnAfter: readout.textContent ?? '',
+      };
+    },
+    {
+      units,
+      ending,
+      fill,
+      tolerance: FILL_TOLERANCE,
+      reading: SURFACE_READING,
+      step: SCAN_STEP,
+    },
   );
 }
 

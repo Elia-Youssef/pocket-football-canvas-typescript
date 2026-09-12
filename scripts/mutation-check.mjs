@@ -919,8 +919,16 @@ export const EDITS = [
     item: 'E1',
     name: 'the sweep matches a stylesheet dimension literal',
     file: 'tests/unit/tokens.test.ts',
-    find: String.raw`const DIMENSION_LITERAL = /(?<![\w#-])\d*\.?\d+(?:px|rem|em|ms|s)\b/g;`,
-    replace: String.raw`const DIMENSION_LITERAL = /(?<![\w#-])\d*\.?\d+(?:never)\b/g;`,
+    // RE-POINTED after the matcher grew from five units to the complete
+    // dimension list. Same property: no matcher means no dimension is seen.
+    find:
+      'const DIMENSION_LITERAL = new RegExp(\n' +
+      '  String.raw`(?<![\\w#-])-?\\d*\\.?\\d+(?:` +\n' +
+      "    [...DIMENSION_UNITS].sort((one, other) => other.length - one.length).join('|') +\n" +
+      '    String.raw`)(?![\\w-])`,\n' +
+      "  'gi',\n" +
+      ');',
+    replace: 'const DIMENSION_LITERAL = /never/g;',
     detectedBy: 'unit',
   },
   {
@@ -6393,6 +6401,418 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
       '      (change) => change.path,\n' +
       '    ),',
     replace: '    finalDrift: [],',
+    detectedBy: 'unit',
+  },
+  // ---------------------------------------------------------------------
+  // The properties a single edit could break with every gate green, from the
+  // 2026-09-08 audit. Every one of them was applied by hand, survived the
+  // whole suite, and is entered here beside the assertion that now catches
+  // it. All unit-detected: each has a headless seam, so none costs a build
+  // and a browser run.
+  // ---------------------------------------------------------------------
+  {
+    // SPEC section 4's facing marker is a wedge. With the spread at zero its
+    // three points are collinear, the fill covers nothing, and identity rests
+    // on the glyph and the colour alone.
+    item: 'G3',
+    name: 'the facing marker opens to a wedge rather than to a line',
+    file: 'src/render/entities.ts',
+    find: 'const MARKER_SPREAD = Math.PI / 5;',
+    replace: 'const MARKER_SPREAD = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    // The marker painted in the circle's own fill is an invisible marker. A
+    // set of drawn colours cannot see it, because the same six colours are
+    // still used; the ordered list of assignments can.
+    item: 'G3',
+    name: 'the facing marker is painted in the glyph colour and not the fill',
+    file: 'src/render/entities.ts',
+    find: '  drawMarker(context, body, facing, glyphColour);',
+    replace: '  drawMarker(context, body, facing, fill);',
+    detectedBy: 'unit',
+  },
+  {
+    // SPEC section 18 measures the glyph against the fill it sits on, at 5.24
+    // on the player. The boundary colour is the same string as the OPPONENT's
+    // glyph colour, so the swap is invisible to a set and shows only in the
+    // player's own slot of the ordered list.
+    item: 'G3',
+    name: 'the glyph is painted in the colour the contrast table measures',
+    file: 'src/render/entities.ts',
+    find: '  drawGlyph(context, body, word, glyphColour);',
+    replace: '  drawGlyph(context, body, word, palette.line);',
+    detectedBy: 'unit',
+  },
+  {
+    // DESIGN section 7's pass order, and the module's own guarantee that the
+    // vignette is drawn under the markings and the rail: moved to fourth, its
+    // alpha tints the rail down to 2.44 floodlit and 2.14 daylight.
+    item: 'E3',
+    name: 'the vignette is drawn under the markings and the rail',
+    file: 'src/render/pitch.ts',
+    find: `  drawStripes(context, palette);
+  drawVignette(context, palette);
+  drawCentreMarkings(context, palette);
+  drawWalls(context, palette);`,
+    replace: `  drawStripes(context, palette);
+  drawCentreMarkings(context, palette);
+  drawWalls(context, palette);
+  drawVignette(context, palette);`,
+    detectedBy: 'unit',
+  },
+  {
+    // QUALITY-BAR section 5 makes orientation part of the breakpoint rule, so
+    // an orientation query is precisely the second, unreconciled copy the
+    // design exists to prevent. It carries no length, so the literal sweep
+    // cannot see it either.
+    item: 'F1',
+    name: 'an orientation query in the stylesheet is a second breakpoint rule',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-dismiss {',
+    replace: `@media (orientation: portrait) {
+  .pf-hud {
+    gap: var(--space-1);
+  }
+}
+
+.pf-portrait-hint .pf-hint-dismiss {`,
+    detectedBy: 'unit',
+  },
+  {
+    // The same rule asked as a ratio, which is the shape that hid a whole
+    // display rule from the gate this vehicle replaced.
+    item: 'F1',
+    name: 'an aspect ratio query in the stylesheet is a second breakpoint rule',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-dismiss {',
+    replace: `@media (min-aspect-ratio: 1/1) {
+  .pf-portrait-hint {
+    display: none;
+  }
+}
+
+.pf-portrait-hint .pf-hint-dismiss {`,
+    detectedBy: 'unit',
+  },
+  {
+    // CSS media range syntax, supported since the Safari version this
+    // project's matrix floors at. Written against a zero length so that the
+    // literal sweep has nothing to report and this gate is the only one that
+    // can catch it, which is the combination the audit named.
+    item: 'F1',
+    name: 'a media range query in the stylesheet is a second breakpoint rule',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-dismiss {',
+    replace: `@media (width >= 0) {
+  .pf-hud {
+    gap: var(--space-1);
+  }
+}
+
+.pf-portrait-hint .pf-hint-dismiss {`,
+    detectedBy: 'unit',
+  },
+  {
+    // A container query asks the same question of an ancestor box, and is
+    // written here without a length for the same reason as the range query.
+    item: 'F1',
+    name: 'a container query in the stylesheet is a second breakpoint rule',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-dismiss {',
+    replace: `@container (orientation: portrait) {
+  .pf-hud {
+    gap: var(--space-1);
+  }
+}
+
+.pf-portrait-hint .pf-hint-dismiss {`,
+    detectedBy: 'unit',
+  },
+  {
+    // The chrome census walked BUTTON and INPUT alone, so a focusable element
+    // of any other shape joined the shipped tab order with every chrome test
+    // green. A tabindex on the storage notice is the cheapest way to do it.
+    item: 'M1',
+    name: 'a focusable control of any shape reddens the chrome census',
+    file: 'src/ui/components/settings-panel.ts',
+    find: `  const notice = document.createElement('p');
+  notice.className = 'pf-panel-text';`,
+    replace: `  const notice = document.createElement('p');
+  notice.setAttribute('tabindex', '0');
+  notice.className = 'pf-panel-text';`,
+    detectedBy: 'unit',
+  },
+  {
+    // The corner tie-break, which the module's own docstring states as a
+    // decision and nothing asserted: inverted, a path arriving exactly at a
+    // corner names the end wall instead of the side wall.
+    item: 'J5',
+    name: 'a path arriving exactly at a corner takes the side wall',
+    file: 'src/core/guide.ts',
+    find: '  if (alongX <= alongY) {',
+    replace: '  if (alongX < alongY) {',
+    detectedBy: 'unit',
+  },
+  {
+    // QUALITY-BAR section 3: an overlay takes focus on open. Without the input
+    // arm the mode menu opens on Start and settings opens on Reset all data,
+    // and the assertion that graded this proved only "the first BUTTON".
+    item: 'M1',
+    name: 'a panel opens on its first control even when that is an input',
+    file: 'src/ui/components/panel.ts',
+    find: "  return tag === 'BUTTON' || tag === 'INPUT';",
+    replace: "  return tag === 'BUTTON';",
+    detectedBy: 'unit',
+  },
+  {
+    // QUALITY-BAR section 11 and the module's own reason: several locales
+    // group with U+202F, and a readout that grouped would carry a separator
+    // no MM:SS pair or score has any use for.
+    item: 'M1',
+    name: 'the shared number format groups nothing',
+    file: 'src/ui/components/clock.ts',
+    find: `  return formatter(locales ?? hostLocales(), {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+    useGrouping: false,
+  }).format(value);`,
+    replace: `  return formatter(locales ?? hostLocales(), {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+    useGrouping: true,
+  }).format(value);`,
+    detectedBy: 'unit',
+  },
+  {
+    // The dismissal is compared rather than returned, because the platform
+    // type admits `until-found` beside the boolean and a hint the browser can
+    // reveal on a find is not a hint the player put away.
+    item: 'F3',
+    name: 'a hint the browser could reveal is not a hint that was dismissed',
+    file: 'src/ui/components/portrait-hint.ts',
+    find: '      return root.hidden === true;',
+    replace: '      return root.hidden !== false;',
+    detectedBy: 'unit',
+  },
+  {
+    // Item E1's literal sweep knew five units, so a size written in a viewport
+    // unit reached the tree unremarked. A real declaration, in a real rule.
+    item: 'E1',
+    name: 'a viewport unit in the chrome is a literal like any other',
+    file: 'src/ui/components/chrome.css',
+    find: `.pf-score {
+  font-size: var(--type-lg);`,
+    replace: `.pf-score {
+  font-size: 5vw;`,
+    detectedBy: 'unit',
+  },
+  {
+    // The carve-out is spent one occurrence at a time, so an exemption that
+    // outlives the line it was written for is reported rather than standing
+    // for a value nobody looked at again.
+    item: 'E1',
+    name: 'an exemption that outlived its occurrence is reported',
+    file: 'tests/unit/tokens.test.ts',
+    find: `    literal: '100%',
+    count: 1,`,
+    replace: `    literal: '100%',
+    count: 2,`,
+    detectedBy: 'unit',
+  },
+  {
+    // The seeded-randomness scan covers every module that draws, by a list
+    // reconciled against the directory: a file removed from it is a file the
+    // scan would never open again.
+    item: 'E5',
+    name: 'a module removed from the seeded-randomness scan is reported',
+    file: 'tests/unit/render-effects.test.ts',
+    find: "  'src/render/pitch.ts',",
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    // The browser suite's fills are tied to the palette the renderer draws
+    // with, so a colour that moved in one place cannot be left behind in the
+    // other. Machinery for an Inspection item, like E1's own sweep entries.
+    item: 'E1',
+    name: 'the harness fills are the palette the renderer draws with',
+    file: 'tests/browser/support/game.ts',
+    find: 'export const PLAYER_FILL = [0x55, 0x90, 0xce] as const;',
+    replace: 'export const PLAYER_FILL = [0x55, 0x90, 0xcf] as const;',
+    detectedBy: 'unit',
+  },
+  {
+    // And the scan that keeps one declaration per value: a matcher that only
+    // saw exported declarations would find nothing in any spec and report a
+    // clean suite forever, which is the same output as a clean suite.
+    //
+    // RE-POINTED. The anchor was the `DECLARED` matcher, which was replaced by
+    // one that reads a binding at ANY depth after the review found that a
+    // `const` nested in a describe callback - the shadow that costs most - was
+    // permitted. This retarget makes the scan read only what the module
+    // EXPORTS, which is the identical neutering by the identical tests: every
+    // depth control fails and the non-vacuity floor with them.
+    item: 'E1',
+    name: 'the redeclaration scan sees what a spec declares',
+    file: 'tests/unit/browser-spec-hygiene.test.ts',
+    find: '  const names = namesIn(source, BOUND);',
+    replace: '  const names = namesIn(source, EXPORTED);',
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // The fix round: the properties the first pass of this vehicle left
+  // unpinned, and the park-12 cure across every driven spec. All
+  // unit-detected, on the same rule as the block above.
+  // ---------------------------------------------------------------------
+  {
+    // SPEC section 4's facing marker is a wedge, and its BASE is what makes it
+    // one: the spread pins the angle the two base points sit at and this pins
+    // how far out along the radius they sit, so a marker narrowed here is a
+    // marker the spread entry cannot see.
+    item: 'G3',
+    name: 'the facing marker keeps the base its own constant states',
+    file: 'src/render/entities.ts',
+    find: 'const MARKER_BASE = 0.45;',
+    replace: 'const MARKER_BASE = 0.35;',
+    detectedBy: 'unit',
+  },
+  {
+    // The census walks by focusability, and embedded media with its own
+    // controls is in the tab order. This is the audio part's own shape, a turn
+    // early: a control the freeze could not see would join the shipped page
+    // with every chrome test green.
+    item: 'M1',
+    name: 'a focusable media control reddens the chrome census',
+    file: 'src/ui/components/settings-panel.ts',
+    find: "  const notice = document.createElement('p');",
+    replace:
+      "  const notice = document.createElement('audio');\n" +
+      "  notice.setAttribute('controls', '');\n" +
+      "  notice.setAttribute('aria-label', 'Whistle');",
+    detectedBy: 'unit',
+  },
+  {
+    // The play frame is the one focusable control mounted outside both
+    // censuses, and the arithmetic that accounts for it is 38 plus 8 plus ONE.
+    // A second focusable element beside it leaves the file list saying
+    // "main.ts" and the total wrong by one, which is why the pin counts.
+    item: 'C12',
+    name: 'a second focusable element at the composition root is counted',
+    file: 'src/main.ts',
+    find: "  frame.setAttribute('tabindex', '0');",
+    replace:
+      "  frame.setAttribute('tabindex', '0');\n" + "  stage.setAttribute('tabindex', '0');",
+    detectedBy: 'unit',
+  },
+  {
+    // A `const` nested in a describe callback shadows the shared import for
+    // every test in the file, and in a Playwright spec almost nothing is at the
+    // top level. This is the shadow the first scan permitted.
+    item: 'E1',
+    name: 'a redeclaration nested in a describe callback is reported',
+    file: 'tests/browser/keyboard.spec.ts',
+    find: "test.describe('PF-6 keyboard operation, item C12', () => {",
+    replace:
+      "test.describe('PF-6 keyboard operation, item C12', () => {\n" +
+      '  const SETTLE = { timeout: 1 };',
+    detectedBy: 'unit',
+  },
+  {
+    // A closing brace inside a string closes a rule the at-rule walk is not in,
+    // so every block after it is read at the wrong depth and the query below is
+    // never reported: a gate answering "no at-rule here" for a stylesheet that
+    // has one. Both halves are planted together, because the guard alone
+    // changes no verdict and the query alone was already caught.
+    item: 'F1',
+    name: 'a brace in a string does not hide the query after it',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-dismiss {',
+    replace: `.pf-brace-guard::before {
+  content: "}";
+}
+
+@media (orientation: portrait) {
+  .pf-hud {
+    gap: var(--space-1);
+  }
+}
+
+.pf-portrait-hint .pf-hint-dismiss {`,
+    detectedBy: 'unit',
+  },
+  {
+    // A negative offset is a value on a QUALITY-BAR section 15 scale like any
+    // other, and the sweep's lookbehind refused the minus that makes it one.
+    item: 'E1',
+    name: 'a negative dimension literal in the chrome is a literal like any other',
+    file: 'src/ui/components/chrome.css',
+    find: '.pf-portrait-hint .pf-hint-text {',
+    replace: `.pf-brace-guard {
+  margin-top: -12px;
+}
+
+.pf-portrait-hint .pf-hint-text {`,
+    detectedBy: 'unit',
+  },
+  {
+    // The bracket spelling of the platform generator, which the M3 lint rule
+    // refuses by name inside core and the renderer's own scan could not see.
+    item: 'E5',
+    name: 'the bracket spelling of the platform generator is found',
+    file: 'src/render/pitch.ts',
+    find: 'const STRIPE_WIDTH = SPACE[8];',
+    replace:
+      'const STRIPE_WIDTH = SPACE[8];\n' + 'const MUTATION_ROLL = Math["random"]();',
+    detectedBy: 'unit',
+  },
+  {
+    // A walk that opens no directory satisfies its own two-way reconciliation
+    // with a file's ABSENCE FROM BOTH SIDES, so a module under src/render/sub/
+    // would be in neither list and neither list would notice.
+    item: 'E5',
+    name: 'a render module in a subdirectory is opened by the scan',
+    file: 'tests/unit/render-effects.test.ts',
+    find:
+      '    if (entry.isDirectory()) {\n' +
+      '      for (const nested of modulesUnder(path.join(root, entry.name))) {\n' +
+      '        found.push(`${entry.name}/${nested}`);\n' +
+      '      }\n' +
+      '      continue;\n' +
+      '    }',
+    replace: '    if (entry.isDirectory()) {\n' + '      continue;\n' + '    }',
+    detectedBy: 'unit',
+  },
+  {
+    // The park-12 cure itself: a driven spec that installs the page clock and
+    // never stops it races the machine for the match, which is a green suite on
+    // a quiet run and a flake under load. Three failures are on record.
+    item: 'E1',
+    name: 'a driven spec that never stops its page clock is reported',
+    file: 'tests/browser/max-drag.spec.ts',
+    find: '    await pauseClock(page);\n',
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    // And the scan behind it, whose failure mode is a clean report: with the
+    // call it looks for renamed, every install site reads as unstopped, which
+    // is the loud direction; with the INSTALL matcher blinded the count pin is
+    // what catches it. Machinery for an Inspection item, like E1's own sweeps.
+    item: 'E1',
+    name: 'the clock scan sees whether an install was stopped',
+    file: 'tests/unit/browser-spec-hygiene.test.ts',
+    find: "const STOP = 'pauseClock(';",
+    replace: "const STOP = 'stopTheClock(';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the clock scan sees an install site at all',
+    file: 'tests/unit/browser-spec-hygiene.test.ts',
+    find: 'const INSTALL = /page\\.clock\\.install\\s*\\(/g;',
+    replace: 'const INSTALL = /page\\.clock\\.installNothing\\s*\\(/g;',
     detectedBy: 'unit',
   },
 ];

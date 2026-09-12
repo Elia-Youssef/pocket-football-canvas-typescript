@@ -8,8 +8,8 @@ import {
   centres,
   chooseMode,
   leaveToMenu,
-  nextFrames,
   openGame,
+  pauseClock,
   settleSurface,
   startMatch,
   turnText,
@@ -191,22 +191,29 @@ async function roomiestAim(page: Page): Promise<number> {
 
 /** Aim, measure how much guide is drawn, then launch the shot. */
 async function turnWithGuide(page: Page): Promise<Drawn> {
-  await nextFrames(page, 3);
+  // DRIVEN FRAMES, NOT WAITED-FOR ONES. The caller stops the page clock the
+  // moment the match is running, so an animation frame arrives only when this
+  // file charges one; each of these is a quarter of a second over a pitch at
+  // rest, which draws the aim and moves nothing.
+  await advance(page, 3);
   // The turn comes back the moment the match hands it back, which after a goal
   // is while the celebration is still playing out at the far goal. The baseline
   // below is only a baseline once that has finished.
   await settleSurface(page);
   await captureBaseline(page);
-  await nextFrames(page, 2);
+  await advance(page, 2);
   await at(page, 'aim-angle').fill(String(await roomiestAim(page)));
   await at(page, 'power').fill('100');
-  await nextFrames(page, 3);
+  await advance(page, 3);
   const drawn = await drawnBeyond(page, PAST_THE_ARROW);
   await at(page, 'aim-launch').click();
   // The shot has to have GONE OUT. SPEC section 19 counts the player's turns,
   // so a Launch refused in place would leave the turn where it was and take
-  // the count with it; nothing advances the clock after the click, so the turn
-  // cannot have come back on its own by the time this reads.
+  // the count with it. ONE frame is charged for the readout to follow the
+  // launch, because the readout follows the simulation and the simulation runs
+  // on driven frames alone; a quarter of a second cannot bring the turn back,
+  // so a readout still saying YOUR TURN here is a Launch that was refused.
+  await advance(page, 1);
   await expect(at(page, 'turn')).not.toHaveText('YOUR TURN', SETTLE);
   return drawn;
 }
@@ -278,6 +285,9 @@ test.describe('PF-9 onboarding, item J8', () => {
       difficulty: 'ace',
       firstEver: true,
     });
+    // AND STOPPED: three whole turns are driven below, and the guide this test
+    // counts is drawn on the frames it charges.
+    await pauseClock(page);
     await expect(at(page, 'mode-guide')).toHaveCount(1);
 
     const seen: Drawn[] = [];

@@ -6,6 +6,7 @@ import {
   advance,
   chooseMode,
   leaveToMenu,
+  pauseClock,
   playUntil,
   scores,
   startMatch,
@@ -72,6 +73,10 @@ test.describe('PF-9 First to N, item J2', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'first-to', target: 7 });
+    // AND STOPPED: the six hundred frames below are the only time this page
+    // sees, so "longer than the longest match that does" is a length this
+    // test charged rather than a length the machine happened to deliver.
+    await pauseClock(page);
     // Six hundred frames is 150 seconds of match, half again as long as the
     // longest Quick Match, and nobody launches so nobody can reach the target.
     await advance(page, 600);
@@ -85,6 +90,8 @@ test.describe('PF-9 First to N, item J2', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'first-to', target: 3 });
+    // AND STOPPED, so the drive below is made of its own frames.
+    await pauseClock(page);
     // "A SIDE", and the side driven to the target is the opponent's, because
     // that is the one a browser test can settle rather than watch: SPEC
     // section 3 credits the mouth the ball entered, so the scripted striker

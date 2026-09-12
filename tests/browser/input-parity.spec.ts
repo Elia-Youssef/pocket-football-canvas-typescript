@@ -1,7 +1,17 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 
-import { advance, startMatch, turnText } from './support/game';
+import {
+  A_WHOLE_TEST,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  SETTLE,
+  advance,
+  nextFrames,
+  pauseClock,
+  startMatch,
+  turnText,
+} from './support/game';
 
 /**
  * Item C11, method T, evidence `playwright/input-parity`:
@@ -39,10 +49,15 @@ import { advance, startMatch, turnText } from './support/game';
  * same modules at frame rates no browser lets a test choose.
  */
 
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
-const LOGICAL_WIDTH = 1280;
-const LOGICAL_HEIGHT = 720;
+/**
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILLS COME FROM `support/game.ts`.
+ * They were retyped in eight of these specs, SPEC section 18's fills among
+ * them, so a palette change would have left five of them scanning for a colour
+ * the game no longer draws. `SETTLE` and `A_WHOLE_TEST` there are starvation
+ * budgets rather than correctness ones: a test here reads the canvas back and
+ * drives real shots to rest, and the mutation harness runs this suite with a
+ * build going beside it.
+ */
 
 /** QUALITY-BAR section 3's two touch numbers, as literals. */
 const TARGET_MIN = 44;
@@ -100,18 +115,6 @@ function clientOf(box: Box, designX: number, designY: number): { x: number; y: n
     x: box.left + (designX * box.width) / LOGICAL_WIDTH,
     y: box.top + ((LOGICAL_HEIGHT - designY) * box.height) / LOGICAL_HEIGHT,
   };
-}
-
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let index = 0; index < times; index += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
 }
 
 /**
@@ -400,6 +403,9 @@ test.describe('PF-6 input parity and the no-drag path, item C11', () => {
     // rather than a minute of waiting.
     await page.clock.install({ time: 0 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED, because installed is not stopped: the match below is the
+    // four hundred frames this loop charges and nothing else.
+    await pauseClock(page);
     await armDragProbe(page);
     const box = await surfaceBox(page);
     const surface = at(page, 'play-surface');
@@ -656,6 +662,7 @@ test.describe('PF-6 input parity and the no-drag path, item C11', () => {
     await page.clock.install({ time: 0 });
     await startMatch(page);
     await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);
+    await pauseClock(page);
     await advance(page, 4);
 
     // The positive control first, in the turn that allows an aim: the same

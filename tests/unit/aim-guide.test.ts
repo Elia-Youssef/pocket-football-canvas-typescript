@@ -288,6 +288,53 @@ describe('PF-9 the aim guide, SPEC section 11', () => {
     expect(world.ball.velocity.y).toBe(before.velocity.y);
   });
 
+  it('breaks a corner tie toward the side wall, and only a tie', () => {
+    // THE ONE LINE IN THIS MODULE WHOSE WHOLE PURPOSE IS DETERMINISM. Its own
+    // docstring states the rule as a decision: "The x axis is tested first, so
+    // a path that arrives exactly at a corner takes the side wall rather than
+    // depending on which comparison happened to round first". Nothing asserted
+    // it: inverting the comparison survived the whole unit suite and the whole
+    // chromium browser suite, because a tie only happens at a corner and a
+    // corner is not somewhere a sweep lands by accident.
+    //
+    // A TIE HAS TO BE CONSTRUCTED TO THE LAST BIT. At 45 degrees the cosine and
+    // the sine of the angle differ by one unit in the last place, so equal
+    // distances to the two bounds do NOT give equal distances along the
+    // direction: the start below is the one whose two quotients come out
+    // identical, and the equality is asserted before the wall is, so a tie that
+    // stopped being a tie would fail here rather than quietly testing the
+    // ordinary case.
+    const TIE_X = 756;
+    const TIE_Y = 201.0000000000001;
+    const world = placed([TIE_X, TIE_Y], [200, 200]);
+    const direction = degrees(45);
+    const alongX = (MAX_X - TIE_X) / Math.cos(direction);
+    const alongY = (MAX_Y - TIE_Y) / Math.sin(direction);
+    expect(alongX).toBe(alongY);
+
+    const tied = predictGuide(world.player, world.ball, direction);
+    // The side wall, by the rule; the corner it arrives at is the meeting of
+    // both bounds, written out as the two literals this file already derives.
+    expect(tied.bounce).toBe('right');
+    expect(tied.contact).toBeUndefined();
+    expect(tied.path).toHaveLength(3);
+    expect(tied.path[1]?.x).toBeCloseTo(MAX_X, 9);
+    expect(tied.path[1]?.y).toBeCloseTo(MAX_Y, 9);
+    // A corner consumes the one bounce: the reflected leg is at the other
+    // bound the moment it starts, so the prediction ends where it turned.
+    expect(tied.path[2]?.x).toBeCloseTo(MAX_X, 9);
+    expect(tied.path[2]?.y).toBeCloseTo(MAX_Y, 9);
+
+    // AND ONLY A TIE. Moved a unit toward the top bound the y axis is strictly
+    // nearer and the answer is the end wall; moved a unit the other way the x
+    // axis is strictly nearer and it is the side wall again. Without this pair
+    // "the side wall" would also be what a module that never looked at y said.
+    const nearerY = placed([TIE_X, TIE_Y + 1], [200, 200]);
+    expect(predictGuide(nearerY.player, nearerY.ball, direction).bounce).toBe('top');
+    const nearerX = placed([TIE_X + 1, TIE_Y], [200, 200]);
+    expect(predictGuide(nearerX.player, nearerX.ball, direction).bounce).toBe('right');
+  });
+
   it('predicts from whichever circle is launching', () => {
     // SPEC section 9's Hotseat aims the opponent's circle on the second turn,
     // so the prediction is a function of the body it is given and of nothing

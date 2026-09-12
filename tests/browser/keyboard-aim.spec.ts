@@ -1,7 +1,16 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { advance, startMatch } from './support/game';
+import {
+  A_WHOLE_TEST,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  SETTLE,
+  advance,
+  nextFrames,
+  pauseClock,
+  startMatch,
+} from './support/game';
 
 /**
  * Item G5, method T, evidence `playwright/keyboard-aim`:
@@ -48,10 +57,15 @@ import { advance, startMatch } from './support/game';
  * here is the claim the criterion actually makes, over the built bundle.
  */
 
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
-const LOGICAL_WIDTH = 1280;
-const LOGICAL_HEIGHT = 720;
+/**
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILLS COME FROM `support/game.ts`.
+ * They were retyped in eight of these specs, SPEC section 18's fills among
+ * them, so a palette change would have left five of them scanning for a colour
+ * the game no longer draws. `SETTLE` and `A_WHOLE_TEST` there are starvation
+ * budgets rather than correctness ones: a test here reads the canvas back and
+ * drives real shots to rest, and the mutation harness runs this suite with a
+ * build going beside it.
+ */
 
 /** SPEC section 5.1, as literals, and read by nothing the game exports. */
 const HOLD_DELAY = 0.25;
@@ -109,18 +123,6 @@ interface Box {
 interface Reading {
   readonly changed: number;
   readonly furthest: number;
-}
-
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let index = 0; index < times; index += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
 }
 
 interface Press {
@@ -546,7 +548,10 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
 
     await holdUntilCredited(page, 'ArrowLeft', 1.4);
     await nextFrames(page);
-    const swept = await valueOf(page, 'aim-angle');
+    // The direction the control is SHOWING, in degrees. Named for what it is,
+    // because the seconds a key was held are also a sweep and the two used to
+    // share a name in this file.
+    const shownDegrees = await valueOf(page, 'aim-angle');
     const record = await readKeys(page);
     const gap = Math.min(record.maxGap, 0.25);
     expect(record.maxGap).toBeGreaterThan(0);
@@ -563,7 +568,7 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     const ceiling = TAP_DEGREES + sweptDegrees(record.clamped + gap) + ROUNDING;
     const floor =
       TAP_DEGREES + sweptDegrees(Math.max(0, record.clamped - gap)) - ROUNDING;
-    expectDirectionWithin(swept, floor, ceiling, 'a held arrow');
+    expectDirectionWithin(shownDegrees, floor, ceiling, 'a held arrow');
     // And a hold is worth vastly more than the tap that began it, so a build
     // that had lost the hold entirely could not land in that window.
     expect(floor).toBeGreaterThan(4 * TAP_DEGREES);
@@ -716,6 +721,11 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
       }).observe(target, { childList: true, characterData: true, subtree: true });
     });
 
+    // THE HOLD IS MEASURED WHERE THE GAME'S OWN HANDLERS SEE IT, which is what
+    // every other key assertion in this file already does: a wall clock out
+    // here spans the round trips that deliver the press as well as the press,
+    // so it credits the region with intervals the page never spent sweeping.
+    await armKeyProbe(page);
     const opened = Date.now();
     await focusSurface(page);
     await nextFrames(page);
@@ -729,6 +739,10 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     await page.keyboard.down('ArrowLeft');
     await page.waitForTimeout(1200);
     await page.keyboard.up('ArrowLeft');
+    // The interval the PAGE saw the key down, from the probe armed above. It
+    // throws where no press was recorded, so a hold the page never received
+    // cannot pass here as a hold of zero length.
+    const heldSeconds = lastPress(await readKeys(page), 'ArrowLeft');
     // Long enough afterwards for the write the throttle was still holding to
     // land, so the last line said is the aim as it finally stands.
     await page.waitForTimeout(700);
@@ -738,7 +752,23 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     const said = await page.evaluate(
       () => (window as unknown as { __pfSaid?: string[] }).__pfSaid ?? [],
     );
-    expect(said.length).toBeGreaterThanOrEqual(1);
+    // THE FLOOR IS PROPORTIONAL TO THE SWEEP, not a bare one. A lower bound of
+    // one line admits a region that spoke once in a second and a quarter of
+    // continuous sweeping, which is a region that has stopped announcing and
+    // not a region obeying a 500 ms floor. What the hold guarantees is that
+    // the aim was CHANGING for its whole length, so the count is bounded below
+    // by the intervals that sweep covers, less one for the interval the hold
+    // starts inside: the region has just written the opening aim, so the first
+    // line of the hold is a coalesced write up to an interval later. The floor
+    // is capped, because a starved page delivers its timers late and the claim
+    // graded here is that the region did not fall silent rather than that it
+    // kept perfect time.
+    const ANNOUNCE_FLOOR_CAP = 4;
+    const atLeast = Math.min(ANNOUNCE_FLOOR_CAP, Math.ceil(heldSeconds / ANNOUNCE_INTERVAL) - 1);
+    // The floor this run is holding the region to, which cannot itself decay
+    // into the bare one the assertion used to make.
+    expect(atLeast).toBeGreaterThanOrEqual(2);
+    expect(said.length).toBeGreaterThanOrEqual(atLeast);
     expect(said.length).toBeLessThanOrEqual(
       Math.ceil(observed / ANNOUNCE_INTERVAL) + 2,
     );
@@ -806,6 +836,10 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     // QUALITY-BAR section 7's ceiling, so the simulation consumes all of it.
     await page.clock.install({ time: 0 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED: a whole match played by key alone, in the frames this loop
+    // charges. Nothing here waits on a page timer, so nothing here needs the
+    // clock to keep running.
+    await pauseClock(page);
 
     // Every pointer event that reaches the surface, counted, so "no pointer at
     // all" is a property the test can be held to rather than a sentence.

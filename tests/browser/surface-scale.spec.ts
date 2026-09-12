@@ -1,7 +1,15 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { A_WHOLE_TEST, SETTLE, centres, nextFrames, startMatch } from './support/game';
+import {
+  A_WHOLE_TEST,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  SETTLE,
+  centres,
+  nextFrames,
+  startMatch,
+} from './support/game';
 
 /**
  * Item F6, method T, evidence `playwright/surface-scale`:
@@ -28,9 +36,15 @@ import { A_WHOLE_TEST, SETTLE, centres, nextFrames, startMatch } from './support
  * passes for whatever value the symbol takes.
  */
 
-/** SPEC section 3's design space, which is what the setting does NOT change. */
-const LOGICAL_WIDTH = 1280;
-const LOGICAL_HEIGHT = 720;
+/**
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILLS COME FROM `support/game.ts`.
+ * They were retyped in eight of these specs, SPEC section 18's fills among
+ * them, so a palette change would have left five of them scanning for a colour
+ * the game no longer draws. `SETTLE` and `A_WHOLE_TEST` there are starvation
+ * budgets rather than correctness ones: a test here reads the canvas back and
+ * drives real shots to rest, and the mutation harness runs this suite with a
+ * build going beside it.
+ */
 
 /** SPEC section 6.1's two drag bounds, in design units, and their strengths. */
 const MIN_DRAG = 30;

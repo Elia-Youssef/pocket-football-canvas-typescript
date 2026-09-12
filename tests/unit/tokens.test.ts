@@ -433,11 +433,24 @@ const COLOUR_LITERAL =
   /#[0-9A-Fa-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix)\s*\(|(?<![\w-])color\s*\(/gi;
 
 /**
- * Dimension and duration literals. In a stylesheet they are matched anywhere;
- * in TypeScript they are matched inside string literals only, which is where a
- * dimension can appear as a value: the chrome is DOM, so from the chrome part
- * onward a style property is set from a string, and '12px' there is exactly the
- * literal this item forbids.
+ * Every unit a design value can be written in: the lengths, the angles, the
+ * two times, the percentage and the flex fraction. In a stylesheet they are
+ * matched anywhere; in TypeScript they are matched inside string literals
+ * only, which is where a dimension can appear as a value: the chrome is DOM,
+ * so from the chrome part onward a style property is set from a string, and
+ * '12px' there is exactly the literal this item forbids.
+ *
+ * WHY THE WHOLE LIST. This matcher knew `px`, `rem`, `em`, `ms` and `s` and
+ * nothing else, so a size or a threshold written in `vw`, `vh`, `%` or `ch`
+ * reached the tree unremarked, and the shipped chrome stylesheet already
+ * carried four viewport units the sweep could not see. A missing unit is not a
+ * weaker rule, it is no rule for the value written in it.
+ *
+ * WHAT IS DELIBERATELY OUT. The resolution units (`dpi`, `dpcm`, `dppx`, `x`)
+ * and the frequency units (`Hz`, `kHz`) express no design value on any
+ * QUALITY-BAR section 15 scale, and `x` in particular would fire on ordinary
+ * text. They are stated here as an absence with its reason rather than left to
+ * be discovered as a gap.
  *
  * A bare number in TypeScript is still nobody's business but the reviewer's: 12
  * may be a radius that belongs in a token, or an entity count, or a loop bound,
@@ -447,7 +460,101 @@ const COLOUR_LITERAL =
  *
  * A bare 0 needs no unit and no token, so it is not matched.
  */
-const DIMENSION_LITERAL = /(?<![\w#-])\d*\.?\d+(?:px|rem|em|ms|s)\b/g;
+const DIMENSION_UNITS: readonly string[] = [
+  // Absolute lengths.
+  'px', 'cm', 'mm', 'q', 'in', 'pt', 'pc',
+  // Font-relative lengths, and their root-relative forms.
+  'em', 'rem', 'ex', 'rex', 'ch', 'rch', 'ic', 'ric', 'cap', 'rcap', 'lh', 'rlh',
+  // Viewport-relative lengths: the classic pair, the two axis-relative names,
+  // and the small, large and dynamic viewport families.
+  'vw', 'vh', 'vi', 'vb', 'vmin', 'vmax',
+  'svw', 'svh', 'svi', 'svb', 'svmin', 'svmax',
+  'lvw', 'lvh', 'lvi', 'lvb', 'lvmin', 'lvmax',
+  'dvw', 'dvh', 'dvi', 'dvb', 'dvmin', 'dvmax',
+  // Container-relative lengths.
+  'cqw', 'cqh', 'cqi', 'cqb', 'cqmin', 'cqmax',
+  // Angles, times, and the two unitless-looking values that are still values.
+  'deg', 'grad', 'rad', 'turn', 's', 'ms', 'fr', '%',
+];
+
+/**
+ * The units longest first, because a regular expression alternation takes the
+ * first branch that matches: with `s` ahead of `svh`, `100svh` would be read
+ * as the number 100 followed by nothing at all.
+ *
+ * A LEADING MINUS IS PART OF THE LITERAL. `margin-top: -12px` and
+ * `translateX(-50%)` are values on QUALITY-BAR section 15's scales like any
+ * other, and a matcher whose lookbehind refused a minus saw neither: it was
+ * there to keep the `1` of `--space-1` out, and it took every negative offset
+ * with it. The lookbehind still refuses a minus that FOLLOWS an identifier
+ * character or another minus, which is what a custom property name is, so
+ * `var(--space-1)` stays out and `-12px` comes in.
+ */
+const DIMENSION_LITERAL = new RegExp(
+  String.raw`(?<![\w#-])-?\d*\.?\d+(?:` +
+    [...DIMENSION_UNITS].sort((one, other) => other.length - one.length).join('|') +
+    String.raw`)(?![\w-])`,
+  'gi',
+);
+
+/**
+ * A `url(...)` with nothing left inside it.
+ *
+ * A LOCATION IS NOT A VALUE. `url(https://x.example/12px.png)` names a file
+ * whose name happens to contain a length, and reporting it would be reporting
+ * the file name; nothing inside those parentheses resolves through a token
+ * because nothing inside them is a measurement. The one shape this cannot
+ * follow is a closing parenthesis inside a quoted location, which is stated
+ * here rather than left to be found: such a URL would end the elision early
+ * and the tail would be scanned, which is the safe direction.
+ */
+function withoutUrls(text: string): string {
+  return text.replace(/url\([^)]*\)/gi, 'url()');
+}
+
+/**
+ * The occurrences E1 exempts, each named with the reason it is not a design
+ * value, and each consumed exactly once by the sweep below.
+ *
+ * A VIEWPORT UNIT IS NOT A VALUE ON A SCALE. QUALITY-BAR section 15 states a
+ * spacing, radius, type and motion scale and no viewport scale, because there
+ * is nothing to state: `100vh` is "the viewport", not a size somebody chose,
+ * and tokenising it would put a name in front of a word the stylesheet already
+ * has. The same is true of the one percentage: it says a card fills the box its
+ * parent gives it, which is a relationship and not a measurement.
+ *
+ * The count is part of the entry, so a fifth `100dvh` appended tomorrow is an
+ * offence rather than something that hides behind these four; and every entry
+ * is asserted to have been used, so an exemption that outlives its occurrence
+ * reddens rather than sitting here forever.
+ */
+interface Exemption {
+  readonly file: string;
+  readonly literal: string;
+  readonly count: number;
+  readonly why: string;
+}
+
+const DIMENSION_EXEMPT: readonly Exemption[] = [
+  {
+    file: 'src/ui/components/chrome.css',
+    literal: '100vh',
+    count: 2,
+    why: 'the app column and the stage each take a whole viewport; no scale states one',
+  },
+  {
+    file: 'src/ui/components/chrome.css',
+    literal: '100dvh',
+    count: 2,
+    why: 'the dynamic-viewport spelling of the same two rules, declared after each as the pair',
+  },
+  {
+    file: 'src/ui/components/chrome.css',
+    literal: '100%',
+    count: 1,
+    why: 'a panel card fills the box its parent gives it, which is a relationship not a size',
+  },
+];
 
 /**
  * Colour keywords, the obvious way round a hex ban. Matched in value position
@@ -480,7 +587,7 @@ function colourLiterals(text: string, css: boolean): string[] {
 }
 
 function dimensionsIn(text: string): string[] {
-  return [...text.matchAll(DIMENSION_LITERAL)].map((match) => match[0]);
+  return [...withoutUrls(text).matchAll(DIMENSION_LITERAL)].map((match) => match[0]);
 }
 
 function dimensionLiterals(text: string): string[] {
@@ -1064,6 +1171,13 @@ describe('PF-1 design tokens', () => {
     it('finds no colour literal under src/ outside the token layer', () => {
       const walk = walkSource();
       const offences: string[] = [];
+      // The exemptions, as an allowance spent one occurrence at a time: an
+      // extra `100dvh` is an offence rather than a fifth free one, and an
+      // entry nothing spends is reported below.
+      const allowance = new Map<string, number>();
+      for (const entry of DIMENSION_EXEMPT) {
+        allowance.set(`${entry.file}: ${entry.literal}`, entry.count);
+      }
       for (const relative of walk.scanned) {
         const text = readFileSync(path.join(PROJECT_ROOT, relative), 'utf8');
         const css = relative.endsWith('.css');
@@ -1071,12 +1185,109 @@ describe('PF-1 design tokens', () => {
           offences.push(`${relative}: ${hit}`);
         }
         for (const hit of dimensionsFor(text, css)) {
-          offences.push(`${relative}: ${hit}`);
+          const key = `${relative}: ${hit}`;
+          const left = allowance.get(key) ?? 0;
+          if (left > 0) {
+            allowance.set(key, left - 1);
+            continue;
+          }
+          offences.push(key);
         }
       }
       expect(offences).toEqual([]);
+      // Every exemption was spent, so a carve-out cannot outlive the line it
+      // was written for.
+      expect([...allowance].filter(([, left]) => left > 0)).toEqual([]);
       // A sweep over nothing passes. This is the part of it that cannot.
       expect(walk.scanned.length).toBeGreaterThan(0);
+    });
+
+    it('names every exempt occurrence, with its reason and its count', () => {
+      // The list is the carve-out, so it is pinned by value and by length: a
+      // sixth entry is a review, not an edit, and every entry says why the
+      // occurrence is not a design value.
+      expect(
+        DIMENSION_EXEMPT.map((entry) => `${entry.file} ${entry.literal} x${String(entry.count)}`),
+      ).toEqual([
+        'src/ui/components/chrome.css 100vh x2',
+        'src/ui/components/chrome.css 100dvh x2',
+        'src/ui/components/chrome.css 100% x1',
+      ]);
+      expect(DIMENSION_EXEMPT).toHaveLength(3);
+      for (const entry of DIMENSION_EXEMPT) {
+        expect(entry.why.length, entry.literal).toBeGreaterThan(20);
+      }
+      // Five occurrences in one file, and the file is a real one the sweep
+      // reaches rather than a name nothing walks to.
+      expect(DIMENSION_EXEMPT.reduce((total, entry) => total + entry.count, 0)).toBe(5);
+      expect(walkSource().scanned).toContain('src/ui/components/chrome.css');
+    });
+
+    it('matches every unit a design value can be written in', () => {
+      // THE LIST IS THE GATE, so it is pinned as a value the way the swept
+      // extensions are, and every member is proven to fire in both languages.
+      // A unit missing from here is not a weaker rule: it is no rule at all
+      // for anything written in it, which is how four viewport units came to
+      // be shipped in the chrome stylesheet unremarked.
+      expect([...DIMENSION_UNITS].sort()).toEqual([
+        '%', 'cap', 'ch', 'cm', 'cqb', 'cqh', 'cqi', 'cqmax', 'cqmin', 'cqw',
+        'deg', 'dvb', 'dvh', 'dvi', 'dvmax', 'dvmin', 'dvw', 'em', 'ex', 'fr',
+        'grad', 'ic', 'in', 'lh', 'lvb', 'lvh', 'lvi', 'lvmax', 'lvmin', 'lvw',
+        'mm', 'ms', 'pc', 'pt', 'px', 'q', 'rad', 'rcap', 'rch', 'rem', 'rex',
+        'ric', 'rlh', 's', 'svb', 'svh', 'svi', 'svmax', 'svmin', 'svw', 'turn',
+        'vb', 'vh', 'vi', 'vmax', 'vmin', 'vw',
+      ]);
+      expect(DIMENSION_UNITS).toHaveLength(57);
+      expect(new Set(DIMENSION_UNITS).size).toBe(DIMENSION_UNITS.length);
+      // One positive control per unit, in both languages, and each one is
+      // matched WHOLE: a `100svh` read as a `100s` would leave the alternation
+      // ordered wrongly and every longer unit half seen.
+      for (const unit of DIMENSION_UNITS) {
+        const value = `12${unit}`;
+        expect(dimensionsFor(`.a { width: ${value}; }`, true), unit).toEqual([value]);
+        expect(dimensionsFor(`const width = '${value}';`, false), unit).toEqual([value]);
+      }
+      // And the negative controls that keep the wider matcher from firing on
+      // ordinary text: a bare number, an identifier that ends in a unit name,
+      // a token name whose tail is a digit, and a resolution unit, which is
+      // out of the list by the decision stated at its head.
+      expect(dimensionsFor('.a { flex: 12; }', true)).toEqual([]);
+      expect(dimensionsFor('.a { width: var(--space-1); }', true)).toEqual([]);
+      expect(dimensionsFor("const name = 'grid12ch';", false)).toEqual([]);
+      expect(dimensionsFor('.a { background-image: image-set(a 2x); }', true)).toEqual([]);
+    });
+
+    it('reads a negative offset as the literal it is, and a location as neither', () => {
+      // A MINUS IS PART OF THE NUMBER. Both shapes below survived the sweep,
+      // and both are values on a QUALITY-BAR section 15 scale: a negative
+      // margin is a spacing step and a negative translate is a proportion.
+      expect(dimensionsFor('.a { margin-top: -12px; }', true)).toEqual(['-12px']);
+      expect(dimensionsFor('.a { transform: translateX(-50%); }', true)).toEqual(['-50%']);
+      expect(dimensionsFor("const shift = 'translateY(-1.5rem)';", false)).toEqual(['-1.5rem']);
+      // AND THE NEGATIVE CONTROL THE MINUS MUST NOT COST: a custom property
+      // name ends in a digit after a minus and is not a literal at all.
+      expect(dimensionsFor('.a { width: var(--space-1); }', true)).toEqual([]);
+      expect(dimensionsFor('.a { --space-1: 4px; }', true)).toEqual(['4px']);
+      // A LOCATION IS NOT A VALUE. What is inside `url(...)` is a file name,
+      // and a file name that carries a length is still a file name.
+      expect(dimensionsFor('.a { background: url(https://x.example/12px.png); }', true)).toEqual(
+        [],
+      );
+      expect(
+        dimensionsFor('.a { background: url("https://x.example/12px.png"); }', true),
+      ).toEqual([]);
+      expect(dimensionsFor("const style = 'url(a/12px.png)';", false)).toEqual([]);
+      // And the positive control beside it, so the elision did not simply stop
+      // the sweep: the same declaration with a real value after the location.
+      expect(dimensionsFor('.a { background: url(a/12px.png) 4px 8px; }', true)).toEqual([
+        '4px',
+        '8px',
+      ]);
+      // A FLEX FRACTION STAYS MATCHED, inside `repeat()` like anywhere else: it
+      // is a design value on the E1 rule, not a location and not a count.
+      expect(dimensionsFor('.a { grid-template-columns: repeat(2, 1fr); }', true)).toEqual([
+        '1fr',
+      ]);
     });
 
     it('sweeps every extension a module or a stylesheet can arrive in', () => {
@@ -1106,7 +1317,10 @@ describe('PF-1 design tokens', () => {
       const controls: ReadonlyArray<readonly [string, boolean, number, number]> = [
         ["const fill = '#FF0000';", false, 1, 0],
         ['const fill = `rgba(0, 0, 0, 0.5)`;', false, 1, 0],
-        ['const fill = "oklch(70% 0.1 200)";', false, 1, 0],
+        // A percentage inside a colour function is both: the colour matcher
+        // reports the function and the dimension matcher reports the 70%,
+        // which is what a matcher covering every unit is supposed to do.
+        ['const fill = "oklch(70% 0.1 200)";', false, 1, 1],
         // A CSS function name is case-insensitive and the bare color() form is
         // a colour like any other. Both were live escapes.
         ['const fill = "RGB(255, 0, 0)";', false, 1, 0],

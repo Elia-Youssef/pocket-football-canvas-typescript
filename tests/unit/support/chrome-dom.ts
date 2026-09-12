@@ -148,10 +148,125 @@ export function installFakeDocument(): InstalledDocument {
 }
 
 /**
- * The focusable controls in `root`, in document order, by accessible name:
- * a button by its text, an input by its label. Controls inside a hidden
- * subtree are still censused, because presence and visibility are two
- * different assertions; the tests that need them separated make both.
+ * The tags a platform makes focusable on their own, with no attribute asked
+ * for. `INPUT` of type `hidden` is the one exception the platform itself
+ * makes, and it is written out rather than assumed, because a census that
+ * quietly skipped a control would be the defect this census exists to catch.
+ *
+ * THE ONES DECIDED BY AN ATTRIBUTE ARE NOT LISTED HERE. A link and an area are
+ * focusable only with an `href`; `audio` and `video` only with `controls`; and
+ * a `summary` only as the summary OF a details element, which is a fact about
+ * its parent. All four are answered below.
+ */
+const NATIVELY_FOCUSABLE = new Set([
+  'BUTTON',
+  'INPUT',
+  'SELECT',
+  'TEXTAREA',
+  'IFRAME',
+  'OBJECT',
+  'EMBED',
+]);
+
+/** The tags whose own `disabled` attribute takes them out of the tab order. */
+const DISABLEABLE = new Set([
+  'BUTTON',
+  'INPUT',
+  'SELECT',
+  'TEXTAREA',
+  'FIELDSET',
+  'OPTGROUP',
+  'OPTION',
+]);
+
+/** Embedded media, focusable exactly while it offers its own controls. */
+const MEDIA = new Set(['AUDIO', 'VIDEO']);
+
+/** The tags that may not contain interactive content, so the walk stops. */
+const LEAF_CONTROLS = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
+
+/** The element a details would open on: its first summary child, if it has one. */
+function summaryOf(details: FakeElement): FakeElement | undefined {
+  for (const child of details.children) {
+    if (!(child instanceof FakeText) && child.tagName === 'SUMMARY') {
+      return child;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether this element is FOCUSABLE AT ALL, by a tab or by a script.
+ *
+ * THE RULE THIS IMPLEMENTS, stated because the two readings differ and the
+ * census depends on which one is meant. "Focusable at all" is the wider one:
+ * everything the HTML standard puts in sequential focus navigation, PLUS
+ * `tabindex="-1"`, which a tab walk skips and a script can still focus and a
+ * panel can still hand focus to. It is the reading a freeze wants, because a
+ * control the chrome moves focus to is a control a reviewer has to see. What
+ * it excludes is what nothing can focus: a form control carrying `disabled`,
+ * and a hidden input.
+ *
+ * BY FOCUSABILITY, NOT BY TAG NAME. This used to answer for `BUTTON` and
+ * `INPUT` alone, so a `<select>`, a `<textarea>`, an `<a href>`, a div
+ * carrying `tabindex` or anything `contenteditable` could be added to a panel
+ * with every chrome test still green: the census froze the two tags it knew
+ * and called the answer the whole chrome. Then it answered for those and still
+ * missed a `<summary>`, an `<iframe>`, an `<audio controls>`, a `<video
+ * controls>`, an `<object>` and an `<embed>` - the media ones being exactly
+ * what the audio part will bring. Everything the standard enumerates is
+ * enumerated here, so an addition of any shape reddens the freeze.
+ *
+ * THE PARENT IS PASSED BECAUSE ONE ANSWER NEEDS IT. A `summary` is focusable
+ * as the summary OF a details element and is ordinary markup anywhere else,
+ * which is a fact about where it sits rather than about what it is.
+ */
+export function isFocusable(node: FakeElement, parent?: FakeElement): boolean {
+  if (DISABLEABLE.has(node.tagName) && node.getAttribute('disabled') !== null) {
+    return false;
+  }
+  const tabindex = node.getAttribute('tabindex');
+  if (tabindex !== null && tabindex !== '') {
+    return true;
+  }
+  const editable = node.getAttribute('contenteditable');
+  if (editable !== null && editable !== 'false') {
+    return true;
+  }
+  if (node.tagName === 'A' || node.tagName === 'AREA') {
+    return node.getAttribute('href') !== null;
+  }
+  if (node.tagName === 'INPUT' && node.type === 'hidden') {
+    return false;
+  }
+  if (MEDIA.has(node.tagName)) {
+    return node.getAttribute('controls') !== null;
+  }
+  if (node.tagName === 'SUMMARY') {
+    return parent !== undefined && parent.tagName === 'DETAILS' && summaryOf(parent) === node;
+  }
+  return NATIVELY_FOCUSABLE.has(node.tagName);
+}
+
+/**
+ * The accessible name a census entry carries: a button by its own text, and
+ * everything else by its label, falling back to the `title` an embedded frame
+ * carries instead of one and then to its text. A control with none of the
+ * three answers the empty string, which is a census entry a reader has to
+ * account for rather than an absence they cannot see.
+ */
+function accessibleName(node: FakeElement): string {
+  if (node.tagName === 'BUTTON') {
+    return node.textContent;
+  }
+  return node.getAttribute('aria-label') ?? node.getAttribute('title') ?? node.textContent;
+}
+
+/**
+ * The focusable controls in `root`, in document order, by accessible name.
+ * Controls inside a hidden subtree are still censused, because presence and
+ * visibility are two different assertions; the tests that need them separated
+ * make both.
  */
 export function censusControls(root: FakeElement): string[] {
   const names: string[] = [];
@@ -160,11 +275,13 @@ export function censusControls(root: FakeElement): string[] {
       if (child instanceof FakeText) {
         continue;
       }
-      if (child.tagName === 'BUTTON') {
-        names.push(child.textContent);
-      } else if (child.tagName === 'INPUT') {
-        names.push(child.getAttribute('aria-label') ?? '');
-      } else {
+      if (isFocusable(child, node)) {
+        names.push(accessibleName(child));
+      }
+      // A focusable wrapper is still walked into, because a control inside one
+      // is reachable too: only the tags that may hold no interactive content
+      // end the walk.
+      if (!LEAF_CONTROLS.has(child.tagName)) {
         walk(child);
       }
     }

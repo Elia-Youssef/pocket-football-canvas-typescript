@@ -6,6 +6,7 @@ import {
   SETTLE,
   advance,
   centres,
+  pauseClock,
   scores,
   startMatch,
   turnText,
@@ -64,6 +65,10 @@ test.describe('PF-9 the hidden tab, item J7', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'quick', duration: 60 });
+    // AND STOPPED, for both tests in this file: the clause each of them
+    // grades is that a hidden tab charges the match nothing, and an installed
+    // clock that keeps ticking is exactly the thing that could charge it.
+    await pauseClock(page);
   });
 
   test('pauses the clock, holds it, and resumes on one activation', { tag: '@drive' }, async ({ page }) => {
@@ -138,11 +143,20 @@ test.describe('PF-9 the hidden tab, item J7', () => {
     expect(Number(clock?.slice(3))).toBeGreaterThanOrEqual(Number(held?.slice(3)));
     await page.locator('[data-pf="panel-pause"] button', { hasText: 'Resume' }).click();
     await expect(at(page, 'turn')).toHaveText('YOUR TURN', SETTLE);
+    // ONE DRIVEN FRAME BEFORE THE ROW IS TOUCHED. The panel syncs the readouts
+    // in its own handler, but the aim row is brought in line with the lock once
+    // a FRAME, and under a stopped clock the only frames are the ones this test
+    // charges. Without it the row is still refused and the aim below would be
+    // pressing a control the resume had not yet offered back.
+    await advance(page, 1);
     // The turn is still the player's and still aimable, which is the whole of
     // "with full state intact" from where a player stands.
     await at(page, 'aim-angle').fill('0');
     await at(page, 'power').fill('100');
     await at(page, 'aim-launch').click();
+    // One driven frame, because the readout follows the simulation and the
+    // simulation runs on the frames this test charges.
+    await advance(page, 1);
     await expect(at(page, 'turn')).toHaveText('IN PLAY', SETTLE);
   });
 });

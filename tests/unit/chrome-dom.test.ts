@@ -8,6 +8,7 @@ import { setVelocity } from '../../src/core/bodies';
 import { FIXED_STEP } from '../../src/core/config';
 import { createMatch } from '../../src/core/match';
 import { set } from '../../src/core/vec2';
+import { createAimControls } from '../../src/ui/components/aim-controls';
 import { mountChrome } from '../../src/ui/layout';
 import { censusControls, findAllByTag, findByMarker, installFakeDocument } from './support/chrome-dom';
 import type { FakeElement } from './support/chrome-dom';
@@ -49,6 +50,20 @@ const THIS_FILE = path.resolve(fileURLToPath(import.meta.url));
 
 const POINTER_COORDINATE = /\.(?:clientX|clientY|pageX|pageY|screenX|screenY|offsetX|offsetY)\b/;
 const RECT_HIT_TEST = /\b(?:getBoundingClientRect|getClientRects|elementFromPoint|elementsFromPoint)\b/;
+
+/**
+ * Every place a source makes an element focusable by attribute, in both the
+ * spellings a platform offers: the attribute, and the property that reflects
+ * it. Counting them is what makes the arithmetic below tamper-evident, since a
+ * SECOND focusable element beside the play frame is a control the freeze has
+ * never seen and a list of FILES cannot report.
+ */
+const FOCUS_MAKER =
+  /setAttribute\(\s*['"](?:tabindex|contenteditable)['"]|\.(?:tabIndex|contentEditable)\s*=/g;
+
+function focusMakersIn(source: string): string[] {
+  return [...source.matchAll(FOCUS_MAKER)].map((match) => match[0]);
+}
 
 /** Checked exemptions: a path may hold a pattern only by name, here. */
 const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts'];
@@ -232,6 +247,12 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         },
       });
       const census = censusControls(host as unknown as FakeElement);
+      // ENUMERATED BY FOCUSABILITY, not by tag. The helper walked BUTTON and
+      // INPUT alone until this vehicle, so a `<select>`, a `<textarea>`, an
+      // `<a href>`, a `[tabindex]` div or anything `contenteditable` could be
+      // added to a panel with all of these green; the list below is unchanged
+      // by the widening, which is the statement that the chrome as it stands
+      // holds nothing of those kinds.
       expect(census).toEqual([
         'Pause',
         'Dismiss',
@@ -272,9 +293,234 @@ describe('PF-13 the chrome is real DOM around the surface', () => {
         'Next opponent',
         'Restart ladder',
       ]);
+      expect(census).toHaveLength(38);
     } finally {
       installed.restore();
     }
+  });
+
+  it('reddens on a focusable control of any shape, not only on a button', () => {
+    // THE POSITIVE CONTROLS FOR THE FREEZE ABOVE. A census that cannot see a
+    // control is a freeze that cannot fail, and every shape below passed the
+    // whole chrome suite at one point or another: they are added to a real
+    // panel here, and each one has to appear in the list by name.
+    //
+    // THE MEDIA ONES ARE NOT HYPOTHETICAL. The audio part mounts a `<video
+    // controls>` or an `<audio controls>` the moment it ships one, and a browser
+    // puts both in the tab order; a census that walked tags it knew would have
+    // frozen a chrome that no longer described the page.
+    const installed = installFakeDocument();
+    try {
+      const document = installed.document;
+      const host = document.createElement('div');
+      mountChrome(host as unknown as HTMLElement, {
+        match: createMatch(),
+        onThemeChange: () => undefined,
+      });
+      const root = host as unknown as FakeElement;
+      const panel = findByMarker(root, 'panel-settings');
+      if (panel === undefined) {
+        throw new Error('the settings panel is not in the chrome');
+      }
+      const before = censusControls(root);
+      const planted: string[] = [];
+      const plant = (control: FakeElement, name: string): void => {
+        panel.appendChild(control);
+        planted.push(name);
+        const after = censusControls(root);
+        expect(after, name).not.toEqual(before);
+        expect(after, name).toContain(name);
+        expect(after, name).toHaveLength(before.length + planted.length);
+      };
+
+      const picker = document.createElement('select');
+      picker.setAttribute('aria-label', 'Language');
+      plant(picker, 'Language');
+
+      const grip = document.createElement('div');
+      grip.setAttribute('tabindex', '0');
+      grip.setAttribute('aria-label', 'Resize');
+      plant(grip, 'Resize');
+
+      const note = document.createElement('div');
+      note.setAttribute('contenteditable', 'true');
+      note.textContent = 'Notes';
+      plant(note, 'Notes');
+
+      const area = document.createElement('textarea');
+      area.setAttribute('aria-label', 'Feedback');
+      plant(area, 'Feedback');
+
+      const link = document.createElement('a');
+      link.setAttribute('href', '#top');
+      link.textContent = 'Top';
+      plant(link, 'Top');
+
+      // A summary is focusable as the summary OF a details element, so the
+      // whole disclosure is planted and it is the summary that is counted.
+      const disclosure = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'More';
+      disclosure.appendChild(summary);
+      plant(disclosure, 'More');
+
+      const embedded = document.createElement('iframe');
+      embedded.setAttribute('title', 'Help');
+      plant(embedded, 'Help');
+
+      const whistle = document.createElement('audio');
+      whistle.setAttribute('controls', '');
+      whistle.setAttribute('aria-label', 'Whistle');
+      plant(whistle, 'Whistle');
+
+      const replay = document.createElement('video');
+      replay.setAttribute('controls', '');
+      replay.setAttribute('aria-label', 'Replay');
+      plant(replay, 'Replay');
+
+      const applet = document.createElement('object');
+      applet.setAttribute('aria-label', 'Diagram');
+      plant(applet, 'Diagram');
+
+      const plugin = document.createElement('embed');
+      plugin.setAttribute('aria-label', 'Chart');
+      plant(plugin, 'Chart');
+
+      // A NEGATIVE TABINDEX IS COUNTED, by the rule `isFocusable` states: it is
+      // out of the tab walk and a script can still focus it, which is exactly
+      // what a panel does when it opens, so a freeze that could not see one
+      // could not see where focus had been sent.
+      const anchorPoint = document.createElement('div');
+      anchorPoint.setAttribute('tabindex', '-1');
+      anchorPoint.setAttribute('aria-label', 'Panel start');
+      plant(anchorPoint, 'Panel start');
+
+      // The negative controls, one per rule the predicate states:
+      // `contenteditable="false"` is the platform's own way of saying not
+      // editable; a link with no `href` is not in the tab order; media with no
+      // controls offers nothing to focus; a summary outside a details element
+      // is ordinary markup; and a disabled control is what nothing can focus at
+      // all, by tab or by script.
+      const settled = censusControls(root);
+      const plain = document.createElement('div');
+      plain.setAttribute('contenteditable', 'false');
+      plain.textContent = 'Prose';
+      panel.appendChild(plain);
+      const anchor = document.createElement('a');
+      anchor.textContent = 'Nowhere';
+      panel.appendChild(anchor);
+      const silent = document.createElement('audio');
+      silent.setAttribute('aria-label', 'Silent');
+      panel.appendChild(silent);
+      const loose = document.createElement('summary');
+      loose.textContent = 'Loose';
+      panel.appendChild(loose);
+      const off = document.createElement('button');
+      off.setAttribute('disabled', '');
+      off.textContent = 'Off';
+      panel.appendChild(off);
+      expect(censusControls(root)).toEqual(settled);
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('accounts for the one focusable control mounted outside the chrome', () => {
+    // THE PLAY FRAME IS IN THE SHIPPED TAB ORDER AND IN NEITHER CENSUS. It is
+    // built by the composition root rather than by `mountChrome`, so no test
+    // that mounts the chrome can reach it. It is pinned here as the source that
+    // builds it, because that is what a unit test can see: a lost `tabindex` or
+    // a renamed label reddens rather than passing unremarked.
+    const entry = readFileSync(path.join(SOURCE_ROOT, 'main.ts'), 'utf8');
+    expect(entry).toContain("const PLAY_SURFACE_LABEL = 'Play surface';");
+    expect(entry).toContain("const PLAY_SURFACE_ROLE = 'application';");
+    expect(entry).toContain("frame.dataset['pf'] = 'play-frame';");
+    expect(entry).toContain("frame.setAttribute('tabindex', '0');");
+    expect(entry).toContain("frame.setAttribute('role', PLAY_SURFACE_ROLE);");
+    expect(entry).toContain("frame.setAttribute('aria-label', PLAY_SURFACE_LABEL);");
+    // AND IT IS THE ONLY ONE, COUNTED RATHER THAN LISTED. A pin that named the
+    // FILES carrying a focus-making attribute answered the same "main.ts" for a
+    // root that made one element focusable and for a root that made two, so the
+    // count is the assertion and the file list is what says nothing else makes
+    // one at all.
+    expect(focusMakersIn(entry)).toHaveLength(1);
+    const files: string[] = [];
+    walkSource(SOURCE_ROOT, files);
+    const focusMakers = files
+      .filter((absolute) => /\.(?:ts|tsx|mts|cts)$/.test(absolute))
+      .filter((absolute) => focusMakersIn(readFileSync(absolute, 'utf8')).length > 0)
+      .map((absolute) => path.relative(SOURCE_ROOT, absolute).split(path.sep).join('/'));
+    expect(focusMakers).toEqual(['main.ts']);
+  });
+
+  it('counts a second focus-making attribute as a second control', () => {
+    // THE CONTROLS FOR THE COUNT ABOVE, over source text rather than over the
+    // real file, because the real file is the thing being measured and a test
+    // cannot plant a second frame in it. Both spellings a platform offers are
+    // matched: the attribute, and the property that reflects it.
+    expect(focusMakersIn("frame.setAttribute('tabindex', '0');")).toHaveLength(1);
+    expect(
+      focusMakersIn("a.setAttribute('tabindex', '0');\nb.setAttribute('tabindex', '0');"),
+    ).toHaveLength(2);
+    expect(focusMakersIn("note.setAttribute('contenteditable', 'true');")).toHaveLength(1);
+    expect(focusMakersIn('frame.tabIndex = 0;')).toHaveLength(1);
+    expect(focusMakersIn("note.contentEditable = 'true';")).toHaveLength(1);
+    expect(focusMakersIn('frame.setAttribute("tabindex", "0");')).toHaveLength(1);
+    // And the negative controls: reading an attribute makes nothing focusable,
+    // and neither does a local variable that happens to be called one.
+    expect(focusMakersIn("const tabindex = node.getAttribute('tabindex');")).toHaveLength(0);
+    expect(focusMakersIn("frame.setAttribute('role', 'application');")).toHaveLength(0);
+  });
+
+  it('adds up the whole shipped tab order, from the three censuses that make it', () => {
+    // FORTY-SEVEN, DERIVED HERE RATHER THAN STATED IN PROSE. The shipped page
+    // offers the chrome's own controls, the aim row's, and the play frame; the
+    // row mounts at the composition root beside the frame rather than inside
+    // `mountChrome`, which is why it is a census of its own. Each term is
+    // measured in this test, so a control added to any of the three moves the
+    // total and reddens here as well as in its own freeze.
+    const measure = (): { chrome: number; row: number } => {
+      const installed = installFakeDocument();
+      try {
+        const host = installed.document.createElement('div');
+        // The chrome as the composition root mounts it, mode menu included,
+        // which is the same mount the freeze above censuses; a mount without
+        // the menu builds fewer panels and would count a page nobody ships.
+        mountChrome(host as unknown as HTMLElement, {
+          match: createMatch(),
+          onThemeChange: () => undefined,
+          modes: {
+            initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
+            guideOn: true,
+            onStart: () => undefined,
+            onPlayAgain: () => undefined,
+            onChangeMode: () => undefined,
+            onNextOpponent: () => undefined,
+            onRestartLadder: () => undefined,
+            onHowToDismissed: () => undefined,
+            ladderRung: () => 1,
+            gameOver: () => ({ opponentName: 'Opponent' }),
+          },
+        });
+        const controls = createAimControls({
+          onAim: () => undefined,
+          onLaunch: () => undefined,
+          onCancel: () => undefined,
+        });
+        return {
+          chrome: censusControls(host as unknown as FakeElement).length,
+          row: censusControls(controls.root as unknown as FakeElement).length,
+        };
+      } finally {
+        installed.restore();
+      }
+    };
+    const counted = measure();
+    const frame = focusMakersIn(readFileSync(path.join(SOURCE_ROOT, 'main.ts'), 'utf8')).length;
+    expect(counted.chrome).toBe(38);
+    expect(counted.row).toBe(8);
+    expect(frame).toBe(1);
+    expect(counted.chrome + counted.row + frame).toBe(47);
   });
 
   it('derives every panel from the readout, with no second copy of the state', () => {

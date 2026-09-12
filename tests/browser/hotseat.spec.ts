@@ -6,6 +6,7 @@ import {
   SETTLE,
   advance,
   centres,
+  pauseClock,
   startMatch,
   turnText,
 } from './support/game';
@@ -69,6 +70,10 @@ test.describe('PF-9 Hotseat, item J4', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'hotseat', target: 3 });
+    // AND STOPPED: the two hundred frames of absence below are two hundred
+    // frames this test charged, which is what makes "nobody acted" a claim
+    // about the build rather than about how much match the machine ran.
+    await pauseClock(page);
 
     // The indicator names the side to act, and it is a person's name.
     await expect(at(page, 'turn')).toHaveText('PLAYER 1 IS AIMING', SETTLE);
@@ -112,6 +117,8 @@ test.describe('PF-9 Hotseat, item J4', () => {
     await page.clock.install({ time: 0 });
     await page.setViewportSize({ width: 1280, height: 900 });
     await startMatch(page, { mode: 'hotseat', target: 3 });
+    // AND STOPPED, so the drive below is made of its own frames.
+    await pauseClock(page);
     // Both names are the humans', so nothing in this mode reads as a machine.
     await expect(at(page, 'turn')).toHaveText('PLAYER 1 IS AIMING', SETTLE);
     await takeTurn(page, 0, 100);

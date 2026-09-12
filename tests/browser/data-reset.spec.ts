@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { A_WHOLE_TEST, SETTLE, playUntil, turnText } from './support/game';
+import { A_WHOLE_TEST, SETTLE, pauseClock, playUntil, turnText } from './support/game';
 
 /**
  * Item I4, method T, evidence `playwright/data-reset`:
@@ -249,6 +249,11 @@ test.describe('PF-10 reset all data, item I4', () => {
       await at(page, 'mode-guide').uncheck();
       await at(page, 'mode-start').click();
       await expect(at(page, 'ladder')).toHaveText('Vector - RUNG 4 OF 6');
+      // AND STOPPED, now the rung is running: the drive below is a long one
+      // and an installed clock that keeps ticking would play part of it for
+      // the test. Every panel between here and there syncs its own readouts,
+      // so the journey through settings needs no frame at all.
+      await pauseClock(page);
 
       await at(page, 'pause').click();
       await expect(at(page, 'panel-pause')).toBeVisible(SETTLE);

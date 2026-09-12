@@ -1,7 +1,15 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { startMatch } from './support/game';
+import {
+  A_WHOLE_TEST,
+  LOGICAL_HEIGHT,
+  LOGICAL_WIDTH,
+  PLAYER_FILL,
+  SETTLE,
+  nextFrames,
+  startMatch,
+} from './support/game';
 
 /**
  * Item C3, method T, evidence `playwright/min-drag`:
@@ -30,21 +38,14 @@ import { startMatch } from './support/game';
  */
 
 /**
- * The two budgets a state read on a busy machine needs, and both are
- * starvation budgets rather than correctness ones. A test here reads the
- * whole canvas back pixel for pixel and drives real shots to rest, so it is
- * seconds of work on a quiet machine; the mutation harness runs this suite
- * with a build going beside it, and a loaded machine has been measured
- * taking ten times as long to answer a navigation. A gate that reports a
- * defect when the machine is busy is a gate nobody trusts.
+ * THE BUDGETS, THE DESIGN SPACE AND THE FILLS COME FROM `support/game.ts`.
+ * They were retyped in eight of these specs, SPEC section 18's fills among
+ * them, so a palette change would have left five of them scanning for a colour
+ * the game no longer draws. `SETTLE` and `A_WHOLE_TEST` there are starvation
+ * budgets rather than correctness ones: a test here reads the canvas back and
+ * drives real shots to rest, and the mutation harness runs this suite with a
+ * build going beside it.
  */
-const SETTLE = { timeout: 120_000 };
-const A_WHOLE_TEST = 240_000;
-const LOGICAL_WIDTH = 1280;
-const LOGICAL_HEIGHT = 720;
-
-/** SPEC section 18's player fill, as the bytes it is read back as. */
-const PLAYER_FILL = [0x55, 0x90, 0xce] as const;
 
 /** SPEC section 4's circle radius, with a margin for the outline over it. */
 const OUTSIDE_THE_CIRCLE = 38;
@@ -80,26 +81,6 @@ function clientOf(box: Box, designX: number, designY: number): { x: number; y: n
     x: box.left + (designX * box.width) / LOGICAL_WIDTH,
     y: box.top + ((LOGICAL_HEIGHT - designY) * box.height) / LOGICAL_HEIGHT,
   };
-}
-
-/**
- * Let the frame driver draw, so a reading is of a frame and not of a gap.
- * Ten of them at the start of a test, because the surface is sized by a
- * resize observer whose first callback lands after the document has loaded,
- * and a baseline captured before it would be of a scene at another scale.
- * The comparison below then reads colour and not alpha, so an antialiased
- * edge cannot pass for something drawn.
- */
-async function nextFrames(page: Page, count = 2): Promise<void> {
-  await page.evaluate(async (times) => {
-    for (let at = 0; at < times; at += 1) {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          resolve();
-        });
-      });
-    }
-  }, count);
 }
 
 async function captureBaseline(page: Page): Promise<void> {
