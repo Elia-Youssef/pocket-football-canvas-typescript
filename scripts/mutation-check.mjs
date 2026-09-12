@@ -7043,6 +7043,25 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     replace: '  if (false) {',
     detectedBy: 'unit',
   },
+  {
+    item: 'G3',
+    name: 'opponent glyphs use the configured name initial',
+    file: 'src/render/entities.ts',
+    find: "  const initial = [...opponentName.trim()][0]?.toUpperCase();",
+    replace: '  const initial = DEFAULT_GLYPHS.opponent;',
+    detectedBy: 'unit',
+  },
+  {
+    // The mode-to-canvas join happens at the composition root. A unit can
+    // prove the mapping but cannot prove that a booted ladder frame receives
+    // it, so this browser entry is the narrow remaining seam.
+    item: 'G3',
+    name: 'configured opponent initials reach the rendered frame',
+    file: 'src/main.ts',
+    find: '    glyphs: () => glyphsForOpponent(setup.opponentName),',
+    replace: "    glyphs: () => ({ player: 'P', opponent: 'O' }),",
+    detectedBy: 'browser',
+  },
 ];
 
 /**

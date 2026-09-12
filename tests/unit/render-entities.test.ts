@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createWorld } from '../../src/core/bodies';
 import { CIRCLE_RADIUS } from '../../src/core/config';
-import { drawEntities, kickoffFacing } from '../../src/render/entities';
+import { drawEntities, glyphsForOpponent, kickoffFacing } from '../../src/render/entities';
 import { PLAY_SURFACE } from '../../src/render/tokens';
 import { CanvasRecorder } from './support/canvas-recorder';
 
@@ -185,6 +185,12 @@ describe('PF-11 the three bodies', () => {
       opponent: 'Z',
     });
     expect(recorder.calls('fillText').map((op) => op.args[0])).toEqual(['X', 'Z']);
+  });
+
+  it('derives the opponent glyph from its configured name, with the kickoff fallback', () => {
+    expect(glyphsForOpponent('Meridian')).toEqual({ player: 'P', opponent: 'M' });
+    expect(glyphsForOpponent(' Player 2 ')).toEqual({ player: 'P', opponent: 'P' });
+    expect(glyphsForOpponent('')).toEqual({ player: 'P', opponent: 'O' });
   });
 
   it('panels the ball: a central pentagon and five clipped rim patches', () => {

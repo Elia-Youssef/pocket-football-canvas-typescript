@@ -42,6 +42,20 @@ export interface Glyphs {
  */
 export const DEFAULT_GLYPHS: Glyphs = { player: 'P', opponent: 'O' };
 
+/**
+ * SPEC section 4's opponent identity is the initial of the mode's name. The
+ * renderer keeps the two glyphs as data; the composition root supplies this
+ * value when a match configuration changes, so the ladder name reaches the
+ * canvas without making rendering import the mode layer.
+ */
+export function glyphsForOpponent(opponentName: string): Glyphs {
+  const initial = [...opponentName.trim()][0]?.toUpperCase();
+  return {
+    player: DEFAULT_GLYPHS.player,
+    opponent: initial ?? DEFAULT_GLYPHS.opponent,
+  };
+}
+
 /** The direction from one point to another, in design space. */
 export function facingToward(
   fromX: number,
