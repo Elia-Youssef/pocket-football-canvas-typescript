@@ -5,10 +5,12 @@ import { everyBodyStopped, setVelocity, stopped } from '../../src/core/bodies';
 import {
   BALL_START_X,
   BALL_START_Y,
+  DELTA_CEILING,
   FIXED_STEP,
   MIDLINE_Y,
   OPPONENT_START_X,
   PLAYER_START_X,
+  RESUME_GAP,
 } from '../../src/core/config';
 import type { Goal } from '../../src/core/goals';
 import type { Match, MatchState } from '../../src/core/match';
@@ -333,6 +335,40 @@ describe('PF-7 the match clock, the binding reading', () => {
     m.dispatch({ kind: 'launch', angle: 0, power: 0 });
     stepUntil(m, (state) => state.kind === 'PLAYER_TURN');
     expect(m.readout().clock ?? 0).toBeLessThan(atLaunch);
+  });
+
+  it('shares the simulation ceiling and resume rule with clocks and opponent waits', () => {
+    const timed = createMatch({ duration: 1 });
+    timed.dispatch({ kind: 'start' });
+
+    // A visible hitch is not allowed to spend its raw 0.75 seconds. Its
+    // accepted delta is the same 0.25 seconds the simulation consumes.
+    timed.update(DELTA_CEILING * 3);
+    expect(timed.readout().clock).toBe(1 - DELTA_CEILING);
+
+    // A resume-sized gap and an invalid reading are no elapsed match time.
+    timed.update(RESUME_GAP + STEP);
+    timed.update(Number.NaN);
+    expect(timed.readout().clock).toBe(1 - DELTA_CEILING);
+
+    // A hidden-tab pause freezes the clock before the gap; resuming only
+    // permits later ordinary frames, never repayment of that hidden time.
+    timed.dispatch({ kind: 'pause' });
+    timed.update(RESUME_GAP + STEP);
+    expect(timed.readout().clock).toBe(1 - DELTA_CEILING);
+    timed.dispatch({ kind: 'resume' });
+    timed.update(STEP);
+    expect(timed.readout().clock).toBe(1 - DELTA_CEILING - STEP);
+
+    // The opponent delay is a game timer too. A raw hitch must not make the
+    // 0.45 s seam ready until its accepted frames total that amount.
+    const opponent = createMatch({ duration: 30 });
+    opponent.dispatch({ kind: 'start' });
+    spendOpeningTurn(opponent);
+    opponent.update(DELTA_CEILING * 3);
+    expect(opponent.readout().opponentReady).toBe(false);
+    opponent.update(0.2);
+    expect(opponent.readout().opponentReady).toBe(true);
   });
 
   it('is frozen in MENU, PAUSED and GAME_OVER, and steps nothing there', () => {

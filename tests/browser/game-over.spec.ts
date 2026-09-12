@@ -170,25 +170,17 @@ test.describe('PF-9 the game over panel, item J6', () => {
       await page.locator('[data-pf="aim-angle"]').fill('0');
       await page.locator('[data-pf="power"]').fill('100');
       await page.locator('[data-pf="aim-launch"]').click();
-      // Four real frames to get the bodies moving, then ONE jump to the
-      // whistle. SPEC section 6.2 is what makes the jump honest: the clock
-      // charges what the caller says elapsed, with no ceiling of its own,
-      // while the simulation treats a gap past the resume threshold as a
-      // resume and steps nothing. So the match ends with the three bodies
-      // exactly where the shot left them, mid-flight, which is the state this
-      // test wants Play Again to have something to put back.
-      //
-      // IT IS ALSO WHY THIS TEST STOPPED HANGING. Driving the whole minute
-      // frame by frame was 262 round trips a round and 1310 across the five,
-      // by a distance the heaviest protocol load in the suite; one of those
-      // calls stalled on WebKit inside a mutation sweep and took the run down
-      // with it. Thirty round trips cannot.
+      // Four real frames get the bodies moving, then 260 bounded advances
+      // drive the visible minute through accepted quarter-second frames. A
+      // single 65-second `fastForward` would model a laptop-resume gap and
+      // correctly consume only the delta ceiling; this needs time to reach
+      // the clock and simulation together in every accepted slice.
       await advance(page, 4);
       const moving = await centres(page);
-      await page.clock.fastForward(65_000);
+      await advance(page, 260);
       await expect(at(page, 'turn')).toHaveText('FULL TIME', SETTLE);
-      // The whistle really did land on a moving pitch: the ball is not on the
-      // centre spot it was reset to at the top of this round.
+      // The round began with a shot, so Play Again has changed state to reset
+      // rather than merely repainting an untouched kickoff.
       expect(Math.abs(moving.ball.x - 640) + Math.abs(moving.player.x - 300)).toBeGreaterThan(
         5,
       );

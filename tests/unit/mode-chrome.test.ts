@@ -487,7 +487,9 @@ describe('PF-9 the match configuration seam', () => {
   it('takes SPEC section 13 Change mode out of GAME_OVER', () => {
     const match = createMatch({ duration: 1 });
     match.dispatch({ kind: 'start' });
-    match.update(2);
+    for (let frame = 0; frame < 4; frame += 1) {
+      match.update(0.25);
+    }
     expect(match.readout().state.kind).toBe('GAME_OVER');
     match.dispatch({ kind: 'quit' });
     expect(match.readout().state.kind).toBe('MENU');
@@ -508,7 +510,9 @@ describe('PF-9 the match configuration seam', () => {
     const match = createMatch({ duration: 60 });
     match.dispatch({ kind: 'configure', configuration: { duration: 120 } });
     match.dispatch({ kind: 'start' });
-    match.update(5);
+    for (let frame = 0; frame < 20; frame += 1) {
+      match.update(0.25);
+    }
     expect(match.readout().clock).toBeCloseTo(115, 9);
     match.restart();
     expect(match.readout().clock).toBe(120);
