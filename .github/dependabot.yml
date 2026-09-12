@@ -18,9 +18,10 @@ updates:
       # less safe.
       #
       # The name is short on purpose. Dependabot writes it into the commit
-      # subject, the record check holds subjects to 72 ASCII characters, and a
-      # descriptive group name is how that ceiling gets breached by a commit
-      # nobody here wrote.
+      # subject. The record check holds the hand-written subject to 72 ASCII
+      # characters and accepts only GitHub's optional " (#N)" suffix beyond
+      # that, so a descriptive group name is how that ceiling gets breached by
+      # a commit nobody here wrote.
       #
       # MAJORS TRAVEL ALONE. The group carries minor and patch updates only, so
       # a major opens its own pull request and is reviewed on its own terms. The

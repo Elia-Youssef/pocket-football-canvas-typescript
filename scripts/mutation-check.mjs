@@ -301,6 +301,28 @@ export function reapPreview(port = PREVIEW_PORT) {
   return { killed: holders, free: false, looked: true };
 }
 
+/**
+ * Browser arguments differ only after a mutation. The baseline is the whole
+ * suite, while a mutation needs the first proof of detection and must not spend
+ * four minutes on every downstream failure caused by the same broken seam.
+ */
+export function browserDetectorArgs(whole) {
+  const engine = whole
+    ? []
+    : ['--project=chromium', '--project=chromium-driven', '--no-deps'];
+  const mutationStop = whole ? [] : ['--max-failures=1'];
+  return [
+    binaryFor('@playwright/test', 'node_modules/@playwright/test/cli.js'),
+    'test',
+    ...engine,
+    ...mutationStop,
+    // Pinned at four from PF-9, for a measured reason and not a taste. At
+    // the default worker count this machine runs about thirteen workers and
+    // seventy browser processes at once, and the suite starves.
+    '--workers=4',
+  ];
+}
+
 const DETECTORS = {
   unit: {
     label: 'unit suite',
@@ -353,32 +375,7 @@ const DETECTORS = {
         [binaryFor('vite', 'node_modules/vite/bin/vite.js'), 'build'],
         { cwd: PROJECT_ROOT, stdio: 'pipe', timeout: DETECTORS.browser.buildTimeout },
       );
-      // THE BASELINE RUNS THE WHOLE SUITE AND A MUTATION RUN DOES NOT, and the
-      // two are asking different questions. The baseline asks whether this tree
-      // is green everywhere, so it is all three engines. A mutation run asks
-      // whether ANY test catches this edit, and every property that names this
-      // detector is composition wiring that no engine holds an opinion about;
-      // running one engine asks the same question in a third of the time. The
-      // narrowing is safe in the only direction that matters: an edit that
-      // some other engine alone would have caught is reported MISSED, which
-      // reddens the gate, and it can never make an uncaught edit look caught.
-      // Twenty three entries name this detector, so the difference is hours.
-      const engine = whole
-        ? []
-        : ['--project=chromium', '--project=chromium-driven', '--no-deps'];
-      return [
-        binaryFor('@playwright/test', 'node_modules/@playwright/test/cli.js'),
-        'test',
-        ...engine,
-        // Pinned at four from PF-9, for a measured reason and not a taste. At
-        // the default worker count this machine runs about thirteen workers
-        // and seventy browser processes at once, and the suite STARVES: tests
-        // that pass alone in seconds time out at four minutes. A starved run
-        // is worse here than anywhere else, because a detector that fails for
-        // the wrong reason reports a mutation as detected when nothing caught
-        // it. Four workers measured 12.8 minutes against 25.3 minutes starved.
-        '--workers=4',
-      ];
+      return browserDetectorArgs(whole);
     },
   },
 };
@@ -748,8 +745,8 @@ export const EDITS = [
     item: 'GH7',
     name: 'the dependency trailer waiver belongs to dependency updates only',
     file: 'scripts/check-repository-record.mjs',
-    find: '    if (dependencyUpdate && DEPENDENCY_TRAILER.test(line)) {',
-    replace: '    if (DEPENDENCY_TRAILER.test(line)) {',
+    find: '    if (dependencyUpdate && raw === trimmed && DEPENDENCY_TRAILER.test(trimmed)) {',
+    replace: '    if (raw === trimmed && DEPENDENCY_TRAILER.test(trimmed)) {',
     detectedBy: 'unit',
   },
   {
@@ -764,8 +761,8 @@ export const EDITS = [
     item: 'GH7',
     name: 'a message keeps its text after an embedded field separator',
     file: 'scripts/check-repository-record.mjs',
-    find: '      message: parts.slice(5).join(UNIT_SEPARATOR),',
-    replace: '      message: parts[5],',
+    find: '      message: parts.slice(6).join(UNIT_SEPARATOR),',
+    replace: '      message: parts[6],',
     detectedBy: 'unit',
   },
   {
@@ -774,6 +771,97 @@ export const EDITS = [
     file: 'scripts/check-repository-record.mjs',
     find: '      fragments.push(commit);',
     replace: '      void commit;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a generated dependency record needs its exact trailing sign-off',
+    file: 'scripts/check-repository-record.mjs',
+    find: "    DEPENDENCY_TRAILER.test(lines.at(-1) ?? '')",
+    replace: '    true',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'the hand-written subject ceiling remains seventy-two characters',
+    file: 'scripts/check-repository-record.mjs',
+    find: 'export const SUBJECT_LIMIT = 72;',
+    replace: 'export const SUBJECT_LIMIT = 80;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'the text scan starts from a binary denylist rather than an allowlist',
+    file: 'scripts/check-repository-record.mjs',
+    find: '  return !BINARY_EXTENSIONS.has(path.extname(relative).toLowerCase());',
+    replace: '  return true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'tracked text is rejected when a non-ASCII code point appears',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    if (!isAscii(text)) {',
+    replace: '    if (false) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'indented structured body lines are trimmed and then rejected',
+    file: 'scripts/check-repository-record.mjs',
+    find: '  const structured = lines.map((line) => ({ raw: line, trimmed: line.trim() }));',
+    replace: '  const structured = lines.map((line) => ({ raw: line, trimmed: line }));',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'historical merge commits remain in the record history walk',
+    file: 'scripts/check-repository-record.mjs',
+    find: "      'log',",
+    replace: "      'log',\n      '--no-merges',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a synthetic merge tip must name its exact two parents',
+    file: 'scripts/check-repository-record.mjs',
+    find:
+      '    subject !== null &&\n' +
+      '    subject[1] === parents[1] &&\n' +
+      '    subject[2] === parents[0]',
+    replace: '    subject !== null &&\n    true',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a dependency pull request title still receives the record scan',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    for (const hit of scanRecord(title)) {',
+    replace: '    for (const hit of []) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'a dependency pull request body still receives the record scan',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    for (const hit of scanRecord(body)) {',
+    replace: '    for (const hit of []) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'the fixture runner still dispatches the commit history step',
+    file: 'scripts/check-repository-record.mjs',
+    find: '  const commits = checkCommits({ runGit, reporter });',
+    replace: '  const commits = 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'the browser mutation run stops after its first detected failure',
+    file: 'scripts/mutation-check.mjs',
+    find: "  const mutationStop = whole ? [] : ['--max-failures=1'];\n  return [",
+    replace: '  const mutationStop = [];\n  return [',
     detectedBy: 'unit',
   },
 
@@ -6087,7 +6175,7 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: 'scripts/check-repository-record.mjs',
     find:
       '  const { refusal } = shallowState(() =>\n' +
-      "    git('rev-parse', '--is-shallow-repository'),\n" +
+      "    runGit('rev-parse', '--is-shallow-repository'),\n" +
       '  );',
     replace: '  const refusal = null;',
     detectedBy: 'unit',

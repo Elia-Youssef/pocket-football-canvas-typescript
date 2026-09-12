@@ -1,27 +1,40 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   BRANCH_PATTERN,
   CLOSES_PATTERN,
+  SUBJECT_LIMIT,
   checkBody,
+  checkBranch,
+  checkCommits,
   checkCommitRecord,
+  checkPullRequest,
+  checkRepositoryIdentity,
   checkSubject,
+  checkTracked,
+  createGit,
+  createReporter,
   isDependabotCommit,
   isDependabotPullRequest,
   isGameContextLine,
   isReservedBasename,
+  isSyntheticMergeTip,
   isTextPath,
   parseCommitLog,
   requiresCloses,
+  runRecordGate,
   scanContent,
   scanPath,
   scanRecord,
   shallowRefusal,
   shallowState,
+  subjectWithoutPullRequestSuffix,
 } from '../../scripts/check-repository-record.mjs';
 
 /**
@@ -35,6 +48,31 @@ import {
  */
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
+
+function fixtureGit(root: string, args: string[]): string {
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+}
+
+function withFixtureRepository(run: (root: string) => void): void {
+  const root = mkdtempSync(path.join(tmpdir(), 'pocket-football-record-'));
+  try {
+    fixtureGit(root, ['init', '--initial-branch=main']);
+    fixtureGit(root, ['config', 'user.name', 'Fixture']);
+    fixtureGit(root, ['config', 'user.email', 'fixture@example.com']);
+    writeFileSync(path.join(root, 'README.rst'), 'fixture record\n', 'utf8');
+    fixtureGit(root, ['add', 'README.rst']);
+    fixtureGit(root, [
+      'commit',
+      '-m',
+      'fix: add the record fixture',
+      '-m',
+      'Because its history must be checked.\n\nCloses: None',
+    ]);
+    run(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 function probe(encoded: string): string {
   return Buffer.from(encoded, 'base64').toString('utf8');
@@ -234,12 +272,15 @@ describe('PF-0 repository record gate', () => {
       expect(requiresCloses('docs: record the reorder')).toBe(true);
     });
 
-    it('allows generated bot metadata only with the explicit event-backed exception', () => {
+    it('recognises generated bot metadata from the commit signature alone', () => {
       expect(isDependabotCommit(DEPENDENCY_COMMIT)).toBe(true);
-      expect(checkCommitRecord(DEPENDENCY_COMMIT).length).toBeGreaterThan(0);
+      expect(checkCommitRecord(DEPENDENCY_COMMIT)).toEqual([]);
       expect(
-        checkCommitRecord(DEPENDENCY_COMMIT, { allowDependabotGeneratedMetadata: true }),
-      ).toEqual([]);
+        isDependabotCommit({
+          ...DEPENDENCY_COMMIT,
+          message: DEPENDENCY_COMMIT.message.replace('Signed-off-by:', 'Reviewed-by:'),
+        }),
+      ).toBe(false);
     });
 
     it('requires the GitHub-supplied pull request author before enabling the exception', () => {
@@ -248,6 +289,23 @@ describe('PF-0 repository record gate', () => {
       process.env['PULL_REQUEST_AUTHOR'] = 'dependabot[bot]';
       expect(isDependabotPullRequest()).toBe(true);
       delete process.env['PULL_REQUEST_AUTHOR'];
+    });
+
+    it('still scans a bot pull request title and body', () => {
+      const lines: string[] = [];
+      const reporter = createReporter((line: string) => lines.push(line));
+      checkPullRequest({
+        environment: {
+          PULL_REQUEST_AUTHOR: 'dependabot[bot]',
+          PULL_REQUEST_TITLE: 'deps: Bump ' + PRODUCT,
+          PULL_REQUEST_BODY: 'release notes name ' + PRODUCT,
+        },
+        reporter,
+      });
+      expect(reporter.failures).toHaveLength(2);
+      expect(reporter.failures[0]).toContain('pull request title contains');
+      expect(reporter.failures[1]).toContain('pull request body contains');
+      expect(lines.some((line) => line.includes('2 supplied values checked'))).toBe(true);
     });
 
     it('refuses the dependency sign-off on anything that is not a dependency update', () => {
@@ -266,17 +324,16 @@ describe('PF-0 repository record gate', () => {
       expect(checkCommitRecord(HUMAN_CI_COMMIT).length).toBe(1);
     });
 
-    it('keeps the exception independent of branch names', () => {
+    it('keeps the history exception independent of branch and PR environment names', () => {
       const branches = ['dependabot/github_actions/actions/checkout-7', 'main', 'pf-1-tokens'];
       for (const branch of branches) {
         process.env['REPOSITORY_BRANCH'] = branch;
-        expect(
-          checkCommitRecord(DEPENDENCY_COMMIT, { allowDependabotGeneratedMetadata: true }),
-          branch,
-        ).toEqual([]);
+        process.env['PULL_REQUEST_AUTHOR'] = 'someone-else';
+        expect(checkCommitRecord(DEPENDENCY_COMMIT), branch).toEqual([]);
         expect(checkCommitRecord(HUMAN_CI_COMMIT).length, branch).toBe(1);
       }
       delete process.env['REPOSITORY_BRANCH'];
+      delete process.env['PULL_REQUEST_AUTHOR'];
       expect(checkCommitRecord.length).toBe(1);
     });
   });
@@ -309,6 +366,16 @@ describe('PF-0 repository record gate', () => {
       ).toBe(true);
     });
 
+    it('rejects non-ASCII record values by code point', () => {
+      const zeroWidth = String.fromCodePoint(0x200b);
+      const problems = checkCommitRecord({
+        author: 'Someone <someone@example.com>',
+        committer: 'Someone <someone@example.com>',
+        message: 'PF-2: integrate' + zeroWidth + ' at a fixed step\n\nWhy.\n\nCloses: B1',
+      });
+      expect(problems).toContain('message is not ASCII');
+    });
+
     it('leaves tab, LF and CR alone, which real messages carry', () => {
       expect(
         checkCommitRecord({
@@ -323,9 +390,10 @@ describe('PF-0 repository record gate', () => {
   describe('the commit walk parses its own format defensively', () => {
     const FIELD = String.fromCharCode(0x1e);
     const RECORD = String.fromCharCode(0x1d);
-    const record = (message: string): string =>
+    const record = (message: string, parents = '1111111 2222222'): string =>
       [
         'abcdef1234567890',
+        parents,
         'Someone',
         'someone@example.com',
         'Someone',
@@ -339,7 +407,8 @@ describe('PF-0 repository record gate', () => {
       );
       expect(fragments).toEqual([]);
       expect(records).toHaveLength(1);
-      expect(records[0]?.sha).toBe('abcdef12');
+      expect(records[0]?.sha).toBe('abcdef1234567890');
+      expect(records[0]?.parents).toBe('1111111 2222222');
       expect(records[0]?.message).toBe('PF-2: integrate at a fixed step\n\nWhy.\n\nCloses: B1');
     });
 
@@ -388,6 +457,70 @@ describe('PF-0 repository record gate', () => {
         expect(isTextPath(file), file).toBe(true);
       }
       expect(isTextPath('reference/layout-reference.png')).toBe(false);
+    });
+
+    it('treats unfamiliar text extensions as text and known binary ones as binary', () => {
+      for (const file of ['notes.rst', 'snapshot.snap', 'table.tsv', 'guide.markdown']) {
+        expect(isTextPath(file), file).toBe(true);
+      }
+      expect(isTextPath('capture.webm')).toBe(false);
+    });
+  });
+
+  describe('the merge walk exempts only GitHub synthetic merge tips', () => {
+    const synthetic = {
+      sha: 'a'.repeat(40),
+      parents: 'b'.repeat(40) + ' ' + 'c'.repeat(40),
+      author: 'Contributor <contributor@example.com>',
+      committer: 'GitHub <noreply@github.com>',
+      message: 'Merge ' + 'c'.repeat(40) + ' into ' + 'b'.repeat(40),
+    };
+
+    it('keeps historical and lookalike merges inside the record scan', () => {
+      expect(isSyntheticMergeTip(synthetic, synthetic.sha)).toBe(true);
+      expect(isSyntheticMergeTip(synthetic, 'f'.repeat(40))).toBe(false);
+      expect(
+        isSyntheticMergeTip({ ...synthetic, committer: 'Someone <someone@example.com>' }, synthetic.sha),
+      ).toBe(false);
+      expect(isSyntheticMergeTip({ ...synthetic, parents: 'b'.repeat(40) }, synthetic.sha)).toBe(false);
+      expect(isSyntheticMergeTip({ ...synthetic, message: 'fix: merge records' }, synthetic.sha)).toBe(
+        false,
+      );
+      expect(
+        isSyntheticMergeTip(
+          { ...synthetic, message: 'Merge ' + 'd'.repeat(40) + ' into ' + 'b'.repeat(40) },
+          synthetic.sha,
+        ),
+      ).toBe(false);
+    });
+
+    it('feeds an ordinary historical merge through the commit record check', () => {
+      const field = String.fromCharCode(0x1e);
+      const record = [
+        'f'.repeat(40),
+        '1'.repeat(40) + ' ' + '2'.repeat(40),
+        'Someone',
+        'someone@example.com',
+        'Someone',
+        'someone@example.com',
+        'Merge branch side',
+      ].join(field) + String.fromCharCode(0x1d);
+      const calls: string[][] = [];
+      const runGit = (...args: string[]): string => {
+        calls.push(args);
+        if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') {
+          return 'false\n';
+        }
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+          return 'f'.repeat(40) + '\n';
+        }
+        return record;
+      };
+      const reporter = createReporter(() => undefined);
+      expect(checkCommits({ runGit, reporter })).toBe(1);
+      expect(reporter.failures.some((failure) => failure.includes('subject'))).toBe(true);
+      const log = calls.find((args) => args[0] === 'log') ?? [];
+      expect(log).not.toContain('--no-merges');
     });
   });
 
@@ -442,8 +575,13 @@ describe('PF-0 repository record gate', () => {
       expect(checkSubject('PF-0: Scaffold the project').length).toBeGreaterThan(0);
       expect(checkSubject('PF-0: scaffold the project.').length).toBeGreaterThan(0);
       expect(checkSubject('scaffold the project').length).toBeGreaterThan(0);
-      expect(checkSubject(`PF-0: ${'x'.repeat(74)}`)).toEqual([]);
-      expect(checkSubject(`PF-0: ${'x'.repeat(75)}`).length).toBeGreaterThan(0);
+      expect(SUBJECT_LIMIT).toBe(72);
+      const atLimit = 'PF-0: ' + 'x'.repeat(66);
+      expect(atLimit).toHaveLength(72);
+      expect(checkSubject(atLimit)).toEqual([]);
+      expect(checkSubject(atLimit + ' (#24)')).toEqual([]);
+      expect(subjectWithoutPullRequestSuffix(atLimit + ' (#24)')).toBe(atLimit);
+      expect(checkSubject(atLimit + 'x (#24)').length).toBeGreaterThan(0);
       // Built from a code point so this file stays ASCII, which is the same
       // house rule the check is enforcing.
       const nonAscii = `PF-0: caf${String.fromCharCode(0xe9)} au lait`;
@@ -466,6 +604,18 @@ describe('PF-0 repository record gate', () => {
       ).toBe(1);
       expect(checkBody(['Closes: a1'], { requireCloses: true }).length).toBe(1);
       expect(checkBody(['Closes: A1,A2'], { requireCloses: true }).length).toBe(1);
+    });
+
+    it('finds indented structured lines after trimming and reports them malformed', () => {
+      const closes = checkBody(['because.', '', ' Closes: A1'], { requireCloses: true });
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toContain('malformed Closes');
+      expect(
+        checkBody(
+          ['because.', '', ' Signed-off-by: dependabot[bot] <support@github.com>'],
+          { requireCloses: false, dependencyUpdate: true },
+        ),
+      ).toHaveLength(1);
     });
 
     it('waives exactly the dependency sign-off, and only on a dependency update', () => {
@@ -535,20 +685,18 @@ describe('PF-0 repository record gate', () => {
     });
 
     it('reads the shallow flag before it walks anything', () => {
-      // The refusal above is a pure function, so it says nothing about whether
-      // the walk consults it. Read as source, because the only other way to ask
-      // is to make a shallow clone, which is the probe rather than the test.
-      const source = readFileSync(
-        path.join(PROJECT_ROOT, 'scripts', 'check-repository-record.mjs'),
-        'utf8',
-      );
-      const walk = source.indexOf('function checkCommits()');
-      const flag = source.indexOf("git('rev-parse', '--is-shallow-repository')", walk);
-      const log = source.indexOf('log = git(', walk);
-      expect(walk, 'the commit walk exists').toBeGreaterThan(-1);
-      expect(flag, 'the shallow flag is read inside it').toBeGreaterThan(walk);
-      expect(flag, 'and before the log is read').toBeLessThan(log);
-      expect(source).toContain('const { refusal } = shallowState(() =>');
+      const calls: string[][] = [];
+      const runGit = (...args: string[]): string => {
+        calls.push(args);
+        if (args[0] === 'rev-parse') {
+          return 'true\n';
+        }
+        throw new Error('the history must not be read after a shallow refusal');
+      };
+      const reporter = createReporter(() => undefined);
+      expect(checkCommits({ runGit, reporter })).toBe(0);
+      expect(calls).toEqual([['rev-parse', '--is-shallow-repository']]);
+      expect(reporter.failures).toHaveLength(1);
     });
 
     it('says nothing about a full one', () => {
@@ -558,6 +706,71 @@ describe('PF-0 repository record gate', () => {
       expect(shallowRefusal('false\n')).toBeNull();
       expect(shallowRefusal('false')).toBeNull();
       expect(shallowRefusal('')).toBeNull();
+    });
+  });
+
+  describe('the exported orchestration steps run against a fixture repository', () => {
+    it('checks identity, branch, tracked files, commits and pull request metadata together', () => {
+      withFixtureRepository((root) => {
+        const lines: string[] = [];
+        const reporter = createReporter((line: string) => lines.push(line));
+        const runGit = createGit(root);
+        expect(checkRepositoryIdentity({ root, runGit, reporter })).toBe(true);
+        checkBranch('main', reporter);
+        expect(checkTracked({ root, runGit, reporter })).toBe(1);
+        expect(checkCommits({ runGit, reporter })).toBe(1);
+        checkPullRequest({
+          environment: {
+            PULL_REQUEST_TITLE: 'fix: exercise the record fixture',
+            PULL_REQUEST_BODY: 'Because every step needs a fixture.\n\nCloses: None',
+          },
+          reporter,
+        });
+        expect(reporter.failures).toEqual([]);
+
+        const result = runRecordGate({
+          root,
+          runGit,
+          environment: { REPOSITORY_BRANCH: 'main' },
+          write: (line: string) => lines.push(line),
+        });
+        expect(result).toMatchObject({ status: 0, tracked: 1, commits: 1, branch: 'main' });
+        expect(lines.some((line) => line.includes('every commit reachable'))).toBe(true);
+      });
+    });
+
+    it('scans an unfamiliar text extension, skips NUL bytes and rejects non-ASCII text', () => {
+      withFixtureRepository((root) => {
+        writeFileSync(path.join(root, 'evidence.rst'), 'named ' + VENDOR + '\n', 'utf8');
+        writeFileSync(path.join(root, 'opaque.data'), Buffer.from([0, 1, 2]));
+        writeFileSync(
+          path.join(root, 'accent.markdown'),
+          'accent ' + String.fromCodePoint(0x200b) + '\n',
+          'utf8',
+        );
+        fixtureGit(root, ['add', 'evidence.rst', 'opaque.data', 'accent.markdown']);
+        const reporter = createReporter(() => undefined);
+        checkTracked({ root, runGit: createGit(root), reporter });
+        expect(reporter.failures).toHaveLength(2);
+        expect(reporter.failures[0]).toContain('accent.markdown is not ASCII');
+        expect(reporter.failures[1]).toContain('evidence.rst:1');
+      });
+    });
+
+    it('refuses an actual shallow clone with one failure before walking it', () => {
+      withFixtureRepository((root) => {
+        const shallow = mkdtempSync(path.join(tmpdir(), 'pocket-football-shallow-'));
+        rmSync(shallow, { recursive: true, force: true });
+        try {
+          fixtureGit(root, ['clone', '--depth', '1', pathToFileURL(root).href, shallow]);
+          const reporter = createReporter(() => undefined);
+          expect(checkCommits({ runGit: createGit(shallow), reporter })).toBe(0);
+          expect(reporter.failures).toHaveLength(1);
+          expect(reporter.failures[0]).toContain('repository is shallow');
+        } finally {
+          rmSync(shallow, { recursive: true, force: true });
+        }
+      });
     });
   });
 
