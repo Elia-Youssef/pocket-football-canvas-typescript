@@ -858,6 +858,22 @@ export const EDITS = [
   },
   {
     item: 'GH7',
+    name: 'a generated GitHub squash record checks every embedded commit',
+    file: 'scripts/check-repository-record.mjs',
+    find: '  const squashProblems = checkGithubSquashRecord({ author, committer, message });',
+    replace: '  const squashProblems = null;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
+    name: 'squash component markers remain reserved for generated records',
+    file: 'scripts/check-repository-record.mjs',
+    find: '    forbidSquashMarkers: true,',
+    replace: '    forbidSquashMarkers: false,',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'GH7',
     name: 'the browser mutation run stops after its first detected failure',
     file: 'scripts/mutation-check.mjs',
     find: "  const mutationStop = whole ? [] : ['--max-failures=1'];\n  return [",

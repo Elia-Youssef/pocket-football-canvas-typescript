@@ -175,6 +175,7 @@ const DEPENDENCY_TRAILER = /^Signed-off-by: dependabot\[bot\] <support@github\.c
 const DEPENDABOT_LOGIN = 'dependabot[bot]';
 const DEPENDABOT_AUTHOR = /^dependabot\[bot\] <\d+\+dependabot\[bot\]@users\.noreply\.github\.com>$/;
 const GITHUB_COMMITTER = /^GitHub <noreply@github\.com>$/;
+const GITHUB_NOREPLY_AUTHOR = /^[^<\n]+ <\d+\+[^@\n]+@users\.noreply\.github\.com>$/;
 const DEPENDABOT_SUBJECT = /^deps: Bump /;
 const SQUASH_PULL_REQUEST_SUFFIX = / \(#[1-9][0-9]*\)$/;
 
@@ -410,7 +411,10 @@ export function isDependabotCommit({ author, committer, message }) {
 }
 
 /** GITHUB section 4, applied to a whole message or a pull request body. */
-export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
+export function checkBody(
+  lines,
+  { requireCloses, dependencyUpdate = false, forbidSquashMarkers = false },
+) {
   const problems = [];
   const structured = lines.map((line) => ({ raw: line, trimmed: line.trim() }));
   const closes = structured.filter(({ trimmed }) => trimmed.startsWith('Closes:'));
@@ -425,6 +429,9 @@ export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
     problems.push(`has a malformed Closes: line: ${JSON.stringify(closes[0].raw)}`);
   }
   for (const { raw, trimmed } of structured) {
+    if (forbidSquashMarkers && raw.startsWith('* ')) {
+      problems.push('uses a squash component marker, which is reserved for GitHub-generated records');
+    }
     if (!TRAILER_PATTERN.test(trimmed)) {
       continue;
     }
@@ -432,6 +439,83 @@ export function checkBody(lines, { requireCloses, dependencyUpdate = false }) {
       continue;
     }
     problems.push(`carries a trailer, which this repository takes none of: ${JSON.stringify(raw)}`);
+  }
+  return problems;
+}
+
+/** The message shape GitHub makes when its squash form keeps each commit body. */
+function githubSquashComponents({ author, committer, message }) {
+  const lines = message.replace(/\n+$/, '').split('\n');
+  const subject = lines[0] ?? '';
+  if (
+    !GITHUB_NOREPLY_AUTHOR.test(author) ||
+    !GITHUB_COMMITTER.test(committer) ||
+    !SQUASH_PULL_REQUEST_SUFFIX.test(subject) ||
+    lines[1] !== ''
+  ) {
+    return null;
+  }
+  const components = [];
+  let current = null;
+  for (const line of lines.slice(2)) {
+    if (line.startsWith('* ')) {
+      if (current !== null) {
+        components.push(current.join('\n').replace(/\n+$/, ''));
+      }
+      current = [line.slice(2)];
+      continue;
+    }
+    if (current === null) {
+      return null;
+    }
+    current.push(line);
+  }
+  if (current === null) {
+    return null;
+  }
+  components.push(current.join('\n').replace(/\n+$/, ''));
+  return { subject, components };
+}
+
+/** Apply the ordinary message rules to one component of a generated squash record. */
+function checkMessageShape(message, { component = undefined } = {}) {
+  const problems = [];
+  const lines = message.replace(/\n+$/, '').split('\n');
+  const subject = lines[0] ?? '';
+  const prefix = component === undefined ? '' : `squashed component ${String(component)} `;
+  for (const problem of checkSubject(subject)) {
+    problems.push(`${prefix}subject ${problem}`);
+  }
+  if (lines.length > 1 && lines[1] !== '') {
+    problems.push(`${prefix}needs a blank line after its subject`);
+  }
+  const dependency = !requiresCloses(subject);
+  for (const problem of checkBody(lines.slice(2), {
+    requireCloses: !dependency,
+    dependencyUpdate: dependency,
+    forbidSquashMarkers: true,
+  })) {
+    problems.push(`${prefix}message ${problem}`);
+  }
+  return problems;
+}
+
+/**
+ * A generated squash is not an exception from the record rules. GitHub may
+ * preserve several valid commit bodies in one immutable wrapper, so each
+ * component is checked as its own record and every marker is structural.
+ */
+function checkGithubSquashRecord(record) {
+  const squash = githubSquashComponents(record);
+  if (squash === null) {
+    return null;
+  }
+  const problems = [];
+  for (const problem of checkSubject(squash.subject)) {
+    problems.push(`subject ${problem}`);
+  }
+  for (const [index, component] of squash.components.entries()) {
+    problems.push(...checkMessageShape(component, { component: index + 1 }));
   }
   return problems;
 }
@@ -477,21 +561,13 @@ export function checkCommitRecord({ author, committer, message }) {
     return problems;
   }
 
-  const lines = message.replace(/\n+$/, '').split('\n');
-  const subject = lines[0] ?? '';
-  for (const problem of checkSubject(subject)) {
-    problems.push(`subject ${problem}`);
+  const squashProblems = checkGithubSquashRecord({ author, committer, message });
+  if (squashProblems !== null) {
+    problems.push(...squashProblems);
+    return problems;
   }
-  if (lines.length > 1 && lines[1] !== '') {
-    problems.push('needs a blank line after its subject');
-  }
-  const dependency = !requiresCloses(subject);
-  for (const problem of checkBody(lines.slice(2), {
-    requireCloses: !dependency,
-    dependencyUpdate: dependency,
-  })) {
-    problems.push(`message ${problem}`);
-  }
+
+  problems.push(...checkMessageShape(message));
   return problems;
 }
 
