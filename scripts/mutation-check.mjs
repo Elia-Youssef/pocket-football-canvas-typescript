@@ -10,12 +10,16 @@
  * failing is the defect class this document set was written to kill: it looks
  * exactly like a gate that is passing.
  *
- * Two detectors, both run as their own node binary rather than through npm, so
+ * Three detectors, each run as its own node binary rather than through npm, so
  * that a mutated package.json cannot change what the harness runs:
  *
- *   unit   the whole Vitest suite
- *   lint   ESLint over the tree, with the fixtures excluded the way the
- *          shipping script excludes them
+ *   unit    the whole Vitest suite
+ *   lint    ESLint over the tree, with the fixtures excluded the way the
+ *           shipping script excludes them
+ *   browser the built bundle under Playwright, narrowed to one engine, for the
+ *           composition-root wiring no unit seam can witness. It is the LAST
+ *           resort by the directive recorded in its own section below, because
+ *           each entry costs a build and a browser run.
  *
  * Every entry names the property it attacks, not the line it edits. If an entry
  * is ever reported as NOT DETECTED, the gate it names is decorative.
@@ -34,7 +38,7 @@
  *                     applied twice.
  *   Restore always.   Originals are restored in a finally, and an added file is
  *                     refused if the path already exists and removed afterwards.
- *   Baseline first.   Both detectors must be green before anything is mutated.
+ *   Baseline first.   Every detector must be green before anything is mutated.
  *                     Against a red tree every mutation looks detected.
  *   Port reclaimed.   The browser detector owns the preview port either side of
  *                     every run it makes. See the section below.
@@ -919,11 +923,16 @@ export const EDITS = [
     detectedBy: 'unit',
   },
   {
+    // RE-POINTED by the rail vehicle: SPEC section 18's correction retired the
+    // rail FILL's two rows, so the scoped cell this quoted is gone and the
+    // section's one remaining scoped cell is the arrow's. The property is
+    // unchanged, on the row that now carries it: a scoped cell's measurement
+    // is re-derived from the hexes rather than read out of the contract.
     item: 'E1',
-    name: 'the corrected rail cell is re-derived and not trusted',
+    name: 'a scoped cell is re-derived and not trusted',
     file: 'tests/reference/design-contract.json',
-    find: '["Rail on ground", "Daylight", "1.15", "3", "Rail on pitch, both variants"]',
-    replace: '["Rail on ground", "Daylight", "1.16", "3", "Rail on pitch, both variants"]',
+    find: '"Aim arrow strong end on pitch", "Daylight", "1.59"',
+    replace: '"Aim arrow strong end on pitch", "Daylight", "1.69"',
     detectedBy: 'unit',
   },
 
@@ -948,19 +957,50 @@ export const EDITS = [
     detectedBy: 'unit',
   },
   {
+    // RE-POINTED with the entry above and for the same reason: the scoped
+    // table is one row now, so the deletion this protects against is the
+    // deletion of that row. Emptying the table is the same silence the rail
+    // row's deletion would have been.
     item: 'E1',
     name: 'a scoped cell cannot be deleted',
     file: 'tests/reference/design-contract.json',
-    find: '["Rail on ground", "Daylight", "1.15", "3", "Rail on pitch, both variants"], ',
-    replace: '',
+    find:
+      '[["Aim arrow strong end on pitch", "Daylight", "1.59", "3", ' +
+      '"The arrow outline, both variants"]]',
+    replace: '[]',
+    detectedBy: 'unit',
+  },
+  {
+    // RE-POINTED by the rail vehicle: the row this quoted was the rail FILL on
+    // the pitch, which SPEC section 18 retired when it moved the guarantee to
+    // the boundary. The property is a section 5 threshold, so it moves to
+    // another row of the same table and protects the same thing.
+    item: 'E1',
+    name: 'a stated threshold cannot be quietly lowered',
+    file: 'tests/reference/design-contract.json',
+    find: '["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "3"]',
+    replace: '["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "1"]',
+    detectedBy: 'unit',
+  },
+
+  // The rail boundary's four cells, added with SPEC section 18's corrected row
+  // of 2026-09-12: the section states the boundary against BOTH mown stripes,
+  // where it used to quote the rail FILL against stripe A alone, which is how
+  // the daylight stripe B cell sat at 2.72 unstated until the audit read it.
+  {
+    item: 'E1',
+    name: 'a rail boundary cell is re-derived and not trusted',
+    file: 'tests/reference/design-contract.json',
+    find: '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"]',
+    replace: '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.37", "3"]',
     detectedBy: 'unit',
   },
   {
     item: 'E1',
-    name: 'a stated threshold cannot be quietly lowered',
+    name: 'a rail boundary row cannot be deleted',
     file: 'tests/reference/design-contract.json',
-    find: '["Rail on pitch", "--pf-rail", "--pitch-stripe-a", "3.67", "3.09", "3"]',
-    replace: '["Rail on pitch", "--pf-rail", "--pitch-stripe-a", "3.67", "3.09", "1"]',
+    find: '["Rail boundary on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ',
+    replace: '',
     detectedBy: 'unit',
   },
   {
@@ -2618,11 +2658,54 @@ export const EDITS = [
     detectedBy: 'unit',
   },
   {
+    // RE-POINTED by the rail vehicle: SPEC section 18's correction of
+    // 2026-09-12 moved the boundary from one design unit to three, so the line
+    // this entry quoted no longer exists and the weight it protects now has a
+    // name of its own. The mutation is the same one in the other direction and
+    // the property is unchanged: the boundary carries the weight the section
+    // states, which is what puts a whole device pixel of it on the surface.
     item: 'E3',
-    name: 'the rail boundary is a hairline, the one the section measures',
+    name: 'the rail boundary carries the weight the section states',
     file: 'src/render/pitch.ts',
-    find: 'context.lineWidth = BORDER.hair;',
-    replace: 'context.lineWidth = BORDER.thick;',
+    find: 'const BOUNDARY_WEIGHT = BORDER.thick;',
+    replace: 'const BOUNDARY_WEIGHT = BORDER.hair;',
+    detectedBy: 'unit',
+  },
+  {
+    // The other half of the same guarantee, and the half a weight alone does
+    // not buy: three design units are 1.008 device pixels at the smallest
+    // scale the fit produces, so a band that straddles a pixel boundary there
+    // covers two pixels by about half each and none of them is the boundary's
+    // colour. Unsnapped, the reading is the 2.59:1 the 2026-09-08 audit took.
+    item: 'E3',
+    name: 'the rail boundary is laid on whole device pixels, not across two',
+    file: 'src/render/pitch.ts',
+    find: '  return Math.round(designUnits * scale) / scale;',
+    replace: '  return designUnits;',
+    detectedBy: 'unit',
+  },
+  {
+    // The snap divides by the scale, and the composition root's frame guard
+    // refuses a scale at or below zero and lets every other unusable number
+    // through, because a comparison with NaN is false. Without the finiteness
+    // half of this guard the wall pass draws a path of NaN coordinates, which
+    // is not a drawing at all.
+    item: 'E3',
+    name: 'a scale that is not a number still draws the boundary somewhere',
+    file: 'src/render/pitch.ts',
+    find: '  if (!Number.isFinite(scale) || scale <= 0) {',
+    replace: '  if (scale <= 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    // And the side it is laid on: the band belongs to the rail, so the stripe
+    // the section measures it against is the pixel next to it. Moved onto the
+    // pitch, the boundary paints over the stripe it is quoted against.
+    item: 'E3',
+    name: 'the rail boundary lies on the rail side of the edge it is measured at',
+    file: 'src/render/pitch.ts',
+    find: '  const top = onDeviceRow(FIELD_TOP, scale) + HALF_BOUNDARY;',
+    replace: '  const top = onDeviceRow(FIELD_TOP, scale) - HALF_BOUNDARY;',
     detectedBy: 'unit',
   },
   {
@@ -6598,16 +6681,20 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     // DESIGN section 7's pass order, and the module's own guarantee that the
     // vignette is drawn under the markings and the rail: moved to fourth, its
     // alpha tints the rail down to 2.44 floodlit and 2.14 daylight.
+    //
+    // RE-POINTED by the rail vehicle: the wall pass takes the layer's backing
+    // scale from 2026-09-13, so the quoted call gained an argument. Same four
+    // lines, same reordering, same property.
     item: 'E3',
     name: 'the vignette is drawn under the markings and the rail',
     file: 'src/render/pitch.ts',
     find: `  drawStripes(context, palette);
   drawVignette(context, palette);
   drawCentreMarkings(context, palette);
-  drawWalls(context, palette);`,
+  drawWalls(context, palette, surface.scale);`,
     replace: `  drawStripes(context, palette);
   drawCentreMarkings(context, palette);
-  drawWalls(context, palette);
+  drawWalls(context, palette, surface.scale);
   drawVignette(context, palette);`,
     detectedBy: 'unit',
   },

@@ -30,7 +30,7 @@
   }],
   "5. Measured pairs": [{
     "headers": ["Pair", "Foreground", "Background", "Floodlit", "Daylight", "Needs"],
-    "rows": [["Markings on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Markings on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"], ["Entity ring on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Entity ring on player fill", "--pf-line", "--team-player", "3.09", "3.09", "3"], ["Entity ring on opponent fill", "--pf-line", "--team-opponent", "10.80", "10.80", "3"], ["Player fill against opponent fill", "--team-player", "--team-opponent", "3.49", "3.49", "3"], ["Glyph on player", "--glyph-on-player", "--team-player", "5.24", "5.24", "4.5"], ["Glyph on opponent", "--glyph-on-opponent", "--team-opponent", "10.80", "10.80", "4.5"], ["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "3"], ["Ball on player fill", "--ball-body", "--team-player", "3.21", "3.21", "3"], ["Rail on pitch", "--pf-rail", "--pitch-stripe-a", "3.67", "3.09", "3"], ["Rail on ground", "--pf-rail", "--pf-ground", "11.82", "1.15", "3"], ["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Aim arrow strong end on pitch", "--pf-accent", "--pitch-stripe-a", "3.59", "1.59", "3"]]
+    "rows": [["Markings on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Markings on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"], ["Entity ring on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Entity ring on player fill", "--pf-line", "--team-player", "3.09", "3.09", "3"], ["Entity ring on opponent fill", "--pf-line", "--team-opponent", "10.80", "10.80", "3"], ["Player fill against opponent fill", "--team-player", "--team-opponent", "3.49", "3.49", "3"], ["Glyph on player", "--glyph-on-player", "--team-player", "5.24", "5.24", "4.5"], ["Glyph on opponent", "--glyph-on-opponent", "--team-opponent", "10.80", "10.80", "4.5"], ["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "3"], ["Ball on player fill", "--ball-body", "--team-player", "3.21", "3.21", "3"], ["Rail boundary on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"], ["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ["Aim arrow strong end on pitch", "--pf-accent", "--pitch-stripe-a", "3.59", "1.59", "3"]]
   }],
   "6. Identity separation, in relative luminance": [{
     "headers": ["Token", "Relative luminance"],
@@ -42,7 +42,7 @@
   }],
   "8. Cells the threshold does not govern": [{
     "headers": ["Pair", "Variant", "Measured", "Stays below", "Carried by"],
-    "rows": [["Rail on ground", "Daylight", "1.15", "3", "Rail on pitch, both variants"], ["Aim arrow strong end on pitch", "Daylight", "1.59", "3", "The arrow outline, both variants"]]
+    "rows": [["Aim arrow strong end on pitch", "Daylight", "1.59", "3", "The arrow outline, both variants"]]
   }],
   "9. Responsive layout": [
     {

@@ -22,7 +22,7 @@ import {
 } from '../../src/render/pitch';
 import type { PitchCacheCell } from '../../src/render/pitch';
 import { attachSurface } from '../../src/render/surface';
-import { PLAY_SURFACE } from '../../src/render/tokens';
+import { BORDER, PLAY_SURFACE } from '../../src/render/tokens';
 import type { PitchPalette } from '../../src/render/tokens';
 import { asCanvas, CanvasRecorder, fakeCanvas } from './support/canvas-recorder';
 
@@ -41,12 +41,26 @@ import { asCanvas, CanvasRecorder, fakeCanvas } from './support/canvas-recorder'
 
 const VARIANTS = ['floodlit', 'daylight'] as const;
 
+/**
+ * The backing scales this file draws the walls at: the 430 CSS pixel portrait
+ * viewport at ratio 1 the 2026-09-08 audit measured the rail failing at, the
+ * 1080p laptop QUALITY-BAR section 2 names, two intermediate scales SPEC
+ * section 18's record measures, and a double-density desktop.
+ *
+ * THE PLACEMENT IS ASSERTED AT ALL OF THEM AND THE WHOLE-PIXEL FLOOR AT NONE:
+ * three design units cover a whole device pixel from a backing scale of one
+ * third upward, and what this file grades is where the band falls, which is
+ * the same claim wherever it falls. The rendered floor either side of that
+ * scale is `tests/browser/rail-boundary.spec.ts`, on real pixels.
+ */
+const BACKING_SCALES = [0.336, 1, 1.05, 1.5, 2, 2.1] as const;
+
 /** Run every static pass, in render order, into one recorder. */
 function drawStatic(recorder: CanvasRecorder, palette: PitchPalette): void {
   drawStripes(recorder.context, palette);
   drawVignette(recorder.context, palette);
   drawCentreMarkings(recorder.context, palette);
-  drawWalls(recorder.context, palette);
+  drawWalls(recorder.context, palette, 1);
   drawGoalFrames(recorder.context, palette);
 }
 
@@ -102,7 +116,7 @@ describe('PF-11 the pitch, pass by pass', () => {
 
   it('tiles the enclosure with six wall pieces and cuts out the openings', () => {
     const recorder = new CanvasRecorder();
-    drawWalls(recorder.context, PLAY_SURFACE.floodlit);
+    drawWalls(recorder.context, PLAY_SURFACE.floodlit, 1);
     const rects = rectArgs(recorder);
     expect(rects).toHaveLength(6);
     // The two end walls span the enclosure including its corners.
@@ -123,12 +137,278 @@ describe('PF-11 the pitch, pass by pass', () => {
       expect(bottom <= 265 || bottom >= 455).toBe(true);
       expect(top <= 265 || top >= 455).toBe(true);
     }
-    // The raised rail's boundary: one light hairline stroke along the
-    // pitch-facing edges, drawn once.
+    // The raised rail's boundary: one light stroke along the pitch-facing
+    // edges, drawn once, at SPEC section 18's three design units.
     expect(recorder.calls('stroke')).toHaveLength(1);
     expect(recorder.values('strokeStyle')).toEqual([PLAY_SURFACE.floodlit.line]);
-    expect(recorder.values('lineWidth')).toEqual([1]);
     expect(recorder.calls('moveTo')).toHaveLength(6);
+    // THE WEIGHT, AS THE TOKEN AND AS THE NUMBER. The token alone would let a
+    // scale edit re-thin the boundary in silence, and the number alone would
+    // let it stop resolving through the scale at all; the section states
+    // three, so both readings are asserted and the predicate that asserts them
+    // is shown refusing the hairline this replaced.
+    const isTheBoundaryWeight = (value: unknown): boolean =>
+      value === BORDER.thick && value === 3;
+    expect(recorder.values('lineWidth').map(isTheBoundaryWeight)).toEqual([true]);
+    expect(isTheBoundaryWeight(BORDER.hair)).toBe(false);
+    expect(isTheBoundaryWeight(BORDER.thin)).toBe(false);
+    // And it is set BEFORE the stroke it governs, which is the only order in
+    // which a width is a width and not a leftover.
+    expect(recorder.indexOf('set', 'lineWidth')).toBeLessThan(
+      recorder.indexOf('call', 'stroke'),
+    );
+  });
+
+  it('lays the boundary on the rail side of every edge, on whole device pixels', () => {
+    // SPEC section 18 states the weight in design units and the 3:1 floor in
+    // RENDERED pixels, which is a claim about where the band FALLS as much as
+    // about how wide it is: a band that straddles a pixel boundary covers two
+    // pixels by part each, and a partly covered pixel is a blend of the
+    // boundary and whatever is under it rather than the boundary's own colour.
+    // The 2026-09-08 audit measured exactly that, 2.59:1 against the daylight
+    // stripe B where the table asks for 3.
+    //
+    // The edges are named with the field bound they belong to, the axis the
+    // transform measures it on, and which way the rail lies from it IN DEVICE
+    // PIXELS: the transform flips y, so the rail above the pitch is at a
+    // smaller device row and the rail below it at a larger one. Everything
+    // below is arithmetic on the RECORDED path coordinates and on SPEC section
+    // 3's bounds; nothing is read back from the module that drew them.
+    const edges = [
+      { name: 'top', bound: FIELD_TOP, axis: 'down' as const, outward: -1 },
+      { name: 'bottom', bound: FIELD_BOTTOM, axis: 'down' as const, outward: 1 },
+      { name: 'left', bound: FIELD_LEFT, axis: 'across' as const, outward: -1 },
+      { name: 'right', bound: FIELD_RIGHT, axis: 'across' as const, outward: 1 },
+    ];
+    const device = (axis: 'down' | 'across', value: number, scale: number): number =>
+      axis === 'across' ? value * scale : (LOGICAL_HEIGHT - value) * scale;
+    /** Whether some whole device pixel lies inside a span, ends included. */
+    const coversAWholePixel = (from: number, to: number): boolean =>
+      Math.ceil(from - 1e-9) + 1 <= to + 1e-9;
+
+    /**
+     * Everything that can be wrong with a recorded wall path, as a list of
+     * named faults instead of as assertions.
+     *
+     * IT IS A LIST SO THAT THE CHECK CAN BE SHOWN A DRAWING IT MUST REFUSE. An
+     * assertion that throws can only ever be run against the drawing that is
+     * expected to pass it; a function that ANSWERS can be handed the placement
+     * this one replaced and asked what it makes of it, which is what the
+     * controls at the foot of this test do.
+     */
+    const faultsIn = (
+      moves: ReadonlyArray<readonly number[]>,
+      lines: ReadonlyArray<readonly number[]>,
+      scale: number,
+    ): string[] => {
+      const found: string[] = [];
+      if (moves.length !== 6 || lines.length !== 6) {
+        return [`six runs expected, ${String(moves.length)} and ${String(lines.length)} drawn`];
+      }
+      // Two horizontal runs, then two pieces of each side wall: the cross-axis
+      // coordinate of each is the band's centre line, and a run that had
+      // become a diagonal would not have one.
+      const centres = moves.map((move, at) => {
+        const line = lines[at] ?? [];
+        const slot = at < 2 ? 1 : 0;
+        if (move[slot] !== line[slot]) {
+          found.push(`run ${String(at)}: a diagonal, not a run along the edge`);
+        }
+        return move[slot] ?? Number.NaN;
+      });
+      // Each side wall is drawn in two pieces, and both pieces of one wall
+      // stand on the same line: a boundary that snapped them apart would be
+      // two boundaries.
+      if (centres[3] !== centres[2]) {
+        found.push('left: the two pieces stand on different lines');
+      }
+      if (centres[5] !== centres[4]) {
+        found.push('right: the two pieces stand on different lines');
+      }
+      const byEdge = [centres[0], centres[1], centres[2], centres[4]];
+      edges.forEach((edge, at) => {
+        const centre = byEdge[at] ?? Number.NaN;
+        if (!Number.isFinite(centre)) {
+          found.push(`${edge.name}: no centre line`);
+          return;
+        }
+        // THE BAND, IN DEVICE PIXELS: its centre line carries half the weight
+        // either side, and the half facing the pitch is the one the stripe is
+        // measured against.
+        const middle = device(edge.axis, centre, scale);
+        const spread = (3 * scale) / 2;
+        const from = middle - spread;
+        const to = middle + spread;
+        const inner = edge.outward < 0 ? to : from;
+        const outer = edge.outward < 0 ? from : to;
+        const bound = device(edge.axis, edge.bound, scale);
+        // SNAPPED: the pitch-facing side of the band lands on a whole device
+        // pixel, so the band cannot straddle one.
+        if (Math.abs(inner - Math.round(inner)) > 1e-9) {
+          found.push(`${edge.name}: not snapped`);
+        }
+        // AND IT IS STILL THIS EDGE: the snap moves the band by less than half
+        // a device pixel, so the boundary is against the field bound it is
+        // named for, on the rail's side of it to within that half pixel, and
+        // not a rounding away from somewhere else.
+        if (Math.abs(inner - bound) > 0.5 + 1e-9) {
+          found.push(`${edge.name}: not against the bound`);
+        }
+        // ON THE RAIL'S SIDE: the far side of the band lies outside the field
+        // and inside the twelve design units of wall this pass has already
+        // filled, so the band is on the rail and never over the chrome ground.
+        const past = edge.outward * (outer - bound);
+        if (past < -1e-9 || past > 12 * scale + 1e-9) {
+          found.push(`${edge.name}: not on the rail side`);
+        }
+        // AND IT RESOLVES: some whole device pixel lies inside the band, which
+        // is the pixel the section's floor is measured on. Every scale this
+        // test draws at is at or above the one third where three design units
+        // first cover one.
+        if (!coversAWholePixel(Math.min(from, to), Math.max(from, to))) {
+          found.push(`${edge.name}: no whole device pixel of band`);
+        }
+      });
+      // The goal openings stay cut out of the side walls: every vertical piece
+      // is wholly below the opening or wholly above it.
+      for (const at of [2, 3, 4, 5]) {
+        const move = moves[at] ?? [];
+        const line = lines[at] ?? [];
+        const low = Math.min(move[1] ?? Number.NaN, line[1] ?? Number.NaN);
+        const high = Math.max(move[1] ?? Number.NaN, line[1] ?? Number.NaN);
+        if (!(low <= 265 || low >= 455) || !(high <= 265 || high >= 455)) {
+          found.push(`piece ${String(at)}: crosses the goal opening`);
+        }
+      }
+      return found;
+    };
+
+    for (const scale of BACKING_SCALES) {
+      const recorder = new CanvasRecorder();
+      drawWalls(recorder.context, PLAY_SURFACE.floodlit, scale);
+      const moves = recorder.calls('moveTo').map((op) => op.args as readonly number[]);
+      const lines = recorder.calls('lineTo').map((op) => op.args as readonly number[]);
+      expect(faultsIn(moves, lines, scale), `at ${String(scale)}`).toEqual([]);
+    }
+
+    // THE CONTROLS ARE DRAWINGS, not arithmetic on the check. Each one is the
+    // wall path some other placement rule would have recorded, laid out in the
+    // same six runs, and the check is asked what it makes of it. Three of them
+    // are the mutations the harness makes at this module - `the rail boundary
+    // is laid on whole device pixels, not across two`, `the rail boundary lies
+    // on the rail side of the edge it is measured at` and `the rail boundary
+    // carries the weight the section states` - and the fourth is the rounding
+    // mistake nobody has made yet.
+    const centreFor = (
+      edge: { bound: number; axis: 'down' | 'across'; outward: number },
+      scale: number,
+      inner: number,
+    ): number => {
+      const middle = inner + edge.outward * ((3 * scale) / 2);
+      return edge.axis === 'across' ? middle / scale : LOGICAL_HEIGHT - middle / scale;
+    };
+    /** The six runs `drawWalls` records, from one centre line per edge. */
+    const pathFrom = (
+      centres: readonly number[],
+    ): { moves: number[][]; lines: number[][] } => {
+      const [top = 0, bottom = 0, left = 0, right = 0] = centres;
+      return {
+        moves: [
+          [FIELD_LEFT - 12, top],
+          [FIELD_LEFT - 12, bottom],
+          [left, FIELD_BOTTOM - 12],
+          [left, 455],
+          [right, FIELD_BOTTOM - 12],
+          [right, 455],
+        ],
+        lines: [
+          [FIELD_RIGHT + 12, top],
+          [FIELD_RIGHT + 12, bottom],
+          [left, 265],
+          [left, FIELD_TOP + 12],
+          [right, 265],
+          [right, FIELD_TOP + 12],
+        ],
+      };
+    };
+    interface Control {
+      readonly why: string;
+      readonly scale: number;
+      readonly inner: (bound: number, outward: number, scale: number) => number;
+      readonly fault: string;
+    }
+    const controls: readonly Control[] = [
+      {
+        why: 'centred on the field edge and snapped to nothing, the placement this replaced',
+        scale: 0.336,
+        inner: (bound: number, outward: number, scale: number): number =>
+          bound - outward * ((3 * scale) / 2),
+        fault: 'top: not snapped',
+      },
+      {
+        why: 'snapped by flooring, which can move the band more than half a device pixel',
+        scale: 0.336,
+        inner: (bound: number): number => Math.floor(bound),
+        fault: 'top: not against the bound',
+      },
+      {
+        why: 'laid on the pitch side of the edge, over the stripe it is measured against',
+        scale: 1,
+        inner: (bound: number, outward: number, scale: number): number =>
+          Math.round(bound) - outward * 3 * scale,
+        fault: 'top: not against the bound',
+      },
+      {
+        why: 'laid past the wall band, on the chrome ground rather than on the rail',
+        scale: 1,
+        inner: (bound: number, outward: number, scale: number): number =>
+          Math.round(bound) + outward * 13 * scale,
+        fault: 'top: not on the rail side',
+      },
+    ];
+    for (const control of controls) {
+      const centres = edges.map((edge) =>
+        centreFor(
+          edge,
+          control.scale,
+          control.inner(device(edge.axis, edge.bound, control.scale), edge.outward, control.scale),
+        ),
+      );
+      const drawn = pathFrom(centres);
+      expect(faultsIn(drawn.moves, drawn.lines, control.scale), control.why).toContain(
+        control.fault,
+      );
+    }
+    // And the check can say yes to a drawing it did not produce, so it is not
+    // one that only ever refuses: the placement the module takes, rebuilt here
+    // from the rule rather than recorded, passes it.
+    const kept = pathFrom(
+      edges.map((edge) =>
+        centreFor(edge, 0.336, Math.round(device(edge.axis, edge.bound, 0.336))),
+      ),
+    );
+    expect(faultsIn(kept.moves, kept.lines, 0.336)).toEqual([]);
+  });
+
+  it('draws a finite boundary for a scale that is not a positive number', () => {
+    // The snap divides by the scale, so a scale that is not a positive finite
+    // number has nothing to snap to, and two callers can hand one in:
+    // `attachSurface` leaves the scale at zero until the first fit, and the
+    // composition root's frame guard refuses a scale at or below zero, which
+    // lets every other unusable number through because a comparison with NaN is
+    // false. What this protects is that the drawing stays a drawing either way:
+    // twenty-four finite coordinates, the band where no snap would put it.
+    for (const scale of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const recorder = new CanvasRecorder();
+      drawWalls(recorder.context, PLAY_SURFACE.floodlit, scale);
+      const coordinates = [...recorder.calls('moveTo'), ...recorder.calls('lineTo')].flatMap(
+        (op) => op.args as readonly number[],
+      );
+      expect(coordinates, String(scale)).toHaveLength(24);
+      for (const value of coordinates) {
+        expect(Number.isFinite(value), `${String(scale)}: ${String(value)}`).toBe(true);
+      }
+    }
   });
 
   it('tints each goal frame to the side that defends it, outlined', () => {
