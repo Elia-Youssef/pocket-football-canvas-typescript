@@ -5,12 +5,21 @@ import { LADDER_TOTAL } from '../../src/core/modes';
 import {
   A_WHOLE_TEST,
   SETTLE,
+  chooseMode,
+  nextFrames,
+  openGame,
   pauseClock,
   playUntil,
   scores,
   startMatch,
   turnText,
 } from './support/game';
+
+declare global {
+  interface Window {
+    __pfOpponentGlyphs?: string[];
+  }
+}
 
 /**
  * Item J3, method T, evidence `playwright/ladder`:
@@ -90,6 +99,33 @@ test.describe('PF-9 the ladder, item J3', () => {
     // carries the target and the score line rather than a clock.
     await expect(at(page, 'target-line')).toHaveText('FIRST TO 3');
     await expect(at(page, 'clock')).toBeHidden();
+  });
+
+  test('carries the selected opponent initial into the canvas glyph', async ({ page }) => {
+    await page.addInitScript(() => {
+      const glyphs: string[] = [];
+      window.__pfOpponentGlyphs = glyphs;
+      const original = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (
+        this: CanvasRenderingContext2D,
+        text: string,
+        x: number,
+        y: number,
+        maxWidth?: number,
+      ): void {
+        glyphs.push(text);
+        original.call(this, text, x, y, maxWidth);
+      };
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openGame(page);
+    await chooseMode(page, { mode: 'ladder' });
+    await page.evaluate(() => {
+      window.__pfOpponentGlyphs?.splice(0);
+    });
+    await at(page, 'mode-start').click();
+    await nextFrames(page);
+    await expect.poll(() => page.evaluate(() => window.__pfOpponentGlyphs ?? [])).toContain('S');
   });
 
   test('advances on a win, restarts on a loss, and carries the rung', { tag: '@drive' }, async ({ page }) => {

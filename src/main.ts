@@ -48,8 +48,8 @@ import { choiceOf, createDataStore, recordResult, settingsAfter } from './core/s
 import type { DataStore, KeyValueStore, ThemeSetting } from './core/storage';
 import { createEffects } from './render/effects';
 import type { Effects } from './render/effects';
-import { kickoffFacing } from './render/entities';
-import type { Facing } from './render/entities';
+import { glyphsForOpponent, kickoffFacing } from './render/entities';
+import type { Facing, Glyphs } from './render/entities';
 import { attachAimInput } from './render/input';
 import {
   createSurface,
@@ -200,6 +200,8 @@ export function boot(): void {
 /** Everything the play surface has to ask the root, and nothing it decides. */
 interface PlayContext {
   readonly match: Match;
+  /** SPEC section 4's canvas glyphs, as the configured mode currently names them. */
+  readonly glyphs: () => Glyphs;
   /** The state the aim models answer to, which Hotseat translates. */
   readonly inputState: () => MatchState;
   /** The world an aim is taken in: Hotseat swaps the acting circle per turn. */
@@ -236,12 +238,13 @@ function frameOptionsFor(
   preview: AimPreview | null,
 ): FrameOptions {
   const options: {
+    glyphs: Glyphs;
     facing?: Facing;
     aim?: AimPreview;
     guide?: AimGuide;
     launcher?: Body;
     effects?: Effects;
-  } = {};
+  } = { glyphs: context.glyphs() };
   const running = context.effects();
   if (running !== undefined) {
     options.effects = running;
@@ -614,6 +617,7 @@ function mount(host: HTMLElement): void {
 
   const play = mountPlaySurface(host, {
     match,
+    glyphs: () => glyphsForOpponent(setup.opponentName),
     inputState,
     aimWorld,
     guideShowing: () => guideShown(guideEnabled, firstEverMatch, turnsTaken),
