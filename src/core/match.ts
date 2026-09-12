@@ -47,13 +47,11 @@
  * exactly the ones SPEC section 7 draws. The one way out of PAUSED besides
  * resuming is the chart's quit to MENU.
  *
- * THE CLOCK CHARGES WHAT THE CALLER SAYS ELAPSED. SPEC section 6.2: time
- * discarded by the delta clamp is lost from the simulation and from nothing
- * else, so the clock reads the raw delta with no ceiling of its own. A delta
- * that is negative or not finite is no time at all, the same reading the
- * simulation takes. The remaining seconds are stored exact; the MM:SS ceiling
- * display is PF-13's. A match built with no duration has no clock and never
- * times out (SPEC section 9's First-to-N and Hotseat).
+ * THE CLOCK CHARGES THE DELTA THE GAME ACCEPTS. SPEC section 6.2: an invalid
+ * value and a resume gap consume no time, while a visible hitch is limited by
+ * the same ceiling the simulation uses. The remaining seconds are stored
+ * exact; the MM:SS ceiling display is PF-13's. A match built with no duration
+ * has no clock and never times out (SPEC section 9's First-to-N and Hotseat).
  *
  * WITHIN AN UPDATE the world moves first and time is charged after, so a goal
  * scored in the last step of the match counts before the whistle moves the
@@ -73,7 +71,7 @@
 
 import type { World } from './bodies';
 import { createWorld, everyBodyStopped, launch } from './bodies';
-import { OPPONENT_PRELAUNCH_DELAY, launchSpeed } from './config';
+import { OPPONENT_PRELAUNCH_DELAY, acceptedFrameDelta, launchSpeed } from './config';
 import type { Goal, Scoring, ScoringOptions, ScoringReadout, Side } from './goals';
 import { createScoring } from './goals';
 import type { NonFinitePolicy, SimulationOptions } from './physics';
@@ -223,16 +221,6 @@ function configurationOf(source: MatchConfiguration): MatchConfiguration {
 }
 
 /**
- * The delta as time to charge. A delta that is negative or not finite is no
- * time at all, the same reading the simulation takes; the ceiling clamp is
- * deliberately absent, because time the clamp discards is lost from the
- * simulation and from nothing else (SPEC section 6.2).
- */
-function elapsedOf(delta: number): number {
-  return Number.isFinite(delta) && delta > 0 ? delta : 0;
-}
-
-/**
  * The clock reading this part is bound to: the four states it ticks in.
  * PAUSED, MENU and GAME_OVER freeze it, and KICKOFF never holds it.
  */
@@ -301,6 +289,7 @@ export function createMatch(options: MatchOptions = {}): Match {
       enterTurn(entry.side);
       return;
     }
+    const elapsed = acceptedFrameDelta(dt);
 
     // The world moves first, and the goal test runs inside the step, so every
     // reading below is of the world as this update left it.
@@ -351,7 +340,7 @@ export function createMatch(options: MatchOptions = {}): Match {
     // deltas this turn is driven with. Frame-rate independent by construction,
     // and nothing to tear down: the flag is the whole seam.
     if (entry.kind === 'OPPONENT_TURN' && state.kind === 'OPPONENT_TURN') {
-      opponentDelay += elapsedOf(dt);
+      opponentDelay += elapsed;
       if (!opponentReady && opponentDelay >= OPPONENT_PRELAUNCH_DELAY) {
         opponentReady = true;
       }
@@ -361,7 +350,7 @@ export function createMatch(options: MatchOptions = {}): Match {
     // and reaching zero moves any of them to GAME_OVER, mid-flight or
     // mid-celebration alike.
     if (isTicking(entry.kind) && remaining !== undefined) {
-      remaining = Math.max(0, remaining - elapsedOf(dt));
+      remaining = Math.max(0, remaining - elapsed);
       if (remaining === 0) {
         opponentReady = false;
         state = { kind: 'GAME_OVER' };

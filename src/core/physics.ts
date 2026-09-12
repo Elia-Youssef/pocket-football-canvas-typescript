@@ -52,6 +52,7 @@ import {
   STOP_SPEED,
   TIME_EPSILON,
   WALL_RESTITUTION,
+  acceptedFrameDelta,
 } from './config';
 import type { Scoring } from './goals';
 import { ballFitsOpening, createScoring } from './goals';
@@ -442,12 +443,12 @@ export function createSimulation(options: SimulationOptions = {}): Simulation {
         leftover = 0;
         resumed = true;
         resumes += 1;
-      } else if (delta > DELTA_CEILING) {
-        applied = DELTA_CEILING;
-        clamped = true;
-        clamps += 1;
       } else {
-        applied = delta;
+        applied = acceptedFrameDelta(delta);
+        if (delta > DELTA_CEILING) {
+          clamped = true;
+          clamps += 1;
+        }
       }
 
       let pending = applied;

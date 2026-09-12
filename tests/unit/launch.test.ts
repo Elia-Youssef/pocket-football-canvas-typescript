@@ -215,12 +215,14 @@ describe('PF-5 the input lock, item C8 in the states a browser cannot reach', ()
   });
 
   it('launches nothing at game over', () => {
-    // A one-second match, run past its whistle. This is the only route to
-    // GAME_OVER the shipped composition does not have yet, which is why the
-    // clause is graded here.
+    // A one-second match, run through four accepted ceiling frames. This is
+    // the only route to GAME_OVER the shipped composition does not have yet,
+    // which is why the clause is graded here.
     const match = createMatch({ duration: 1 });
     match.dispatch({ kind: 'start' });
-    match.update(2);
+    for (let frame = 0; frame < 4; frame += 1) {
+      match.update(0.25);
+    }
     expect(match.readout().state.kind).toBe('GAME_OVER');
     expect(aimingAllowed(match.readout().state, match.world)).toBe(false);
 

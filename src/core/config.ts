@@ -126,6 +126,19 @@ export const CATCH_UP_SLICE = 1 / 60;
  */
 export const RESUME_GAP = 5;
 
+/**
+ * The amount of a caller's frame delta the game is allowed to consume. Invalid
+ * values and resume gaps consume nothing; an ordinary hitch is bounded by the
+ * simulation ceiling. Physics separately drops its accumulator on a resume
+ * gap, but clocks and state timers need this same accepted elapsed time.
+ */
+export function acceptedFrameDelta(delta: number): number {
+  if (!Number.isFinite(delta) || delta <= 0 || delta > RESUME_GAP) {
+    return 0;
+  }
+  return Math.min(delta, DELTA_CEILING);
+}
+
 /** SPEC section 6.1: carried here for PF-8, which owns the opponent. */
 export const OPPONENT_PRELAUNCH_DELAY = 0.45;
 
