@@ -25,6 +25,7 @@
 import type { MatchReadout } from '../../core/match';
 import type { LadderStep } from '../../core/modes';
 import { formatNumber } from './clock';
+import { createButton, setRefused, setTextIfChanged } from './control';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
 
@@ -87,16 +88,13 @@ export function createGameOverPanel(options: GameOverPanelOptions): GameOverPane
     label: string,
     handler: (() => void) | undefined,
   ): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'pf-choice-button';
-    button.dataset['pf'] = marker;
-    button.textContent = label;
-    button.addEventListener('click', () => {
-      if (button.getAttribute('aria-disabled') === 'true') {
-        return;
-      }
-      handler?.();
+    const button = createButton({
+      marker,
+      label,
+      className: 'pf-choice-button',
+      onActivate: () => {
+        handler?.();
+      },
     });
     panel.addControl(button);
     return button;
@@ -108,7 +106,7 @@ export function createGameOverPanel(options: GameOverPanelOptions): GameOverPane
   const restartLadder = action('restart-ladder', 'Restart ladder', options.onRestartLadder);
 
   function refuse(button: HTMLButtonElement, live: boolean): void {
-    button.setAttribute('aria-disabled', live ? 'false' : 'true');
+    setRefused(button, !live);
   }
 
   refuse(playAgain, true);
@@ -121,14 +119,14 @@ export function createGameOverPanel(options: GameOverPanelOptions): GameOverPane
 
     update(readout: MatchReadout, context?: GameOverContext): void {
       const name = context?.opponentName ?? fallbackName;
-      result.textContent = resultText(
-        readout.scoring.player,
-        readout.scoring.opponent,
-        name,
+      setTextIfChanged(
+        result,
+        resultText(readout.scoring.player, readout.scoring.opponent, name),
       );
-      scoreLine.textContent = `${formatNumber(readout.scoring.player)} : ${formatNumber(
-        readout.scoring.opponent,
-      )}`;
+      setTextIfChanged(
+        scoreLine,
+        `${formatNumber(readout.scoring.player)} : ${formatNumber(readout.scoring.opponent)}`,
+      );
       const step: LadderStep | undefined = context?.ladderStep;
       const complete = context?.ladderComplete === true;
       refuse(changeMode, options.onChangeMode !== undefined);

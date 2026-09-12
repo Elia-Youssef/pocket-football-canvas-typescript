@@ -25,6 +25,12 @@
 
 import type { MatchReadout, MatchState } from '../../core/match';
 import { formatClock, formatNumber } from './clock';
+import {
+  createButton,
+  setHiddenIfChanged,
+  setRefused,
+  setTextIfChanged,
+} from './control';
 
 export interface HudOptions {
   /** Called when the pause control is activated while it can be honoured. */
@@ -135,17 +141,12 @@ export function createHud(options: HudOptions): Hud {
   const turn = span('turn', 'pf-turn');
   const ladder = span('ladder', 'pf-ladder');
 
-  const pause = document.createElement('button');
-  pause.type = 'button';
-  pause.className = 'pf-pause';
-  pause.dataset['pf'] = 'pause';
-  pause.textContent = 'Pause';
-  pause.setAttribute('aria-disabled', 'true');
-  pause.addEventListener('click', () => {
-    if (pause.getAttribute('aria-disabled') === 'true') {
-      return;
-    }
-    options.onPause();
+  const pause = createButton({
+    marker: 'pause',
+    label: 'Pause',
+    className: 'pf-pause',
+    refused: true,
+    onActivate: options.onPause,
   });
 
   centre.append(clock, targetLine, centreScore, turn);
@@ -153,27 +154,28 @@ export function createHud(options: HudOptions): Hud {
 
   function updateCentre(readout: MatchReadout): void {
     if (readout.clock !== undefined) {
-      clock.textContent = formatClock(readout.clock);
-      clock.hidden = false;
-      targetLine.hidden = true;
-      centreScore.hidden = true;
+      setTextIfChanged(clock, formatClock(readout.clock));
+      setHiddenIfChanged(clock, false);
+      setHiddenIfChanged(targetLine, true);
+      setHiddenIfChanged(centreScore, true);
       return;
     }
-    clock.hidden = true;
+    setHiddenIfChanged(clock, true);
     // The target rides the readout, which is what lets a mode change reach the
     // centre slot by the one route every other match fact takes; the
     // construction option is the fallback for a composition that has no modes.
     const target = readout.target ?? options.target;
     if (target !== undefined) {
-      targetLine.textContent = `FIRST TO ${formatNumber(target)}`;
-      targetLine.hidden = false;
+      setTextIfChanged(targetLine, `FIRST TO ${formatNumber(target)}`);
+      setHiddenIfChanged(targetLine, false);
     } else {
-      targetLine.hidden = true;
+      setHiddenIfChanged(targetLine, true);
     }
-    centreScore.textContent = `${formatNumber(readout.scoring.player)} : ${formatNumber(
-      readout.scoring.opponent,
-    )}`;
-    centreScore.hidden = false;
+    setTextIfChanged(
+      centreScore,
+      `${formatNumber(readout.scoring.player)} : ${formatNumber(readout.scoring.opponent)}`,
+    );
+    setHiddenIfChanged(centreScore, false);
   }
 
   return {
@@ -181,20 +183,23 @@ export function createHud(options: HudOptions): Hud {
     pause,
 
     update(readout: MatchReadout): void {
-      playerScore.textContent = formatNumber(readout.scoring.player);
-      opponentScore.textContent = formatNumber(readout.scoring.opponent);
+      setTextIfChanged(playerScore, formatNumber(readout.scoring.player));
+      setTextIfChanged(opponentScore, formatNumber(readout.scoring.opponent));
       updateCentre(readout);
-      turn.textContent = turnIndicatorText(readout.state, opponentName, playerName);
+      setTextIfChanged(turn, turnIndicatorText(readout.state, opponentName, playerName));
       const pausable = PAUSABLE.includes(readout.state.kind);
-      pause.setAttribute('aria-disabled', pausable ? 'false' : 'true');
+      setRefused(pause, !pausable);
     },
 
     showLadder(name: string, position: number, total: number): void {
-      ladder.textContent = `${name} - RUNG ${formatNumber(position)} OF ${formatNumber(total)}`;
+      setTextIfChanged(
+        ladder,
+        `${name} - RUNG ${formatNumber(position)} OF ${formatNumber(total)}`,
+      );
     },
 
     clearLadder(): void {
-      ladder.textContent = '';
+      setTextIfChanged(ladder, '');
     },
 
     setNames(opponent: string, player?: string): void {

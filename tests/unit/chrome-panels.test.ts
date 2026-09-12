@@ -9,6 +9,7 @@ import { createModePanel } from '../../src/ui/components/mode-panel';
 import type { Panel } from '../../src/ui/components/panel';
 import { createPausePanel } from '../../src/ui/components/pause-panel';
 import { createSettingsPanel } from '../../src/ui/components/settings-panel';
+import { controlByMarker } from '../../src/ui/layout';
 import {
   censusControls,
   findAllByTag,
@@ -314,7 +315,7 @@ describe('PF-13 the panels', () => {
       // Seven from PF-14: the three theme radios, then the four play-surface
       // sizes, which are a group of their own and raise their own callback.
       expect(inputs).toHaveLength(7);
-      expect(inputs.map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      expect(inputs.map((radio) => radio.parentElement?.textContent)).toEqual([
         'System',
         'Light',
         'Dark',
@@ -333,6 +334,30 @@ describe('PF-13 the panels', () => {
       expect(dark?.checked).toBe(true);
       dark?.dispatch('change');
       expect(changes).toEqual(['dark']);
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('keeps the settings invoker named when a control is inserted at the pause head', () => {
+    const installed = installFakeDocument();
+    try {
+      const panel = createPausePanel({
+        onResume: () => undefined,
+        onOpenSettings: () => undefined,
+        onOpenHowToPlay: () => undefined,
+        onQuit: () => undefined,
+        onEscape: () => undefined,
+      });
+      const root = panel.root as unknown as FakeElement;
+      const inserted = installed.document.createElement('button');
+      inserted.dataset['pf'] = 'pause-audio';
+      const fallback = installed.document.createElement('button');
+      const controls = [inserted as unknown as HTMLElement, ...panel.controls()];
+
+      expect(controlByMarker(controls, 'pause-settings', fallback as unknown as HTMLElement)).toBe(
+        findByMarker(root, 'pause-settings'),
+      );
     } finally {
       installed.restore();
     }

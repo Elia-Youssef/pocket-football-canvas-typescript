@@ -130,8 +130,11 @@ test.describe('PF-14 the play-surface size setting, item F6', () => {
     await expect(at(page, 'panel-settings')).toBeVisible(SETTLE);
     const group = page.locator('[data-pf="panel-settings"] input[name="pf-surface-scale"]');
     await expect(group).toHaveCount(4);
-    expect(await group.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label'))))
-      .toEqual(['100%', '125%', '150%', '200%']);
+    expect(
+      await group.evaluateAll((nodes) =>
+        nodes.map((node) => (node instanceof HTMLInputElement ? node.labels?.[0]?.textContent : null)),
+      ),
+    ).toEqual(['100%', '125%', '150%', '200%']);
     // A new player is at 100, which is the value the stored settings default to.
     await expect(at(page, 'surface-scale-100')).toBeChecked();
   });

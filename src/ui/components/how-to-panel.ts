@@ -7,6 +7,7 @@
  * DOM text, resizable and translatable later, never glyphs on the canvas.
  */
 
+import { createButton } from './control';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
 
@@ -26,11 +27,12 @@ export function createHowToPanel(options: HowToPanelOptions): Panel {
   panel.addText('Drag back from your circle to aim. Release to launch it at the ball.');
   panel.addText('Knock the ball past your opponent and fully over the goal line to score.');
 
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'pf-choice-button';
-  close.textContent = 'Close';
-  close.addEventListener('click', options.onClose);
+  const close = createButton({
+    marker: 'how-to-close',
+    label: 'Close',
+    className: 'pf-choice-button',
+    onActivate: options.onClose,
+  });
   panel.addControl(close);
 
   return panel;

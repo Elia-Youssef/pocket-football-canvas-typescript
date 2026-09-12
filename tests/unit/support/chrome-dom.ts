@@ -29,6 +29,9 @@ export class FakeElement {
   readonly listeners = new Map<string, ((event: unknown) => void)[]>();
   readonly dataset: Record<string, string> = {};
   readonly ownerDocument: FakeDocument;
+  parentElement: FakeElement | null = null;
+  attributeWrites = 0;
+  textWrites = 0;
   hidden = false;
   checked = false;
   value = '';
@@ -49,6 +52,7 @@ export class FakeElement {
   }
 
   set textContent(value: string) {
+    this.textWrites += 1;
     this.children.length = 0;
     this.children.push(new FakeText(value));
   }
@@ -58,6 +62,7 @@ export class FakeElement {
   }
 
   setAttribute(name: string, value: string): void {
+    this.attributeWrites += 1;
     this.attributes.set(name, value);
   }
 
@@ -66,6 +71,9 @@ export class FakeElement {
   }
 
   appendChild<T extends FakeElement | FakeText>(node: T): T {
+    if (node instanceof FakeElement) {
+      node.parentElement = this;
+    }
     this.children.push(node);
     return node;
   }
@@ -83,6 +91,9 @@ export class FakeElement {
     const at = reference === null ? this.children.length : this.children.indexOf(reference);
     if (at < 0) {
       throw new Error('the reference node is not a child of this element');
+    }
+    if (node instanceof FakeElement) {
+      node.parentElement = this;
     }
     this.children.splice(at, 0, node);
     return node;
@@ -255,9 +266,26 @@ export function isFocusable(node: FakeElement, parent?: FakeElement): boolean {
  * three answers the empty string, which is a census entry a reader has to
  * account for rather than an absence they cannot see.
  */
+function visibleLabel(node: FakeElement): string | undefined {
+  let parent = node.parentElement;
+  while (parent !== null) {
+    if (parent.tagName === 'LABEL') {
+      return parent.textContent;
+    }
+    parent = parent.parentElement;
+  }
+  return undefined;
+}
+
 function accessibleName(node: FakeElement): string {
   if (node.tagName === 'BUTTON') {
     return node.textContent;
+  }
+  if (node.tagName === 'INPUT') {
+    // Chrome choices and ranges are real visible label rows. Treating an
+    // aria-label as equivalent here would let a sighted-invisible control pass
+    // the census this helper freezes.
+    return visibleLabel(node) ?? '';
   }
   return node.getAttribute('aria-label') ?? node.getAttribute('title') ?? node.textContent;
 }
@@ -269,14 +297,19 @@ function accessibleName(node: FakeElement): string {
  * make both.
  */
 export function censusControls(root: FakeElement): string[] {
-  const names: string[] = [];
+  return focusableControls(root).map(accessibleName);
+}
+
+/** The focusable elements behind a census, retained for marker assertions. */
+export function focusableControls(root: FakeElement): FakeElement[] {
+  const controls: FakeElement[] = [];
   function walk(node: FakeElement): void {
     for (const child of node.children) {
       if (child instanceof FakeText) {
         continue;
       }
       if (isFocusable(child, node)) {
-        names.push(accessibleName(child));
+        controls.push(child);
       }
       // A focusable wrapper is still walked into, because a control inside one
       // is reachable too: only the tags that may hold no interactive content
@@ -287,7 +320,7 @@ export function censusControls(root: FakeElement): string[] {
     }
   }
   walk(root);
-  return names;
+  return controls;
 }
 
 /** Every element in the tree with the tag, including `root` itself. */
@@ -322,4 +355,18 @@ export function findByMarker(root: FakeElement, marker: string): FakeElement | u
     }
   }
   return undefined;
+}
+
+/** The observable mutation kinds a chrome sync must leave at zero when static. */
+export function writeCounts(root: FakeElement): { attributes: number; text: number } {
+  let attributes = root.attributeWrites;
+  let text = root.textWrites;
+  for (const child of root.children) {
+    if (!(child instanceof FakeText)) {
+      const nested = writeCounts(child);
+      attributes += nested.attributes;
+      text += nested.text;
+    }
+  }
+  return { attributes, text };
 }

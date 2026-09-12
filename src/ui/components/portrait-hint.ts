@@ -1,3 +1,5 @@
+import { createButton } from './control';
+
 /**
  * SPEC section 2.1's portrait hint: a dismissible, non-blocking line that
  * suggests rotating for a larger pitch and never gates play.
@@ -52,14 +54,14 @@ export function createPortraitHint(options: PortraitHintOptions): PortraitHint {
   line.dataset['pf'] = 'hint-text';
   line.textContent = HINT_TEXT;
 
-  const dismiss = document.createElement('button');
-  dismiss.type = 'button';
-  dismiss.className = 'pf-hint-dismiss';
-  dismiss.dataset['pf'] = 'hint-dismiss';
-  dismiss.textContent = DISMISS_LABEL;
-  dismiss.addEventListener('click', () => {
-    root.hidden = true;
-    options.onDismiss();
+  const dismiss = createButton({
+    marker: 'hint-dismiss',
+    label: DISMISS_LABEL,
+    className: 'pf-hint-dismiss',
+    onActivate: () => {
+      root.hidden = true;
+      options.onDismiss();
+    },
   });
 
   root.append(line, dismiss);

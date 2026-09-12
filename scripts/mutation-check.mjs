@@ -2835,8 +2835,8 @@ export const EDITS = [
     item: 'M1',
     name: 'a refused pause is refused without needing a pointer',
     file: 'src/ui/components/hud.ts',
-    find: "    if (pause.getAttribute('aria-disabled') === 'true') {",
-    replace: "    if (pause.getAttribute('aria-disabled') === 'never') {",
+    find: '      setRefused(pause, !pausable);',
+    replace: '      setRefused(pause, false);',
     detectedBy: 'unit',
   },
   {
@@ -2851,8 +2851,12 @@ export const EDITS = [
     item: 'M1',
     name: 'the census freezes the named controls per screen',
     file: 'src/ui/components/pause-panel.ts',
-    find: "  panel.addControl(button('Resume', options.onResume));",
-    replace: "  panel.addControl(button('Continue', options.onResume));",
+    find: `      marker: 'pause-resume',
+      label: 'Resume',
+      className: 'pf-choice-button',`,
+    replace: `      marker: 'pause-resume',
+      label: 'Continue',
+      className: 'pf-choice-button',`,
     detectedBy: 'unit',
   },
   {
@@ -3635,8 +3639,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C11',
     name: 'the tracks are written back over a refused move, every frame',
     file: 'src/ui/components/aim-controls.ts',
-    find: `      angleSlider.value = String(shownDegrees);
-      powerSlider.value = String(shownPercent);
+    find: `      setValueIfChanged(angleSlider, String(shownDegrees));
+      setValueIfChanged(powerSlider, String(shownPercent));
       pump(elapsed);`,
     replace: '      pump(elapsed);',
     detectedBy: 'unit',
@@ -3748,16 +3752,16 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C11',
     name: 'the aim controls are refused outside the player own turn',
     file: 'src/ui/components/aim-controls.ts',
-    find: "        control.setAttribute('aria-disabled', allowed ? 'false' : 'true');",
-    replace: "        control.setAttribute('aria-disabled', 'false');",
+    find: '        setRefused(control, !allowed);',
+    replace: '        setRefused(control, false);',
     detectedBy: 'unit',
   },
   {
     item: 'C11',
     name: 'a refused control ignores its own event',
-    file: 'src/ui/components/aim-controls.ts',
-    find: "  return control.getAttribute('aria-disabled') === 'true';",
-    replace: "  return control.getAttribute('aria-disabled') === 'never';",
+    file: 'src/ui/components/control.ts',
+    find: '    if (refused(control)) {',
+    replace: '    if (false) {',
     detectedBy: 'unit',
   },
   {
@@ -3819,9 +3823,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
   {
     item: 'C11',
     name: 'the two sliders are real range inputs',
-    file: 'src/ui/components/aim-controls.ts',
-    find: "    control.type = 'range';",
-    replace: "    control.type = 'text';",
+    file: 'src/ui/components/control.ts',
+    find: "  input.type = 'range';",
+    replace: "  input.type = 'text';",
     detectedBy: 'unit',
   },
   {
@@ -4716,8 +4720,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'J5',
     name: 'a group the mode does not read is refused in place',
     file: 'src/ui/components/mode-panel.ts',
-    find: "        input.setAttribute('aria-disabled', applies ? 'false' : 'true');",
-    replace: "        input.setAttribute('aria-disabled', 'false');",
+    find: '        setRefused(input, !applies);',
+    replace: '        setRefused(input, false);',
     detectedBy: 'unit',
   },
   {
@@ -4827,8 +4831,12 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'J6',
     name: 'a refused game-over action ignores a press',
     file: 'src/ui/components/game-over-panel.ts',
-    find: "      if (button.getAttribute('aria-disabled') === 'true') {\n        return;\n      }",
-    replace: "      if (button.getAttribute('aria-disabled') === 'true' && false) {\n        return;\n      }",
+    find: `      onActivate: () => {
+        handler?.();
+      },`,
+    replace: `      onActivate: () => {
+        void handler;
+      },`,
     detectedBy: 'unit',
   },
   {
@@ -5160,11 +5168,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'I4',
     name: 'an unarmed confirmation refuses the click a platform still delivers',
     file: 'src/ui/components/settings-panel.ts',
-    find: `  confirmReset.addEventListener('click', () => {
-    if (refused(confirmReset)) {
-      return;
-    }`,
-    replace: "  confirmReset.addEventListener('click', () => {",
+    find: '    setRefused(confirmReset, !armed);',
+    replace: '    setRefused(confirmReset, false);',
     detectedBy: 'browser',
   },
   {
@@ -5179,8 +5184,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'I4',
     name: 'settings state where progress is stored',
     file: 'src/ui/components/settings-panel.ts',
-    find: '  notice.textContent = STORAGE_NOTICE;',
-    replace: "  notice.textContent = '';",
+    find: '  const notice = panel.addText(STORAGE_NOTICE);',
+    replace: "  const notice = panel.addText('');",
     detectedBy: 'browser',
   },
   {
@@ -5647,8 +5652,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F6',
     name: 'the size control is named by the percent it carries',
     file: 'src/ui/components/settings-panel.ts',
-    find: "    radio.setAttribute('aria-label', `${String(percent)}%`);",
-    replace: "    radio.setAttribute('aria-label', String(percent));",
+    find: '      label: `${String(percent)}%`,',
+    replace: '      label: String(percent),',
     detectedBy: 'unit',
   },
   {
@@ -5689,9 +5694,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F3',
     name: 'the hint is put away by its own control',
     file: 'src/ui/components/portrait-hint.ts',
-    find: `    root.hidden = true;
-    options.onDismiss();`,
-    replace: '    options.onDismiss();',
+    find: `      root.hidden = true;
+      options.onDismiss();`,
+    replace: '      options.onDismiss();',
     detectedBy: 'unit',
   },
   {
@@ -6649,11 +6654,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'M1',
     name: 'a focusable control of any shape reddens the chrome census',
     file: 'src/ui/components/settings-panel.ts',
-    find: `  const notice = document.createElement('p');
-  notice.className = 'pf-panel-text';`,
-    replace: `  const notice = document.createElement('p');
-  notice.setAttribute('tabindex', '0');
-  notice.className = 'pf-panel-text';`,
+    find: '  const notice = panel.addText(STORAGE_NOTICE);',
+    replace: `  const notice = panel.addText(STORAGE_NOTICE);
+  notice.setAttribute('tabindex', '0');`,
     detectedBy: 'unit',
   },
   {
@@ -6685,16 +6688,16 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'M1',
     name: 'the shared number format groups nothing',
     file: 'src/ui/components/clock.ts',
-    find: `  return formatter(locales ?? hostLocales(), {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-    useGrouping: false,
-  }).format(value);`,
-    replace: `  return formatter(locales ?? hostLocales(), {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-    useGrouping: true,
-  }).format(value);`,
+    find: `    number: new Intl.NumberFormat(resolved, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+      useGrouping: false,
+    }),`,
+    replace: `    number: new Intl.NumberFormat(resolved, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+      useGrouping: true,
+    }),`,
     detectedBy: 'unit',
   },
   {
@@ -6799,7 +6802,7 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'M1',
     name: 'a focusable media control reddens the chrome census',
     file: 'src/ui/components/settings-panel.ts',
-    find: "  const notice = document.createElement('p');",
+    find: '  const notice = panel.addText(STORAGE_NOTICE);',
     replace:
       "  const notice = document.createElement('audio');\n" +
       "  notice.setAttribute('controls', '');\n" +
@@ -6926,6 +6929,118 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: 'tests/unit/browser-spec-hygiene.test.ts',
     find: 'const INSTALL = /page\\.clock\\.install\\s*\\(/g;',
     replace: 'const INSTALL = /page\\.clock\\.installNothing\\s*\\(/g;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a refused control is decided by the shared predicate',
+    file: 'src/ui/components/control.ts',
+    find: "  return control.getAttribute('aria-disabled') === 'true';",
+    replace: '  return false;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a native choice keeps its visible label row',
+    file: 'src/ui/components/control.ts',
+    find: '  root.append(input, text);',
+    replace: '  root.append(input);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'C11',
+    name: 'a native range keeps its visible label row',
+    file: 'src/ui/components/control.ts',
+    find: '  root.append(text, input);',
+    replace: '  root.append(input);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'buttons retain their stable chrome marker',
+    file: 'src/ui/components/control.ts',
+    find: "  control.dataset['pf'] = options.marker;",
+    replace: "  control.dataset['pf'] = 'missing-marker';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'choices retain their stable chrome marker',
+    file: 'src/ui/components/control.ts',
+    find: `  input.className = 'pf-choice-input';
+  input.dataset['pf'] = options.marker;
+  if (options.value !== undefined) {`,
+    replace: `  input.className = 'pf-choice-input';
+  input.dataset['pf'] = 'missing-marker';
+  if (options.value !== undefined) {`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'ranges retain their stable chrome marker',
+    file: 'src/ui/components/control.ts',
+    find: `  input.className = 'pf-aim-slider';
+  input.dataset['pf'] = options.marker;
+  input.setAttribute('min', '0');`,
+    replace: `  input.className = 'pf-aim-slider';
+  input.dataset['pf'] = 'missing-marker';
+  input.setAttribute('min', '0');`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'the system font is a design-contract token',
+    file: 'src/ui/tokens.css',
+    find: '  --font-body: system-ui, sans-serif;',
+    replace: '  --font-body: serif;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'E1',
+    name: 'native choices take their accent from the palette token',
+    file: 'src/ui/components/chrome.css',
+    find: `  margin: 0;
+  accent-color: var(--pf-accent);
+  transition: outline-color var(--dur-2) var(--ease-out);`,
+    replace: `  margin: 0;
+  accent-color: auto;
+  transition: outline-color var(--dur-2) var(--ease-out);`,
+    detectedBy: 'browser',
+  },
+  {
+    item: 'C11',
+    name: 'a refused native choice paints a dashed outline',
+    file: 'src/ui/components/chrome.css',
+    find: '  outline: var(--border-hair) dashed var(--pf-text-muted);',
+    replace: '  outline: none;',
+    detectedBy: 'browser',
+  },
+  {
+    item: 'E1',
+    name: 'chrome motion resolves through the reduced-motion duration token',
+    file: 'src/ui/components/chrome.css',
+    find: '  transition: color var(--dur-2) var(--ease-out);',
+    replace: '  transition: color 140ms var(--ease-out);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'static chrome text avoids a second write',
+    file: 'src/ui/components/control.ts',
+    find: `  if (element.textContent !== value) {
+    element.textContent = value;
+  }`,
+    replace: `  if (element.textContent === value) {
+    element.textContent = value;
+  }`,
+    detectedBy: 'unit',
+  },
+  {
+    item: 'M1',
+    name: 'formatters are reused for an unchanged locale list',
+    file: 'src/ui/components/clock.ts',
+    find: '  if (cached?.locales === key) {',
+    replace: '  if (false) {',
     detectedBy: 'unit',
   },
 ];

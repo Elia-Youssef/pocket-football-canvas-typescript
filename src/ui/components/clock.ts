@@ -29,26 +29,41 @@ export function hostLocales(): readonly string[] {
   return [...(navigator.languages ?? [])];
 }
 
-/**
- * A number in the host locale. Built per call rather than cached: the chrome
- * formats on a readout sync, never per frame, and a cached formatter would
- * outlive a change of the host language list.
- */
-function formatter(
-  locales: readonly string[],
-  options: Intl.NumberFormatOptions,
-): Intl.NumberFormat {
-  return new Intl.NumberFormat([...locales, FALLBACK_LOCALE], options);
+interface Formatters {
+  readonly locales: string;
+  readonly number: Intl.NumberFormat;
+  readonly twoDigits: Intl.NumberFormat;
 }
 
-/** The clock's digits: two, fixed, never grouped. */
-function twoDigits(locales: readonly string[]): Intl.NumberFormat {
-  return formatter(locales, {
-    minimumIntegerDigits: 2,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-    useGrouping: false,
-  });
+let cached: Formatters | undefined;
+
+/**
+ * The chrome does sync once per frame, so formatter construction belongs on a
+ * locale edge rather than a readout edge. The cache key is the complete,
+ * ordered locale list, including the explicit fallback; changing
+ * `navigator.languages` therefore builds fresh formatters on the next read.
+ */
+function formatters(locales: readonly string[]): Formatters {
+  const resolved = [...locales, FALLBACK_LOCALE];
+  const key = JSON.stringify(resolved);
+  if (cached?.locales === key) {
+    return cached;
+  }
+  cached = {
+    locales: key,
+    number: new Intl.NumberFormat(resolved, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+      useGrouping: false,
+    }),
+    twoDigits: new Intl.NumberFormat(resolved, {
+      minimumIntegerDigits: 2,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+      useGrouping: false,
+    }),
+  };
+  return cached;
 }
 
 /** The displayed second count: the ceiling, and 00:00 only at exactly zero. */
@@ -64,15 +79,11 @@ export function formatClock(remaining: number, locales?: readonly string[]): str
   const seconds = ceilingSeconds(remaining);
   const minutes = Math.floor(seconds / 60);
   const within = seconds % 60;
-  const digits = twoDigits(locales ?? hostLocales());
+  const digits = formatters(locales ?? hostLocales()).twoDigits;
   return `${digits.format(minutes)}:${digits.format(within)}`;
 }
 
 /** A plain count in the host locale: scores and the ladder rung. */
 export function formatNumber(value: number, locales?: readonly string[]): string {
-  return formatter(locales ?? hostLocales(), {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-    useGrouping: false,
-  }).format(value);
+  return formatters(locales ?? hostLocales()).number.format(value);
 }

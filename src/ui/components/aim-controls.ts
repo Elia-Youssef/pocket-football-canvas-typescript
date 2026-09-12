@@ -50,6 +50,13 @@ import {
   normaliseDegrees,
 } from '../../core/aiming';
 import { formatNumber } from './clock';
+import {
+  createButton,
+  createRange,
+  setRefused,
+  setTextIfChanged,
+  setValueIfChanged,
+} from './control';
 
 /** The percent scale the power slider is expressed on. */
 const PERCENT = 100;
@@ -85,10 +92,6 @@ export interface AimControls {
   sync(elapsed: number, preview: AimPreview | null, allowed: boolean): void;
 }
 
-function refused(control: HTMLElement): boolean {
-  return control.getAttribute('aria-disabled') === 'true';
-}
-
 export function createAimControls(options: AimControlsOptions): AimControls {
   const root = document.createElement('div');
   root.className = 'pf-aim-controls';
@@ -112,17 +115,12 @@ export function createAimControls(options: AimControlsOptions): AimControls {
     className: string,
     onActivate: () => void,
   ): HTMLButtonElement {
-    const control = document.createElement('button');
-    control.type = 'button';
-    control.className = className;
-    control.dataset['pf'] = marker;
-    control.textContent = label;
-    control.setAttribute('aria-disabled', 'true');
-    control.addEventListener('click', () => {
-      if (refused(control)) {
-        return;
-      }
-      onActivate();
+    const control = createButton({
+      marker,
+      label,
+      className,
+      refused: true,
+      onActivate,
     });
     parent.appendChild(control);
     added.push(control);
@@ -137,25 +135,17 @@ export function createAimControls(options: AimControlsOptions): AimControls {
     step: number,
     onSlide: (value: number) => void,
   ): HTMLInputElement {
-    const control = document.createElement('input');
-    control.type = 'range';
-    control.className = 'pf-aim-slider';
-    control.dataset['pf'] = marker;
-    control.setAttribute('aria-label', label);
-    control.setAttribute('min', '0');
-    control.setAttribute('max', String(high));
-    control.setAttribute('step', String(step));
-    control.setAttribute('aria-disabled', 'true');
-    control.value = '0';
-    control.addEventListener('input', () => {
-      if (refused(control)) {
-        return;
-      }
-      onSlide(Number(control.value));
+    const control = createRange({
+      marker,
+      label,
+      high,
+      step,
+      refused: true,
+      onInput: onSlide,
     });
-    parent.appendChild(control);
-    added.push(control);
-    return control;
+    parent.appendChild(control.root);
+    added.push(control.input);
+    return control.input;
   }
 
   // The displayed pair, which is what a stepper steps from. Held as the whole
@@ -251,7 +241,7 @@ export function createAimControls(options: AimControlsOptions): AimControls {
     if (latest === announced || sinceWrite < ANNOUNCE_INTERVAL) {
       return;
     }
-    readout.textContent = latest;
+    setTextIfChanged(readout, latest);
     announced = latest;
     sinceWrite = 0;
   }
@@ -265,7 +255,7 @@ export function createAimControls(options: AimControlsOptions): AimControls {
 
     sync(elapsed: number, preview: AimPreview | null, allowed: boolean): void {
       for (const control of added) {
-        control.setAttribute('aria-disabled', allowed ? 'false' : 'true');
+        setRefused(control, !allowed);
       }
       if (preview === null) {
         queue(NO_AIM_TEXT);
@@ -284,8 +274,8 @@ export function createAimControls(options: AimControlsOptions): AimControls {
       // would then sit there showing a strength the game does not hold.
       // Writing the legitimate pair back on every sync is what stops a refused
       // track from lying about the shot it is going to take.
-      angleSlider.value = String(shownDegrees);
-      powerSlider.value = String(shownPercent);
+      setValueIfChanged(angleSlider, String(shownDegrees));
+      setValueIfChanged(powerSlider, String(shownPercent));
       pump(elapsed);
     },
   };

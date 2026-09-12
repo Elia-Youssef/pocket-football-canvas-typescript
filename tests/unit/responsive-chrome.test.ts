@@ -354,9 +354,8 @@ describe('PF-14 the responsive chrome', () => {
           expect(radio?.tagName, String(percent)).toBe('INPUT');
           expect(radio?.type, String(percent)).toBe('radio');
           expect(radio?.getAttribute('name'), String(percent)).toBe('pf-surface-scale');
-          expect(radio?.getAttribute('aria-label'), String(percent)).toBe(
-            `${String(percent)}%`,
-          );
+          expect(radio?.parentElement?.tagName, String(percent)).toBe('LABEL');
+          expect(radio?.parentElement?.textContent, String(percent)).toBe(`${String(percent)}%`);
         }
         expect(findByMarker(root, 'surface-scale-175')).toBeUndefined();
       } finally {

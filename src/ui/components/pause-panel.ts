@@ -9,6 +9,7 @@
  * the wiring's business; this module only names and raises it.
  */
 
+import { createButton } from './control';
 import { createPanel } from './panel';
 import type { Panel } from './panel';
 
@@ -29,18 +30,37 @@ export function createPausePanel(options: PausePanelOptions): Panel {
     onEscape: options.onEscape,
   });
 
-  function button(label: string, onClick: () => void): HTMLButtonElement {
-    const control = document.createElement('button');
-    control.type = 'button';
-    control.className = 'pf-choice-button';
-    control.textContent = label;
-    control.addEventListener('click', onClick);
-    return control;
-  }
-
-  panel.addControl(button('Resume', options.onResume));
-  panel.addControl(button('Settings', options.onOpenSettings));
-  panel.addControl(button('How to play', options.onOpenHowToPlay));
-  panel.addControl(button('Quit', options.onQuit));
+  panel.addControl(
+    createButton({
+      marker: 'pause-resume',
+      label: 'Resume',
+      className: 'pf-choice-button',
+      onActivate: options.onResume,
+    }),
+  );
+  panel.addControl(
+    createButton({
+      marker: 'pause-settings',
+      label: 'Settings',
+      className: 'pf-choice-button',
+      onActivate: options.onOpenSettings,
+    }),
+  );
+  panel.addControl(
+    createButton({
+      marker: 'pause-how-to',
+      label: 'How to play',
+      className: 'pf-choice-button',
+      onActivate: options.onOpenHowToPlay,
+    }),
+  );
+  panel.addControl(
+    createButton({
+      marker: 'pause-quit',
+      label: 'Quit',
+      className: 'pf-choice-button',
+      onActivate: options.onQuit,
+    }),
+  );
   return panel;
 }
