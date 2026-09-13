@@ -112,7 +112,7 @@ function oneGoal(): ScoringReadout {
 function drawnOps(effects: Effects, world: World): number {
   const recorder = new CanvasRecorder();
   effects.drawBehind(recorder.context, PLAY_SURFACE.floodlit);
-  effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, null);
+  effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, null);
   return recorder.ops.length;
 }
 
@@ -326,7 +326,7 @@ describe('PF-12 reduced motion, item E6', () => {
         reducedMotion: true,
       });
       const recorder = new CanvasRecorder();
-      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world, {
+      effects.drawInFront(recorder.context, PLAY_SURFACE.floodlit, world.player, {
         aim: { angleRad: 0, power01: 1 },
         reach: 180,
         launchable: true,

@@ -140,6 +140,15 @@ export function aimingBegins(
  * multiplied by a frame delta is the form that fails, and it is the form
  * QUALITY-BAR section 7 records as a defect class.
  *
+ * THE CONSTANTS BELOW LIVE HERE AND NOT IN `config.ts`, WHICH SAYS SO ITSELF.
+ * That module holds every constant the simulation steps with and names this
+ * block as one of its two stated exceptions: a rate in degrees per second is
+ * read by the two no-drag input models and by nothing that moves a body, so it
+ * sits beside the arithmetic that is its only consumer. The rule `config.ts`
+ * exists for is unchanged and is obeyed here: each value is stated once, is
+ * pinned against its own literal in tests/unit/discrete-aim.test.ts, and is
+ * restated nowhere.
+ *
  * THE 250 MS DELAY IS READ AS THE ONE HOLD-ONSET CONVENTION. The table states
  * it for the plain arrows and again for the power keys, and says of the fine
  * modifier only that it has "no ramp". Taking the delay as general is what

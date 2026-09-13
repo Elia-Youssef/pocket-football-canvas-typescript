@@ -452,11 +452,15 @@ const COLOUR_LITERAL =
  * text. They are stated here as an absence with its reason rather than left to
  * be discovered as a gap.
  *
- * A bare number in TypeScript is still nobody's business but the reviewer's: 12
- * may be a radius that belongs in a token, or an entity count, or a loop bound,
- * and no scan tells them apart. That residue is what makes E1 an Inspection
- * item, and the checklist hands it over rather than pretending a regular
- * expression closed it.
+ * A bare number in TypeScript is not this matcher's business: 12 may be a
+ * radius that belongs in a token, or an entity count, or a loop bound, and no
+ * matcher over units tells them apart. THAT RESIDUE IS NARROWED, NOT LEFT: the
+ * bare-numeric sweep at the end of this file asks a smaller question over the
+ * eight modules that draw - does this number EQUAL one of the sixteen values on
+ * the four scales - and names every occurrence that does with its reason. What
+ * E1's Inspection still owns is every module outside `src/render/`, a design
+ * value that happens to equal no token, and the judgement of whether a new
+ * exemption there is honest.
  *
  * A bare 0 needs no unit and no token, so it is not matched.
  */
@@ -1402,5 +1406,388 @@ describe('PF-1 design tokens', () => {
           .length,
       ).toBeGreaterThan(20);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The bare-numeric sweep over the drawing modules, item E1's stated residue.
+// ---------------------------------------------------------------------------
+
+const RENDER_ROOT = path.join(SOURCE_ROOT, 'render');
+
+/**
+ * Every value on the four numeric scales, as numbers, taken from the renderer
+ * record rather than written out: the record is checked against the design
+ * contract above, so this set is the contract's set by construction.
+ *
+ * ZERO AND ONE ARE OUT, WITH THEIR REASON. `--border-hair` is 1 and `--dur-0`
+ * is 0, and those two are also the identity values of arithmetic: an origin, a
+ * first index, a full alpha, a unit step. A sweep that read every one of them
+ * as a token reference would report the whole tree and be turned off within a
+ * day. What that leaves unswept is a hairline weight written as `1`, and the
+ * `lineWidth` rule below is what covers it: a stroke weight is the one place a
+ * bare 1 is a token value rather than an identity.
+ */
+const TOKEN_VALUES: ReadonlySet<number> = new Set(
+  [
+    ...Object.values(SPACE),
+    ...Object.values(RADIUS),
+    ...Object.values(BORDER),
+    ...Object.values(DURATION),
+  ].filter((value) => value !== 0 && value !== 1),
+);
+
+/**
+ * A token reference by index is a token reference. `SPACE[8]` and `DURATION[2]`
+ * name a step on a scale exactly as `RADIUS.sm` names one by key, and so does
+ * `duration(2, reducedMotion)`, whose first argument is typed as the step. The
+ * digit inside them is a NAME, so it is removed before the sweep reads numbers.
+ */
+const TOKEN_SUBSCRIPT = /\b(?:SPACE|DURATION)\s*\[\s*\d+\s*\]/g;
+const TOKEN_STEP_CALL = /\bduration\s*\(\s*\d+\s*,/g;
+
+/**
+ * A numeric literal, refusing a digit that is part of an identifier or of a
+ * property name: the `2` of `vec2`, and the `0` of `point.x0`, are not numbers.
+ */
+const BARE_NUMBER = /(?<![A-Za-z0-9_$.])\d[\d_]*(?:\.\d+)?(?:e[+-]?\d+)?/gi;
+
+/** A stroke weight written as a number, which is a `--border-*` step inlined. */
+const LINE_WIDTH_LITERAL = /\blineWidth\s*=\s*-?\d[\d_]*(?:\.\d+)?/g;
+
+/**
+ * String contents blanked, comments already gone. A number inside a string is
+ * a dimension or a colour and is the other sweep's business; here it would
+ * report the `2` of `'pf-2'` as a border weight.
+ */
+function withoutStrings(text: string): string {
+  const source = stripComments(text, true);
+  let out = '';
+  let at = 0;
+  while (at < source.length) {
+    const here = source[at] ?? '';
+    if (here !== '"' && here !== "'" && here !== '`') {
+      out += here;
+      at += 1;
+      continue;
+    }
+    let end = at + 1;
+    while (end < source.length) {
+      const character = source[end] ?? '';
+      if (character === '\\') {
+        end += 2;
+        continue;
+      }
+      if (character === here) {
+        break;
+      }
+      end += 1;
+    }
+    out += here + source.slice(at + 1, end).replace(/[^\n]/g, ' ') + here;
+    at = end + 1;
+  }
+  return out;
+}
+
+/** The code of a module with strings, comments and token references removed. */
+function scannableCode(text: string): string {
+  return withoutStrings(text)
+    .replace(TOKEN_SUBSCRIPT, (match) => ' '.repeat(match.length))
+    .replace(TOKEN_STEP_CALL, (match) => ' '.repeat(match.length));
+}
+
+/** Every literal in a module whose value is a value on a token scale. */
+function tokenNumbersIn(text: string): string[] {
+  const found: string[] = [];
+  for (const match of scannableCode(text).matchAll(BARE_NUMBER)) {
+    if (TOKEN_VALUES.has(Number(match[0].replace(/_/g, '')))) {
+      found.push(match[0]);
+    }
+  }
+  return found;
+}
+
+/** Every stroke weight in a module written as a number instead of a token. */
+function lineWidthNumbersIn(text: string): string[] {
+  return [...scannableCode(text).matchAll(LINE_WIDTH_LITERAL)].map((match) => match[0]);
+}
+
+/** The modules the bare-numeric sweep reads: everything that draws but the record. */
+function drawingModules(): string[] {
+  return readdirSync(RENDER_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+    .map((entry) => `src/render/${entry.name}`)
+    .filter((relative) => !TOKEN_LAYER.includes(relative))
+    .sort();
+}
+
+/**
+ * The occurrences the bare-numeric sweep exempts, each named with the reason it
+ * is not a token reference, and each consumed exactly once.
+ *
+ * THREE REASONS AND NO OTHERS. A GEOMETRY constant is a proportion of a shape
+ * this file draws, most often a halving; TRIGONOMETRY is a fraction of a turn;
+ * an INDEX or a COUNT is a position in a list or a number of things. None of
+ * them is a length, a radius, a weight or a duration, which are the four scales
+ * QUALITY-BAR section 15 states and the only four this sweep is about.
+ *
+ * The count is part of the entry, so a second `64` appended to `effects.ts`
+ * tomorrow is an offence rather than something that hides behind this one, and
+ * every entry is asserted to have been used, so an exemption that outlives its
+ * occurrence reddens rather than sitting here forever.
+ */
+const NUMERIC_EXEMPT: readonly Exemption[] = [
+  {
+    file: 'src/render/arrow.ts',
+    literal: '2',
+    count: 3,
+    why: 'geometry: the head clamped to half the shaft, and the two hex digits of one channel, twice',
+  },
+  {
+    file: 'src/render/arrow.ts',
+    literal: '3',
+    count: 1,
+    why: 'index: the third channel offset in #RRGGBB, which is a string position',
+  },
+  {
+    file: 'src/render/arrow.ts',
+    literal: '16',
+    count: 2,
+    why: 'count: base sixteen, once to parse a channel and once to print one',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '2',
+    count: 10,
+    why: 'geometry: seven halvings of a span or a frame, the two slow pulse steps, the two-sample trail floor and the trail width as a diameter',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '3',
+    count: 1,
+    why: 'count: SC 2.3.1 admits three flashes per region per second',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '4',
+    count: 1,
+    why: 'count: the rate limiter grid is four rows deep',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '8',
+    count: 1,
+    why: 'count: the rate limiter grid is eight columns across',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '12',
+    count: 1,
+    why: 'count: a goal burst is twelve particles',
+  },
+  {
+    file: 'src/render/effects.ts',
+    literal: '64',
+    count: 1,
+    why: 'count: the event log keeps sixty-four records, so a long match cannot grow',
+  },
+  {
+    file: 'src/render/entities.ts',
+    literal: '2',
+    count: 3,
+    why: 'trigonometry: the turn in TAU, and the quarter turn the star starts at, twice',
+  },
+  {
+    file: 'src/render/guide.ts',
+    literal: '2',
+    count: 1,
+    why: 'geometry: a polyline needs two points before it is a line',
+  },
+  {
+    file: 'src/render/pitch.ts',
+    literal: '2',
+    count: 5,
+    why: 'geometry: stripe parity, the two vignette radii, the band across both walls, and the half of the boundary weight a centred stroke covers',
+  },
+  {
+    file: 'src/render/surface.ts',
+    literal: '2',
+    count: 2,
+    why: 'geometry: centring a point in a viewport is halving it, once per axis',
+  },
+];
+
+describe('PF-1 the bare numerics the dimension sweep cannot see', () => {
+  /**
+   * ITEM E1's OWN STATED RESIDUE, closed for the drawing modules.
+   *
+   * The sweep above matches colours and dimensions: a colour anywhere, and a
+   * number with a CSS unit welded to it inside a string. Neither can see a
+   * renderer literal, because a canvas context takes numbers - `lineWidth = 3`
+   * and `arc(x, y, 24, 0, TAU)` carry no unit and no hash - so `BORDER.thick`
+   * replaced by its own 3, or `SPACE[5]` by its own 24, drew exactly the same
+   * pixels and passed every gate in the project. That residue was handed to
+   * E1's Inspection, on the reasoning that 12 may be a radius or a count and no
+   * regular expression tells them apart.
+   *
+   * WHAT CLOSES IT IS NOT A CLEVERER MATCHER, IT IS A NARROWER QUESTION. The
+   * sweep does not ask whether a number is a design value; it asks whether a
+   * number EQUALS one of the sixteen values on the four scales, in the eight
+   * modules that draw. That is a small set of candidates, and every one of them
+   * in the tree today is named above with the reason it is a count, an index or
+   * a proportion. E1's Inspection no longer has to read the render layer for
+   * inlined spacing, radius, weight or duration values; what it still owns is
+   * every module OUTSIDE `src/render/`, any design value that happens not to
+   * equal a token, and the judgement of whether a new exemption is honest.
+   */
+  it('finds no token value written as a number in a module that draws', () => {
+    const modules = drawingModules();
+    const offences: string[] = [];
+    const allowance = new Map<string, number>();
+    for (const entry of NUMERIC_EXEMPT) {
+      allowance.set(`${entry.file}: ${entry.literal}`, entry.count);
+    }
+    for (const relative of modules) {
+      const text = readFileSync(path.join(PROJECT_ROOT, relative), 'utf8');
+      for (const hit of tokenNumbersIn(text)) {
+        const key = `${relative}: ${hit}`;
+        const left = allowance.get(key) ?? 0;
+        if (left > 0) {
+          allowance.set(key, left - 1);
+          continue;
+        }
+        offences.push(key);
+      }
+      for (const hit of lineWidthNumbersIn(text)) {
+        offences.push(`${relative}: ${hit}`);
+      }
+    }
+    expect(offences).toEqual([]);
+    // Every exemption was spent, so a carve-out cannot outlive the line it was
+    // written for, and a sweep over nothing cannot pass.
+    expect([...allowance].filter(([, left]) => left > 0)).toEqual([]);
+    expect(modules.length).toBeGreaterThan(0);
+  });
+
+  it('reads every module that draws, and exactly the token record is skipped', () => {
+    // A file the walk never opens is a file the sweep never reads, so the list
+    // is reconciled against the directory in both directions.
+    expect(drawingModules()).toEqual([
+      'src/render/arrow.ts',
+      'src/render/capture.ts',
+      'src/render/effects.ts',
+      'src/render/entities.ts',
+      'src/render/guide.ts',
+      'src/render/input.ts',
+      'src/render/pitch.ts',
+      'src/render/surface.ts',
+    ]);
+    expect(drawingModules()).not.toContain('src/render/tokens.ts');
+    expect(TOKEN_LAYER).toContain('src/render/tokens.ts');
+    // The record itself is where these values live, so the matcher must find a
+    // great many of them there: the strongest form of the control.
+    expect(
+      tokenNumbersIn(readFileSync(path.join(PROJECT_ROOT, 'src/render/tokens.ts'), 'utf8'))
+        .length,
+    ).toBeGreaterThan(10);
+  });
+
+  it('sweeps the sixteen values the four scales carry, and no others', () => {
+    // THE SET IS THE GATE, so it is pinned as a value. It is derived from the
+    // renderer record, which the assertions above hold to the design contract,
+    // so a scale value that changed would change this list and be reviewed.
+    expect([...TOKEN_VALUES].sort((one, other) => one - other)).toEqual([
+      2, 3, 4, 8, 12, 14, 16, 24, 32, 48, 64, 80, 140, 220, 320, 999,
+    ]);
+    expect(TOKEN_VALUES.size).toBe(16);
+    // And the two the set deliberately does not carry, with their reason at the
+    // constant: the hairline weight and the zero duration are the identities of
+    // arithmetic, and the `lineWidth` rule covers the half that matters.
+    expect(TOKEN_VALUES.has(0)).toBe(false);
+    expect(TOKEN_VALUES.has(1)).toBe(false);
+    expect(BORDER.hair).toBe(1);
+    expect(DURATION[0]).toBe(0);
+  });
+
+  it('would see a token reference replaced by its own number, one shape at a time', () => {
+    // ONE POSITIVE CONTROL PER SHAPE THE SWEEP MUST CATCH, which is one per
+    // scale plus the hairline the identities cost it. Without these, a matcher
+    // that had stopped matching reports a clean tree forever.
+    const controls: ReadonlyArray<readonly [string, string, number, number]> = [
+      ['a border weight', 'context.lineWidth = 3;', 1, 1],
+      // The hairline is the one the value set cannot see, so the weight rule
+      // is the whole of its coverage; a negative one is caught twice, because
+      // the minus is not part of the number the value set is asked about.
+      ['a hairline weight', 'context.lineWidth = 1;', 0, 1],
+      ['a spacing step', 'const HEAD_LENGTH = 24;', 1, 0],
+      ['a radius step', 'context.arc(x, y, 14, 0, TAU);', 1, 0],
+      ['a pill radius', 'const round = 999;', 1, 0],
+      ['a duration step', 'const period = 140;', 1, 0],
+      ['a negative weight', 'context.lineWidth = -3;', 1, 1],
+    ];
+    for (const [name, source, numbers, widths] of controls) {
+      expect(tokenNumbersIn(source), name).toHaveLength(numbers);
+      expect(lineWidthNumbersIn(source), name).toHaveLength(widths);
+    }
+    // AND THE NEGATIVE CONTROLS, each one a shape the sweep must NOT report: a
+    // token reference by key or by index, a step named to `duration`, a number
+    // that is on no scale, a digit inside an identifier or a property, a number
+    // inside a string, and a number inside a comment.
+    for (const [name, source] of [
+      ['a key reference', 'context.lineWidth = BORDER.thick;'],
+      ['an index reference', 'const HEAD_LENGTH = SPACE[5];'],
+      ['a duration index', 'const step = DURATION[2];'],
+      ['a duration step call', 'const period = duration(2, reducedMotion);'],
+      ['a value on no scale', 'const BURST_SLOWEST_RATIO = 0.5;'],
+      ['a digit in an identifier', "import { set } from './vec2';"],
+      ['a digit in a property', 'const value = point.x2;'],
+      ['a number in a string', "root.dataset['pf'] = 'panel-3';"],
+      ['a number in a comment', '// the head is 24 units long\nconst a = 0;'],
+      ['a number in a block comment', '/* 24 */ const a = 0;'],
+    ] as const) {
+      expect(tokenNumbersIn(source), name).toEqual([]);
+      expect(lineWidthNumbersIn(source), name).toEqual([]);
+    }
+    // A COMPUTED WEIGHT IS NOT A LITERAL WEIGHT, which is the one shape the two
+    // rules answer differently: the stroke rule sees no number assigned, while
+    // the value set still reports the doubling inside the expression - and that
+    // doubling is exempted by name above, as the trail's own diameter.
+    const computed = 'context.lineWidth = from.radius * 2 * left;';
+    expect(lineWidthNumbersIn(computed)).toEqual([]);
+    expect(tokenNumbersIn(computed)).toEqual(['2']);
+  });
+
+  it('names every exempt occurrence, with its reason and its count', () => {
+    // The list is the carve-out, so it is pinned by value and by length: a
+    // fourteenth entry is a review, not an edit, and every entry says why the
+    // occurrence is a count, an index or a proportion rather than a token.
+    expect(
+      NUMERIC_EXEMPT.map((entry) => `${entry.file} ${entry.literal} x${String(entry.count)}`),
+    ).toEqual([
+      'src/render/arrow.ts 2 x3',
+      'src/render/arrow.ts 3 x1',
+      'src/render/arrow.ts 16 x2',
+      'src/render/effects.ts 2 x10',
+      'src/render/effects.ts 3 x1',
+      'src/render/effects.ts 4 x1',
+      'src/render/effects.ts 8 x1',
+      'src/render/effects.ts 12 x1',
+      'src/render/effects.ts 64 x1',
+      'src/render/entities.ts 2 x3',
+      'src/render/guide.ts 2 x1',
+      'src/render/pitch.ts 2 x5',
+      'src/render/surface.ts 2 x2',
+    ]);
+    expect(NUMERIC_EXEMPT).toHaveLength(13);
+    expect(NUMERIC_EXEMPT.reduce((total, entry) => total + entry.count, 0)).toBe(32);
+    for (const entry of NUMERIC_EXEMPT) {
+      expect(entry.why.length, `${entry.file} ${entry.literal}`).toBeGreaterThan(20);
+      // Each reason names its class, so "why" is an answer rather than a label.
+      expect(entry.why, `${entry.file} ${entry.literal}`).toMatch(
+        /^(?:geometry|trigonometry|index|count): /,
+      );
+      // And every file named is one the sweep actually reads.
+      expect(drawingModules(), entry.file).toContain(entry.file);
+    }
   });
 });

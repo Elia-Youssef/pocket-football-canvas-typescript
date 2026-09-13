@@ -1,5 +1,6 @@
 /**
- * Every geometry and tuning constant the simulation reads, in one place.
+ * Every geometry and tuning constant the simulation reads, in one place, and
+ * two exceptions that are named here rather than left to be discovered.
  *
  * SPEC section 3 owns the pitch, section 4 owns the entity radii, section 6.1
  * owns the physics constants and the one power scale, and section 6.2 owns the
@@ -7,6 +8,18 @@
  * that disagrees with those sections is a spec violation rather than a tuning
  * decision, which is why tests/unit/config.test.ts pins every one of them
  * against a literal rather than against the symbol beside it.
+ *
+ * THE TWO EXCEPTIONS, SO THAT THE SENTENCE ABOVE IS TRUE. SPEC section 5.1's
+ * discrete-aim constants live in `core/aiming.ts`, and SPEC section 14's effect
+ * lifetimes live in `render/effects.ts`. Neither drifted there: an aim rate is
+ * read by the two no-drag input models and by nothing the simulation steps, and
+ * a lifetime is a presentation duration, which QUALITY-BAR section 15 keeps off
+ * the gameplay scales this file carries. What matters is the rule they still
+ * obey, which is this file's rule and not this file's address: each is stated
+ * once, pinned against its own literal in its own suite, and restated nowhere.
+ * tests/unit/config.test.ts holds this paragraph against the tree, so a
+ * constant that moves in either direction without the sentence moving with it
+ * reddens.
  *
  * DESIGN section 1 puts this module under `core/`, so it imports nothing, names
  * no platform surface, and reads no clock. Time arrives as a parameter.

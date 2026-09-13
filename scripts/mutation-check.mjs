@@ -2611,10 +2611,12 @@ export const EDITS = [
     item: 'E3',
     name: 'the one transform maps design space y up, flipped',
     file: 'src/render/surface.ts',
-    find:
-      'context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
-    replace:
-      'context.setTransform(scale, 0, 0, scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
+    // RE-POINTED by the minors vehicle: the origin is now rounded to the
+    // backing store's own bottom row, so the line this entry quotes names a
+    // local instead of the product. Same mutation, the y flip turned off, and
+    // the same property.
+    find: 'context.setTransform(scale, 0, 0, -scale, offsetX, originY + offsetY);',
+    replace: 'context.setTransform(scale, 0, 0, scale, offsetX, originY + offsetY);',
     detectedBy: 'unit',
   },
   {
@@ -3357,8 +3359,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: 'src/render/pitch.ts',
     // RE-POINTED at PF-9: the arrow's body is the frame's named launcher now,
     // so the call reads differently. The pass is still removed entirely.
-    find:
-      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);',
+    // RE-POINTED again by the minors vehicle: the acting circle is resolved
+    // once above both drawings, so the call takes a local. Same mutation.
+    find: '    drawAimArrow(surface.context, palette, launcher, aim);',
     replace: '    void drawAimArrow;',
     detectedBy: 'browser',
   },
@@ -4350,11 +4353,14 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     detectedBy: 'unit',
   },
   {
+    // RE-POINTED by the fix round: the push moved inside the guard that keeps a
+    // frame worth no time from taking a sample, so the line is two columns
+    // further in. Same mutation, same property.
     item: 'E6',
     name: 'the trail\'s window is resolved against the policy',
     file: 'src/render/effects.ts',
-    find: '        life: effectSeconds(\'ballTrail\', reducedMotion),',
-    replace: '        life: EFFECT_SECONDS.ballTrail,',
+    find: '          life: effectSeconds(\'ballTrail\', reducedMotion),',
+    replace: '          life: EFFECT_SECONDS.ballTrail,',
     detectedBy: 'unit',
   },
   {
@@ -4456,8 +4462,10 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'E5',
     name: 'the one transform takes the shake as an offset',
     file: 'src/render/surface.ts',
-    find: '  context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);',
-    replace: '  context.setTransform(scale, 0, 0, -scale, 0, LOGICAL_HEIGHT * scale);',
+    // RE-POINTED by the minors vehicle, with the entry above and for the same
+    // reason. Same mutation: both shake offsets dropped from the transform.
+    find: '  context.setTransform(scale, 0, 0, -scale, offsetX, originY + offsetY);',
+    replace: '  context.setTransform(scale, 0, 0, -scale, 0, originY);',
     detectedBy: 'unit',
   },
   {
@@ -4491,19 +4499,21 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     // RE-POINTED at PF-9: SPEC section 11's guide pass landed between the
     // entities and the arrow, so the anchor is the last two passes alone. The
     // break is the same one: the two passes exchanged.
+    // RE-POINTED by the minors vehicle: both calls take the acting circle,
+    // resolved once above. Same mutation, the two passes swapped.
     find:
       '  if (aim !== undefined) {\n' +
-      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);\n' +
+      '    drawAimArrow(surface.context, palette, launcher, aim);\n' +
       '  }\n' +
       '  if (effects !== undefined) {\n' +
-      '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
+      '    effects.drawInFront(surface.context, palette, launcher, aim ?? null);\n' +
       '  }',
     replace:
       '  if (effects !== undefined) {\n' +
-      '    effects.drawInFront(surface.context, palette, world, aim ?? null);\n' +
+      '    effects.drawInFront(surface.context, palette, launcher, aim ?? null);\n' +
       '  }\n' +
       '  if (aim !== undefined) {\n' +
-      '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);\n' +
+      '    drawAimArrow(surface.context, palette, launcher, aim);\n' +
       '  }',
     detectedBy: 'unit',
   },
@@ -4590,7 +4600,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'E5',
     name: 'the surface records the height it renders at, in CSS pixels',
     file: 'src/render/surface.ts',
-    find: '  surface.cssHeight = cssHeightFor(cssWidth);',
+    // RE-POINTED by the minors vehicle: the rendered height is computed once
+    // per resize, so the assignment reads the local. Same mutation.
+    find: '  surface.cssHeight = cssHeight;',
     replace: '  surface.cssHeight = 0;',
     detectedBy: 'unit',
   },
@@ -4656,11 +4668,15 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'E5',
     name: 'the frame\'s own elapsed seconds reach the effects layer',
     file: 'src/main.ts',
+    // RE-POINTED by the minors vehicle: the readout is taken once and the
+    // elapsed seconds are gated on SPEC section 7's pause, so both lines read
+    // differently. Same mutation: the layer charged nothing on every frame
+    // rather than on a paused one.
     find:
-      '      scoring: match.readout().scoring,\n' +
-      '      elapsed,',
+      '      scoring: reading.scoring,\n' +
+      '      elapsed: frozen ? 0 : elapsed,',
     replace:
-      '      scoring: match.readout().scoring,\n' +
+      '      scoring: reading.scoring,\n' +
       '      elapsed: 0,',
     detectedBy: 'browser',
   },
@@ -4723,16 +4739,22 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'J2',
     name: 'a mode configuration reaches the match it is meant for',
     file: 'src/core/match.ts',
-    find: "    if (intent.kind === 'configure') {",
-    replace: "    if (intent.kind === 'configure' && false) {",
+    // RE-POINTED by the minors vehicle: the if-chain is an exhaustive switch
+    // with no default, so the branch is a case label. Same mutation, the
+    // configure intent accepted and applying nothing.
+    find: "      case 'configure': {",
+    replace: "      case 'configure': {\n        return 'configure';",
     detectedBy: 'unit',
   },
   {
     item: 'J3',
     name: 'the ladder plays the six opponents in the section order',
     file: 'src/core/modes.ts',
-    find: '  const rung = LADDER[slot];',
-    replace: '  const rung = LADDER[LADDER.length - 1 - slot];',
+    // RE-POINTED by the minors vehicle: both ladder tables are read through
+    // one clamp and one refusal, so the row lookup moved into that helper.
+    // Same mutation, the table read in reverse order.
+    find: '  const row = table[ladderSlot(position)];',
+    replace: '  const row = table[table.length - 1 - ladderSlot(position)];',
     detectedBy: 'unit',
   },
   {
@@ -4914,8 +4936,12 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'J5',
     name: 'the aim arrow starts at the circle the frame names as launching',
     file: 'src/render/pitch.ts',
-    find: '    drawAimArrow(surface.context, palette, options?.launcher ?? world.player, aim);',
-    replace: '    drawAimArrow(surface.context, palette, world.player, aim);',
+    // RE-POINTED by the minors vehicle: the acting circle is resolved once,
+    // above both drawings, so the default this entry protects lives on that
+    // line now. Same mutation, the named launcher ignored for the player's
+    // circle, and it now moves the maximum-power pulse with the arrow.
+    find: '  const launcher = options?.launcher ?? world.player;',
+    replace: '  const launcher = world.player;',
     detectedBy: 'unit',
   },
   {
@@ -5785,7 +5811,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F6',
     name: 'the size control opens on the stored value',
     file: 'src/ui/layout.ts',
-    find: '  settings.selectSurfaceScale(options.initialSurfaceScale ?? NEW_SURFACE_SCALE);',
+    // RE-POINTED by the minors vehicle: the stored size is a required option,
+    // so the mount reads it without a fallback. Same mutation.
+    find: '  settings.selectSurfaceScale(options.initialSurfaceScale);',
     replace: '  settings.selectSurfaceScale(NEW_SURFACE_SCALE);',
     detectedBy: 'unit',
   },
@@ -5801,8 +5829,10 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F6',
     name: 'a reset raises the size a new player gets, so the pitch follows',
     file: 'src/ui/layout.ts',
-    find: '      options.onSurfaceScaleChange?.(NEW_SURFACE_SCALE);',
-    replace: '      options.onSurfaceScaleChange?.(200);',
+    // RE-POINTED by the minors vehicle: the size callback is a required
+    // option, so the reset calls it outright. Same mutation.
+    find: '      options.onSurfaceScaleChange(NEW_SURFACE_SCALE);',
+    replace: '      options.onSurfaceScaleChange(200);',
     detectedBy: 'unit',
   },
   {
@@ -5818,7 +5848,9 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F3',
     name: 'the hint opens on the dismissal it was handed',
     file: 'src/ui/layout.ts',
-    find: '  hint.setDismissed(options.hintDismissed ?? false);',
+    // RE-POINTED by the minors vehicle: the stored dismissal is a required
+    // option, so the mount reads it without a fallback. Same mutation.
+    find: '  hint.setDismissed(options.hintDismissed);',
     replace: '  hint.setDismissed(false);',
     detectedBy: 'unit',
   },
@@ -7180,6 +7212,333 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     find: '    glyphs: () => glyphsForOpponent(setup.opponentName),',
     replace: "    glyphs: () => ({ player: 'P', opponent: 'O' }),",
     detectedBy: 'browser',
+  },
+
+  // ------------------------------------------------------------------
+  // The 2026-09-08 audit's minor and nit findings in the shipped modules.
+  // Every entry here is unit-detected: each one names a property a test added
+  // with it is the only reader of, which is what makes the entry and the test
+  // one gate rather than two.
+  // ------------------------------------------------------------------
+
+  {
+    // core-F7. The header claimed every tuning constant was "in one place"
+    // while SPEC section 5.1's aim rates and section 14's lifetimes sat in two
+    // other modules. It names them now, and the claim is held to the tree.
+    item: 'B1',
+    name: 'config.ts names the two modules its constants do not live in',
+    file: 'src/core/config.ts',
+    find: ' * discrete-aim constants live in `core/aiming.ts`, and SPEC section 14\'s effect',
+    replace: ' * discrete-aim constants live in `core/nowhere.ts`, and SPEC section 14\'s effect',
+    detectedBy: 'unit',
+  },
+  {
+    // core-F9. `data()` hands back this object by reference, so a caller that
+    // wrote through it would edit the defaults every later reader sees.
+    item: 'I1',
+    name: 'the new-player document is handed out frozen',
+    file: 'src/core/storage.ts',
+    find: 'export const NEW_DATA: GameData = Object.freeze({',
+    replace: 'export const NEW_DATA: GameData = Object.seal({',
+    detectedBy: 'unit',
+  },
+  {
+    // The same freeze one level down: `Object.freeze` is shallow, so the
+    // settings a caller reaches through the document need their own.
+    item: 'I1',
+    name: 'the freeze reaches the settings inside the document',
+    file: 'src/core/storage.ts',
+    find: 'export const NEW_SETTINGS: Settings = Object.freeze({',
+    replace: 'export const NEW_SETTINGS: Settings = Object.seal({',
+    detectedBy: 'unit',
+  },
+  {
+    // The progress record is declared in the modes module and is the document's
+    // own `progress` field, so its freeze is stated where it is declared.
+    item: 'I1',
+    name: 'the new-player progress is frozen where it is declared',
+    file: 'src/core/modes.ts',
+    find: 'export const NEW_PROGRESS: Progress = Object.freeze({',
+    replace: 'export const NEW_PROGRESS: Progress = Object.seal({',
+    detectedBy: 'unit',
+  },
+  {
+    // core-F10. The door refuses a direction and a start point and deliberately
+    // leaves the ball to the arithmetic below it; this is the answer that
+    // produces, pinned so the asymmetry is a reading rather than a gap.
+    item: 'J5',
+    name: 'a ball nobody can locate answers the degenerate path, not a refusal',
+    file: 'src/core/guide.ts',
+    find: '  if (discriminant < 0) {',
+    replace: '  if (!Number.isFinite(discriminant) || discriminant < 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    // N5. SPEC section 9's default length is stated once and read, not stated
+    // twice and kept equal by hand.
+    item: 'J1',
+    name: 'the default mode reads the stated default duration',
+    file: 'src/core/modes.ts',
+    find: '  duration: DEFAULT_DURATION,',
+    replace: '  duration: 60,',
+    detectedBy: 'unit',
+  },
+  {
+    // N6. Both ladder tables take one clamp and one answer to a position with
+    // no row; the difficulty column used to mask what the rung column raised.
+    item: 'J3',
+    name: 'both ladder tables refuse a position with no row',
+    file: 'src/core/modes.ts',
+    find: `export function difficultyAt(position: number): Difficulty {
+  return ladderRow(LADDER_DIFFICULTY, position, 'difficulty');
+}`,
+    replace: `export function difficultyAt(position: number): Difficulty {
+  return LADDER_DIFFICULTY[ladderSlot(position)] ?? 'casual';
+}`,
+    detectedBy: 'unit',
+  },
+  {
+    // N7. SPEC section 8.1 writes its reachable test with a strict `>`, and the
+    // cone bound is what makes the code strict with it: at a projection of
+    // exactly the touching distance the transfer is zero, which the floor
+    // refuses, while the bare reachability cosine would admit it.
+    item: 'D3',
+    name: 'the admission test is the cone bound, not the bare reachability cosine',
+    file: 'src/core/ai.ts', // the opponent routine
+    find: '  if (along >= bound) {',
+    replace: '  if (along >= TOUCHING / gap) {',
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. The rim of a 44 px target is part of the target: a strict
+    // comparison leaves its outermost ring dead.
+    item: 'C1',
+    name: 'a press on the rim is a press on the body',
+    file: 'src/core/aiming.ts',
+    find: '  return dx * dx + dy * dy <= body.radius * body.radius;',
+    replace: '  return dx * dx + dy * dy < body.radius * body.radius;',
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. A facing is an angle in DESIGN space, y up. Mirrored, every
+    // marker points at the reflection of where its body is going.
+    item: 'E3',
+    name: 'a facing is measured in design space, y up',
+    file: 'src/render/entities.ts',
+    find: '  return Math.atan2(toY - fromY, toX - fromX);',
+    replace: '  return Math.atan2(fromY - toY, toX - fromX);',
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. A body still travelling into the wall has not bounced off it.
+    // The distance alone admits it, which is why the reversal is a gate.
+    item: 'E5',
+    name: 'a body still travelling into a wall has not bounced off it',
+    file: 'src/render/effects.ts',
+    find: `    before.vx < 0 &&
+    moving.x >= 0 &&
+    at.x - body.radius - FIELD_LEFT <= reach(before.vx, seconds)`,
+    replace: `    before.vx < 0 &&
+    at.x - body.radius - FIELD_LEFT <= reach(before.vx, seconds)`,
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. The closest approach is compared against the sum of the radii
+    // INCLUSIVELY: a pair that came to exactly the touching distance met.
+    item: 'E5',
+    name: 'a pair whose closest approach is exactly the radii has met',
+    file: 'src/render/effects.ts',
+    find: '    if (nearest > one.radius + other.radius + CONTACT_SLACK) {',
+    replace: '    if (nearest >= one.radius + other.radius) {',
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F8. The arrow and its maximum-power pulse are two strokes of one
+    // aim, so they take the same body. Anchored on the pulse's own call: the
+    // launcher's default is protected separately, one line above.
+    item: 'J5',
+    name: 'the maximum-power pulse is drawn at the acting circle',
+    file: 'src/render/pitch.ts',
+    find: '    effects.drawInFront(surface.context, palette, launcher, aim ?? null);',
+    replace: '    effects.drawInFront(surface.context, palette, world.player, aim ?? null);',
+    detectedBy: 'unit',
+  },
+  {
+    // N1. Every pass leaves `globalAlpha` at 1. The celebration's restore is
+    // the one a later pass would otherwise cover for, so it is the entry.
+    item: 'E5',
+    name: 'the celebration puts the alpha back before the passes after it',
+    file: 'src/render/effects.ts',
+    find: `  context.strokeRect(frame.x, frame.y, frame.width, frame.height);
+  context.globalAlpha = 1;`,
+    replace: '  context.strokeRect(frame.x, frame.y, frame.width, frame.height);',
+    detectedBy: 'unit',
+  },
+  {
+    // N2. The event log is handed out LIVE, which the interface states and a
+    // capture script depends on: a copy per sample is an allocation a frame
+    // budget does not have, and a holder has to know the array keeps moving.
+    item: 'E5',
+    name: 'the event log is handed out live, not copied',
+    file: 'src/render/effects.ts',
+    find: '      return log;',
+    replace: '      return [...log];',
+    detectedBy: 'unit',
+  },
+  {
+    // N2, the same reading for the panel's control list.
+    item: 'M1',
+    name: 'the panel control list is handed out live, not copied',
+    file: 'src/ui/components/panel.ts',
+    find: '      return added;',
+    replace: '      return [...added];',
+    detectedBy: 'unit',
+  },
+  {
+    // N4. One tracer owns the arrow's path convention, and the maximum-power
+    // pulse calls it rather than carrying a second copy of the loop.
+    item: 'C7',
+    name: 'the arrow tracer opens the path at the first point',
+    file: 'src/render/arrow.ts',
+    find: `    if (index === 0) {
+      context.moveTo(point.x, point.y);`,
+    replace: `    if (index === 1) {
+      context.moveTo(point.x, point.y);`,
+    detectedBy: 'unit',
+  },
+  {
+    // render-11. The design origin is rounded the way the backing height is, so
+    // design y = 0 lands ON the bottom row of the store rather than up to half
+    // a device pixel above it.
+    //
+    // RE-POINTED by the fix round: the rounding moved into `deviceOriginY`,
+    // which is now the one expression that answers both the transform's
+    // translation and the store's height, and the transform asks it. Same
+    // mutation, same property, and it is detected twice over - by the surface's
+    // own origin family and by the pitch placement test, whose device rows are
+    // counted from this number.
+    item: 'E3',
+    name: 'the design origin is rounded onto the backing store bottom row',
+    file: 'src/render/surface.ts',
+    find: '  return Math.round(LOGICAL_HEIGHT * scale);',
+    replace: '  return LOGICAL_HEIGHT * scale;',
+    detectedBy: 'unit',
+  },
+  {
+    // R1, the cross-vehicle reconciliation. The store's height and the
+    // transform's translation are one quantity, and rounding it in two places
+    // rounds it apart: `cssHeightFor(696) * 1` is 391.5 and `LOGICAL_HEIGHT *
+    // logicalScale(696, 1)` is 391.49999999999994, so the store took 392 rows
+    // while the scene stopped at 391. One expression, asked twice.
+    item: 'E3',
+    name: 'the backing store takes the height the transform translates by',
+    file: 'src/render/surface.ts',
+    find: '  const height = Math.max(1, deviceOriginY(scale));',
+    replace: '  const height = Math.max(1, Math.round(cssHeight * deviceRatio));',
+    detectedBy: 'unit',
+  },
+  {
+    // R1. The rail boundary's rows are snapped to the grid the transform draws
+    // on, which starts at the ROUNDED origin: counted from an unrounded
+    // `LOGICAL_HEIGHT * scale` instead, every horizontal run lands the rounding
+    // residue off the grid - 0.08 of a device pixel at a backing scale of 0.336
+    // - and the band straddles two pixels again, which is the 2.59:1 the
+    // 2026-09-08 audit read off the live canvas. The replacement writes 720 out
+    // because the module stopped importing `LOGICAL_HEIGHT` the moment it asked
+    // the surface for the origin instead of deriving one.
+    item: 'E3',
+    name: 'the rail boundary is snapped to the grid the transform draws on',
+    file: 'src/render/pitch.ts',
+    find: '  const originY = deviceOriginY(scale);',
+    replace: '  const originY = 720 * scale;',
+    detectedBy: 'unit',
+  },
+  {
+    // R1 (BL-1). Every trail sample is stamped with the effects clock and
+    // expires when the clock has moved past its life, so a frame charged
+    // nothing can push a sample and can expire none. SPEC section 7's PAUSED is
+    // that frame, a hidden tab included, and a pause has no length limit:
+    // without the guard a minute of pause left 3,601 live samples for the
+    // expiry, the drawing and the length sum to walk on every frame of it.
+    item: 'E5',
+    name: 'a frame worth no time takes no trail sample',
+    file: 'src/render/effects.ts',
+    find: '      if (seconds > 0) {\n        trail.push({',
+    replace: '      if (true) {\n        trail.push({',
+    detectedBy: 'unit',
+  },
+  {
+    // N9. One rendered height per resize, read by the element, the backing
+    // store and the shake: three questions were three chances to differ.
+    item: 'E3',
+    name: 'the rendered height is computed once and read by all three',
+    file: 'src/render/surface.ts',
+    find: '  const cssHeight = cssHeightFor(cssWidth);',
+    replace: '  const cssHeight = cssHeightFor(cssWidth + 1);',
+    detectedBy: 'unit',
+  },
+  {
+    // render-6. A token reference replaced by its own number draws the same
+    // pixels and passes every other gate; the bare-numeric sweep is what sees
+    // it. A spacing step first.
+    item: 'E1',
+    name: 'a spacing step written as its own number is found',
+    file: 'src/render/effects.ts',
+    find: 'const FLASH_RADIUS = SPACE[5];',
+    replace: 'const FLASH_RADIUS = 24;',
+    detectedBy: 'unit',
+  },
+  {
+    // And a hairline weight, which is the value the sweep's own identity
+    // exclusion cannot see and the `lineWidth` rule exists to cover.
+    //
+    // RE-POINTED after the rail vehicle landed: this quoted `pitch.ts`'s
+    // `context.lineWidth = BORDER.hair;`, and SPEC section 18's three-unit
+    // boundary replaced that stroke, so no module that draws sets a hairline
+    // any more and there is no such line left to inline. The property is the
+    // sweep's rule rather than any one module's line: blinded to a 1 the rule
+    // still finds a 3, so only the hairline control fails, which is the
+    // occurrence this entry has always been about.
+    item: 'E1',
+    name: 'a hairline weight written as its own number is found',
+    file: 'tests/unit/tokens.test.ts',
+    find: String.raw`const LINE_WIDTH_LITERAL = /\blineWidth\s*=\s*-?\d[\d_]*(?:\.\d+)?/g;`,
+    replace: String.raw`const LINE_WIDTH_LITERAL = /\blineWidth\s*=\s*-?[2-9][\d_]*(?:\.\d+)?/g;`,
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. The host language list is COPIED: the formatter cache keys on
+    // it, so a caller handed the platform's own array would compare it against
+    // itself after the platform changed it and would never rebuild.
+    item: 'M1',
+    name: 'the host language list is copied, not handed out live',
+    file: 'src/ui/components/clock.ts',
+    find: '  return [...(navigator.languages ?? [])];',
+    replace: '  return navigator.languages ?? [];',
+    detectedBy: 'unit',
+  },
+  {
+    // quality-F4. SPEC section 17's theme setting has three states, System
+    // included: it is a value and not the absence of one.
+    item: 'M1',
+    name: 'the theme choices are the three states the section names',
+    file: 'src/ui/components/settings-panel.ts',
+    find: 'export const THEME_CHOICES: readonly ThemeChoice[] = THEME_SETTINGS;',
+    replace: "export const THEME_CHOICES: readonly ThemeChoice[] = ['light', 'dark'];",
+    detectedBy: 'unit',
+  },
+  {
+    // render-10. SPEC section 7: a paused match steps no simulation, and the
+    // effects clock advances by the seconds the world advanced by. The gate is
+    // three lines at the composition root and its absence is invisible to every
+    // other assertion in the suite, which is why a unit-layer source tie reads
+    // it rather than a browser run driving a pause.
+    item: 'J7',
+    name: 'the effects clock is charged nothing while the match is paused',
+    file: 'src/main.ts',
+    find: "    const frozen = reading.state.kind === 'PAUSED';",
+    replace: '    const frozen = false;',
+    detectedBy: 'unit',
   },
 ];
 

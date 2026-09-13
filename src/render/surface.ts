@@ -179,6 +179,41 @@ export function logicalScale(cssWidth: number, deviceRatio: number): number {
 }
 
 /**
+ * The device row design y = 0 is drawn on, which is also the height the
+ * backing store is given. ONE EXPRESSION OWNS BOTH, and this is it.
+ *
+ * WHY IT IS ROUNDED. `LOGICAL_HEIGHT * scale` IS `cssHeightFor(cssWidth) *
+ * deviceRatio`, and a backing store is a whole number of device rows, so the
+ * height is that product rounded. Taking the translation unrounded left the
+ * transform's y term a fraction away from the store's own height: the scene
+ * kept its size and sat between two device rows, and anything below this
+ * module that snaps a coordinate to a whole device pixel - `render/pitch.ts`
+ * snaps the rail boundary, which SPEC section 18 states a rendered floor for -
+ * snapped to a grid the transform then shifted off by that fraction. Rounded,
+ * the translation IS the store's height and the two grids are one grid.
+ *
+ * WHAT THE ROUNDING COSTS, STATED HERE BECAUSE IT IS CREATED HERE. It does not
+ * remove the half pixel, it MOVES it: the scene is drawn at the exact scale
+ * from an origin up to half a device pixel from where the unrounded arithmetic
+ * put it, so the residue that sat at design y = 0 now sits at design y = 720,
+ * the top of the design space. Nothing is drawn at either extreme - SPEC
+ * section 3's field runs from y 85 to y 635 and the walls from 73 to 647 - so
+ * the residue lands in the band the blit clears and nothing else.
+ *
+ * AND THE POINTER MAPPING IS THE UNROUNDED INVERSE. `render/input.ts` maps a
+ * viewport point through the canvas's CSS box, which carries no rounding, so
+ * the point the player pressed and the point the scene drew differ by the
+ * rounding residue: at most half a device pixel, in y alone, the same offset
+ * everywhere on the surface. Half a device pixel is half a design unit at a
+ * backing scale of one and two design units at the quarter scale a zoomed-out
+ * window can reach, against SPEC section 5's 34-unit hit test, and
+ * tests/unit/render-surface.test.ts pins the bound rather than describing it.
+ */
+export function deviceOriginY(scale: number): number {
+  return Math.round(LOGICAL_HEIGHT * scale);
+}
+
+/**
  * The one coordinate transform, from SPEC design units to device pixels, y
  * flipped. Nothing else in the renderer calls setTransform with these numbers
  * except the blit, which leaves device space for one call and comes straight
@@ -192,6 +227,10 @@ export function logicalScale(cssWidth: number, deviceRatio: number): number {
  * what would break the pointer mapping and the frame's focus ring together.
  * Both offsets default to zero, so every caller that has no shake to apply
  * asks for the same matrix it always did.
+ *
+ * THE ORIGIN IS `deviceOriginY`, whose comment carries the whole of the
+ * rounding and what it costs. The shake is added afterwards and stays
+ * continuous: it is a displacement of the whole scene, not a coordinate.
  */
 export function applySurfaceTransform(
   context: CanvasRenderingContext2D,
@@ -199,7 +238,8 @@ export function applySurfaceTransform(
   offsetX = 0,
   offsetY = 0,
 ): void {
-  context.setTransform(scale, 0, 0, -scale, offsetX, LOGICAL_HEIGHT * scale + offsetY);
+  const originY = deviceOriginY(scale);
+  context.setTransform(scale, 0, 0, -scale, offsetX, originY + offsetY);
 }
 
 /** Wrap a canvas that is already in the document as a play surface. */
@@ -235,20 +275,34 @@ export function createSurface(host: HTMLElement): Surface {
  * exactly; the value is interpolated into the style property, never written
  * as a literal with a unit in it, which the token sweep would (and should)
  * reject.
+ *
+ * THE STORE'S HEIGHT IS THE TRANSFORM'S ORIGIN, asked of `deviceOriginY`
+ * rather than rounded a second time here. `cssHeight * deviceRatio` and
+ * `LOGICAL_HEIGHT * scale` are the same quantity written two ways, and two
+ * ways is one too many: the products differ in the last bit often enough to
+ * round apart (measured: 525 of 32,000 width-and-ratio pairs, 56 CSS pixels at
+ * ratio 1 among them, where the store took 32 rows and the origin landed on
+ * 31), and a store one whole device row taller than the origin is a row the
+ * scene never reaches. One expression, asked twice.
  */
 export function resizeSurface(
   surface: Surface,
   cssWidth: number,
   deviceRatio: number,
 ): void {
+  // One height, computed once and read three times. The three call sites it
+  // replaced all asked the same function the same question, which is three
+  // chances for one of them to be given a different width.
+  const cssHeight = cssHeightFor(cssWidth);
+  const scale = logicalScale(cssWidth, deviceRatio);
   const width = Math.max(1, Math.round(cssWidth * deviceRatio));
-  const height = Math.max(1, Math.round(cssHeightFor(cssWidth) * deviceRatio));
+  const height = Math.max(1, deviceOriginY(scale));
   surface.canvas.width = width;
   surface.canvas.height = height;
   surface.canvas.style.width = `${String(cssWidth)}px`;
-  surface.canvas.style.height = `${String(cssHeightFor(cssWidth))}px`;
-  surface.scale = logicalScale(cssWidth, deviceRatio);
-  surface.cssHeight = cssHeightFor(cssWidth);
+  surface.canvas.style.height = `${String(cssHeight)}px`;
+  surface.scale = scale;
+  surface.cssHeight = cssHeight;
   applySurfaceTransform(surface.context, surface.scale);
 }
 

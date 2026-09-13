@@ -8,7 +8,7 @@ import { createHowToPanel } from '../../src/ui/components/how-to-panel';
 import { createModePanel } from '../../src/ui/components/mode-panel';
 import type { Panel } from '../../src/ui/components/panel';
 import { createPausePanel } from '../../src/ui/components/pause-panel';
-import { createSettingsPanel } from '../../src/ui/components/settings-panel';
+import { THEME_CHOICES, createSettingsPanel } from '../../src/ui/components/settings-panel';
 import { controlByMarker } from '../../src/ui/layout';
 import {
   censusControls,
@@ -459,6 +459,77 @@ describe('PF-13 the panels', () => {
         return title?.textContent;
       });
       expect(texts).toEqual(['Paused', 'Settings', 'How to play', 'Full time']);
+    } finally {
+      installed.restore();
+    }
+  });
+});
+
+describe('PF-13 the two chrome values the panels are built from', () => {
+  /**
+   * `THEME_CHOICES` and `Panel.controls()` were each read from one module and
+   * graded by none. The first is SPEC section 17's three-state theme setting,
+   * which the settings panel builds one radio per; the second is a reading a
+   * caller can get wrong in exactly one way, which is by keeping it.
+   */
+  it('offers SPEC section 17 three theme states, in the order the panel builds them', () => {
+    expect([...THEME_CHOICES]).toEqual(['system', 'light', 'dark']);
+    expect(THEME_CHOICES).toHaveLength(3);
+    // SYSTEM IS A VALUE AND NOT THE ABSENCE OF ONE, which is the half of the
+    // setting a two-state list would lose: it is first, because it is what a
+    // player who has never chosen gets.
+    expect(THEME_CHOICES[0]).toBe('system');
+    // And the panel builds exactly these, in this order: the list is the
+    // source, so a fourth state would have to be added here to reach a player.
+    const installed = installFakeDocument();
+    try {
+      const panel = createSettingsPanel({
+        onThemeChange: () => undefined,
+        onSurfaceScaleChange: () => undefined,
+        onReset: () => undefined,
+        onClose: () => undefined,
+        onEscape: () => undefined,
+      });
+      const markers = panel
+        .controls()
+        .map((control) => (control as unknown as FakeElement).dataset['pf'] ?? '')
+        .filter((marker) => marker.startsWith('theme-'));
+      expect(markers).toEqual(THEME_CHOICES.map((choice) => `theme-${choice}`));
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('hands out the live control list, which is what the interface states', () => {
+    // THE ALIASING IS THE CONTRACT, so it is pinned rather than described. A
+    // caller that took this for a snapshot would be reading a list that is
+    // still being appended to while a panel finishes building itself.
+    const installed = installFakeDocument();
+    try {
+      const panel: Panel = createPausePanel({
+        onResume: () => undefined,
+        onOpenSettings: () => undefined,
+        onOpenHowToPlay: () => undefined,
+        onQuit: () => undefined,
+        onEscape: () => undefined,
+      });
+      const held = panel.controls();
+      expect(panel.controls()).toBe(held);
+      const before = held.length;
+      expect(before).toBeGreaterThan(0);
+      const added = installed.document.createElement('button');
+      panel.addControl(added as unknown as HTMLElement);
+      // The reference taken BEFORE the addition carries it, which is the whole
+      // of what "live" means and the whole of what a holder has to know.
+      expect(held).toHaveLength(before + 1);
+      expect(held.at(-1)).toBe(added as unknown as HTMLElement);
+      expect(panel.controls()).toBe(held);
+      // A caller that wants a snapshot takes one, which is the documented way
+      // out and the control that keeps the assertion above from being vacuous.
+      const snapshot = [...panel.controls()];
+      panel.addControl(installed.document.createElement('button') as unknown as HTMLElement);
+      expect(snapshot).toHaveLength(before + 1);
+      expect(panel.controls()).toHaveLength(before + 2);
     } finally {
       installed.restore();
     }

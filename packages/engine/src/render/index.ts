@@ -15,13 +15,13 @@
  * yet, which is the one thing the extraction order exists to avoid.
  *
  * Nothing imports this. That is the point.
+ *
+ * ONE EXPORT, AND IT IS THE ONE THE FIXTURES NAME. The module stood on three
+ * for a while, a string constant and an interface beside this function, and
+ * nothing in `src/`, `tests/` or `scripts/` ever referred to either: a dead
+ * end needs exactly enough surface for the specifier to resolve, and the lint
+ * fixtures in `tests/lint/fixtures/` import `createSurface` alone.
  */
-
-export const ENGINE_RENDER_PLACEHOLDER = 'not-yet-extracted';
-
-export interface SurfacePlaceholder {
-  readonly extracted: false;
-}
 
 export function createSurface(): never {
   throw new Error(

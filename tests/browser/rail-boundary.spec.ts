@@ -211,6 +211,7 @@ interface Reading {
   readonly scale: number;
   readonly cssWidth: number;
   readonly backingWidth: number;
+  readonly backingHeight: number;
   readonly dark: boolean;
   readonly behind: readonly number[];
   readonly samples: readonly Sample[];
@@ -270,14 +271,20 @@ async function readBoundary(page: Page, edges: readonly Edge[]): Promise<Reading
         const second = luminance(other);
         return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
       };
+      // THE TRANSFORM'S OWN ORIGIN, which is the backing store's height: the
+      // module that owns the transform translates by `Math.round(720 * scale)`
+      // and the store is given that number of rows, so a design row sits at
+      // `origin - y * scale`. Counting down from an unrounded `720 * scale`
+      // instead misses the grid by the rounding residue - 0.08 of a device
+      // pixel at a backing scale of 0.336 - and reads the pixel beside the one
+      // the band was laid on.
+      const originY = Math.round(input.height * scale);
       const samples = [];
       for (const edge of input.edges) {
         // The edge, and the whole device pixel the boundary's pitch-facing
         // side is laid on: the same rounding the drawing takes.
         const bound =
-          edge.axis === 'across'
-            ? edge.bound * scale
-            : (input.height - edge.bound) * scale;
+          edge.axis === 'across' ? edge.bound * scale : originY - edge.bound * scale;
         const laid = Math.round(bound);
         const band = input.weight * scale;
         const from = edge.outward < 0 ? laid - band : laid;
@@ -289,7 +296,7 @@ async function readBoundary(page: Page, edges: readonly Edge[]): Promise<Reading
         for (const along of edge.alongs) {
           const other =
             edge.axis === 'across'
-              ? Math.round((input.height - along.at) * scale)
+              ? Math.round(originY - along.at * scale)
               : Math.round(along.at * scale);
           const read = (index: number): number[] =>
             edge.axis === 'across' ? pixelAt(index, other) : pixelAt(other, index);
@@ -319,6 +326,7 @@ async function readBoundary(page: Page, edges: readonly Edge[]): Promise<Reading
         scale,
         cssWidth,
         backingWidth: canvas.width,
+        backingHeight: canvas.height,
         dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
         behind,
         samples,
@@ -410,6 +418,13 @@ test.describe('the rail boundary, in rendered pixels', () => {
             // the reading used really is the backing store's.
             expect(reading.dark, where).toBe(variant.scheme === 'dark');
             expect(reading.backingWidth / LOGICAL_WIDTH, where).toBeCloseTo(reading.scale, 2);
+            // AND THE ORIGIN THIS READING COUNTS FROM IS THE STORE'S OWN
+            // HEIGHT, which is the whole of the arithmetic above: if the page
+            // ever translated by something other than the rounded product, the
+            // rows sampled here would be the rows beside the band.
+            expect(reading.backingHeight, `${where} backing height`).toBe(
+              Math.round(reading.scale * LOGICAL_HEIGHT),
+            );
             const whole = reading.scale >= WHOLE_PIXEL_SCALE;
             rows.push(
               `${where}: scale ${reading.scale.toFixed(3)}, ` +

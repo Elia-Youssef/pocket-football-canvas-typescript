@@ -180,8 +180,18 @@ describe('PF-11 the pitch, pass by pass', () => {
       { name: 'left', bound: FIELD_LEFT, axis: 'across' as const, outward: -1 },
       { name: 'right', bound: FIELD_RIGHT, axis: 'across' as const, outward: 1 },
     ];
+    // THE DEVICE ROW IS COUNTED FROM THE TRANSFORM'S OWN ORIGIN, and the
+    // origin is the ROUNDED one: `render/surface.ts` translates by
+    // `Math.round(LOGICAL_HEIGHT * scale)`, which is the backing store's own
+    // height, so design y sits at `origin - y * scale` and not at
+    // `(LOGICAL_HEIGHT - y) * scale`. The two differ by the rounding residue,
+    // 0.08 of a device pixel at 0.336 and 0.25 at 1.05, which is exactly
+    // enough to take a snapped band off the grid it is drawn on. The rule is
+    // rebuilt here from the arithmetic rather than imported, so a build whose
+    // origin stopped rounding is measured against the origin the store has.
+    const originOf = (scale: number): number => Math.round(LOGICAL_HEIGHT * scale);
     const device = (axis: 'down' | 'across', value: number, scale: number): number =>
-      axis === 'across' ? value * scale : (LOGICAL_HEIGHT - value) * scale;
+      axis === 'across' ? value * scale : originOf(scale) - value * scale;
     /** Whether some whole device pixel lies inside a span, ends included. */
     const coversAWholePixel = (from: number, to: number): boolean =>
       Math.ceil(from - 1e-9) + 1 <= to + 1e-9;
@@ -297,15 +307,19 @@ describe('PF-11 the pitch, pass by pass', () => {
     // are the mutations the harness makes at this module - `the rail boundary
     // is laid on whole device pixels, not across two`, `the rail boundary lies
     // on the rail side of the edge it is measured at` and `the rail boundary
-    // carries the weight the section states` - and the fourth is the rounding
-    // mistake nobody has made yet.
+    // carries the weight the section states` - the fourth is the rounding
+    // mistake nobody has made yet, and the fifth is the one two vehicles made
+    // at once, which the harness mutates as `the rail boundary is snapped to
+    // the grid the transform draws on`.
     const centreFor = (
       edge: { bound: number; axis: 'down' | 'across'; outward: number },
       scale: number,
       inner: number,
     ): number => {
       const middle = inner + edge.outward * ((3 * scale) / 2);
-      return edge.axis === 'across' ? middle / scale : LOGICAL_HEIGHT - middle / scale;
+      return edge.axis === 'across'
+        ? middle / scale
+        : (originOf(scale) - middle) / scale;
     };
     /** The six runs `drawWalls` records, from one centre line per edge. */
     const pathFrom = (
@@ -364,6 +378,22 @@ describe('PF-11 the pitch, pass by pass', () => {
         inner: (bound: number, outward: number, scale: number): number =>
           Math.round(bound) + outward * 13 * scale,
         fault: 'top: not on the rail side',
+      },
+      {
+        // THE CROSS-VEHICLE CASE, and the reason this helper counts rows from
+        // the rounded origin: a row snapped against the UNROUNDED top of the
+        // design space is a whole pixel of the grid that arithmetic draws, and
+        // 0.08 of a pixel off the grid the transform actually uses at 0.336.
+        // It is the placement this file accepted while the surface translated
+        // by the unrounded product, and it is the one a reader would rebuild
+        // from `LOGICAL_HEIGHT - y` without asking where the origin sits.
+        why: 'snapped against the unrounded top of the design space, not the transform origin',
+        scale: 0.336,
+        inner: (bound: number, _outward: number, scale: number): number => {
+          const residue = originOf(scale) - LOGICAL_HEIGHT * scale;
+          return residue + Math.round(bound - residue);
+        },
+        fault: 'top: not snapped',
       },
     ];
     for (const control of controls) {

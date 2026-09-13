@@ -609,6 +609,34 @@ describe('PF-7 PAUSED, SPEC sections 7 and 2.2', () => {
     m.dispatch({ kind: 'quit' });
     expect(stateOf(m)).toEqual({ kind: 'MENU' });
   });
+
+  it('leaves GAME_OVER for MENU on quit, which is SPEC section 13 Change mode', () => {
+    // THE CHART'S SECOND QUIT EDGE, graded on its own. The branch used to be
+    // the unguarded bottom of an if-chain, so nothing separated "quit is legal
+    // from GAME_OVER" from "quit is whatever is left over"; the two states the
+    // chart draws the edge from are now the whole of its guard, and both are
+    // asserted here against the states that must refuse it.
+    const spent = createMatch({ duration: 0.05 });
+    spent.dispatch({ kind: 'start' });
+    spent.dispatch({ kind: 'launch', angle: 0, power: 1 });
+    stepUntil(spent, (state) => state.kind === 'GAME_OVER');
+    expect(stateOf(spent)).toEqual({ kind: 'GAME_OVER' });
+    const before = spent.readout().scoring;
+    spent.dispatch({ kind: 'quit' });
+    expect(stateOf(spent)).toEqual({ kind: 'MENU' });
+    // Nothing was reset on the way: SPEC section 13 puts the match back through
+    // the configuration that follows in MENU, not through the edge itself.
+    expect(spent.readout().scoring.player).toBe(before.player);
+    expect(spent.readout().scoring.opponent).toBe(before.opponent);
+
+    // And the states the edge is NOT drawn from, each refused where it stands.
+    const live = createMatch({ duration: 30 });
+    live.dispatch({ kind: 'start' });
+    live.dispatch({ kind: 'launch', angle: 0, power: 1 });
+    expect(stateOf(live).kind).toBe('MOVING');
+    live.dispatch({ kind: 'quit' });
+    expect(stateOf(live).kind).toBe('MOVING');
+  });
 });
 
 describe('PF-7 restart mutates a fresh match out of every state, SPEC section 13', () => {

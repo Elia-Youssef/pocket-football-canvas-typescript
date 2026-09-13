@@ -163,7 +163,7 @@ export function createHud(options: HudOptions): Hud {
     setHiddenIfChanged(clock, true);
     // The target rides the readout, which is what lets a mode change reach the
     // centre slot by the one route every other match fact takes; the
-    // construction option is the fallback for a composition that has no modes.
+    // construction option is the fallback for a match configured without one.
     const target = readout.target ?? options.target;
     if (target !== undefined) {
       setTextIfChanged(targetLine, `FIRST TO ${formatNumber(target)}`);

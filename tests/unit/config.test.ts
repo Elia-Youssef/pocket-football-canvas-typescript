@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -201,5 +205,126 @@ describe('PF-2 the one power scale, SPEC section 6.1', () => {
     expect(travelDistance(450)).toBeGreaterThan(toTheBall);
     // "with 497 px to spare" at full power.
     expect(round(travelDistance(900) - toTheBall, 0)).toBe(497);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "In one place", held against the tree.
+// ---------------------------------------------------------------------------
+
+const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
+
+function sourceOf(relative: string): string {
+  return readFileSync(path.join(PROJECT_ROOT, relative), 'utf8');
+}
+
+/** The head comment of a module, which is where its claims about itself live. */
+function headerOf(source: string): string {
+  const end = source.indexOf('*/');
+  return end === -1 ? '' : source.slice(0, end);
+}
+
+/** Every `export const NAME` a module declares, in the order it declares them. */
+function exportedConstants(source: string): string[] {
+  return [...source.matchAll(/^export const ([A-Z][A-Z0-9_]*)\b/gm)].map(
+    (match) => match[1] ?? '',
+  );
+}
+
+/**
+ * SPEC section 5.1's discrete-aim constants, by name. The list is the claim:
+ * `config.ts` says they live in `core/aiming.ts`, and this is the set that
+ * sentence is about. It is written out rather than derived from the file it
+ * describes, because a list derived from the tree agrees with any tree.
+ *
+ * ELEVEN NAMES, AND THE ELEVENTH IS NOT A TUNING VALUE. Ten of them are the
+ * rates and steps SPEC section 5.1 states; `DEGREES_PER_TURN` is the definition
+ * of a turn, which the aim normalises into, and it is carried here because it
+ * is a constant the sentence has to be true about either way - a whole turn
+ * moved into `config.ts` with the paragraph left behind is the same defect as a
+ * rate that moved. The 2026-09-08 audit counted eleven constants outside
+ * `config.ts` for exactly that reason, and this is that set.
+ */
+const DISCRETE_AIM_CONSTANTS: readonly string[] = [
+  'ANGLE_TAP_DEGREES',
+  'ANGLE_FINE_TAP_DEGREES',
+  'ANGLE_HOLD_FROM_DEGREES',
+  'ANGLE_HOLD_TO_DEGREES',
+  'ANGLE_FINE_HOLD_DEGREES',
+  'POWER_TAP',
+  'POWER_HOLD_RATE',
+  'HOLD_DELAY',
+  'HOLD_RAMP',
+  'OPENING_POWER',
+  'DEGREES_PER_TURN',
+];
+
+/** SPEC section 14's effect lifetimes, the second exception, by its one name. */
+const EFFECT_LIFETIMES = 'EFFECT_SECONDS';
+
+describe('PF-2 config.ts is true about where the constants live', () => {
+  /**
+   * The header claimed "in one place" while eleven aim constants and the effect
+   * lifetimes sat in two other modules. The claim is now a claim with named
+   * exceptions, and this is what holds it: the sentence and the tree have to
+   * move together in either direction. A constant moved INTO `config.ts` with
+   * the paragraph left behind reddens here, and so does a paragraph that names
+   * a module which no longer holds anything.
+   */
+  it('names its two exceptions, and both are where the header says they are', () => {
+    const header = headerOf(sourceOf('src/core/config.ts'));
+    expect(header).toContain('two exceptions');
+    expect(header).toContain('`core/aiming.ts`');
+    expect(header).toContain('`render/effects.ts`');
+
+    const config = sourceOf('src/core/config.ts');
+    const aiming = sourceOf('src/core/aiming.ts');
+    const effects = sourceOf('src/render/effects.ts');
+    const declared = new Set(exportedConstants(config));
+    for (const name of DISCRETE_AIM_CONSTANTS) {
+      expect(exportedConstants(aiming), name).toContain(name);
+      expect(declared.has(name), name).toBe(false);
+    }
+    expect(exportedConstants(effects)).toContain(EFFECT_LIFETIMES);
+    expect(declared.has(EFFECT_LIFETIMES)).toBe(false);
+  });
+
+  it('is the home of every simulation constant the two exceptions are not', () => {
+    // The other half of the same sentence, and the half a scan of the two
+    // exception modules cannot make: what `config.ts` claims to hold, it holds.
+    // Pinned by name against the four sections the header cites, so a constant
+    // that migrated OUT of this module reddens rather than leaving the header
+    // describing a file that no longer has it.
+    const declared = new Set(exportedConstants(sourceOf('src/core/config.ts')));
+    for (const name of [
+      'LOGICAL_WIDTH', 'LOGICAL_HEIGHT', 'FIELD_LEFT', 'FIELD_RIGHT',
+      'FIELD_BOTTOM', 'FIELD_TOP', 'CIRCLE_RADIUS', 'BALL_RADIUS',
+      'MIN_LAUNCH_SPEED', 'MAX_LAUNCH_SPEED', 'MIN_DRAG', 'MAX_DRAG',
+      'DAMPING', 'STOP_SPEED', 'SPEED_CAP', 'FIXED_STEP', 'DELTA_CEILING',
+      'CATCH_UP_SLICE', 'RESUME_GAP',
+    ]) {
+      expect(declared.has(name), name).toBe(true);
+    }
+  });
+
+  it('would notice a constant that moved, in either direction', () => {
+    // The positive controls. Both helpers answer about a source it is handed,
+    // so a scanner that had stopped scanning reports a compliant tree forever.
+    expect(exportedConstants('export const HOLD_RAMP = 1;\n')).toEqual(['HOLD_RAMP']);
+    expect(exportedConstants('const HOLD_RAMP = 1;\n')).toEqual([]);
+    expect(exportedConstants('export const holdRamp = 1;\n')).toEqual([]);
+    expect(headerOf('/**\n * two exceptions\n */\nexport const A = 1;\n')).toContain(
+      'two exceptions',
+    );
+    expect(headerOf('/**\n * one place\n */\nexport const TWO_EXCEPTIONS = 1;\n')).not.toContain(
+      'two exceptions',
+    );
+    expect(headerOf('export const A = 1;\n')).toBe('');
+    // And the list itself, pinned: an entry quietly dropped would leave this
+    // file asserting less than it says it asserts. Eleven is the audit's own
+    // count of the constants that live outside `config.ts`, ten rates and the
+    // turn they are normalised into.
+    expect(DISCRETE_AIM_CONSTANTS).toHaveLength(11);
+    expect(DISCRETE_AIM_CONSTANTS).toContain('DEGREES_PER_TURN');
   });
 });
