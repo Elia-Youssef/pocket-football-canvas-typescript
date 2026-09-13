@@ -7540,6 +7540,127 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     replace: '    const frozen = false;',
     detectedBy: 'unit',
   },
+
+  // The repository's record of itself. Each of these four was a sentence in the
+  // tree that no gate read, and each stayed green while it stopped being true.
+  {
+    // tooling-F13. GITHUB section 8: the repository ignore file covers build
+    // output and dependency trees, and personal editor and tool state belongs
+    // in the per-clone exclude file, which is never committed. The entry names
+    // an editor in the repository record, which is what section 7 exists to
+    // keep out, and the ignore file's own heading already said so.
+    item: 'GH8',
+    name: 'the ignore file states no editor or operating-system entry',
+    file: '.gitignore',
+    find: '.env\n.env.*\n',
+    replace:
+      '.env\n.env.*\n\n# Editor and operating system metadata\n.vscode/\n',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F14 and trace-F16. GITHUB section 1, decision of 2026-09-07:
+    // the published tree carries no markdown, so a clean checkout receives no
+    // README.md and a description that sends a reader to one is a dangling
+    // reference rather than a note.
+    item: 'GH1',
+    name: 'no tracked file sends a reader to a document the checkout lacks',
+    file: 'packages/engine/package.json',
+    find:
+      '"description": "Placeholder for the shared engine extracted at ENG-1; ' +
+      'exports the render seam only.",',
+    replace: '"description": "Placeholder for the shared engine package. See README.md.",',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F17. GITHUB section 1 names the repository, and the manifest is
+    // what a reader of a clean clone sees first. The lockfile carries the same
+    // name twice, so the drift this breaks is the realistic one: a rename that
+    // moved the manifest and left a lockfile field behind.
+    item: 'GH1',
+    name: 'the package is named after the repository it is published as',
+    file: 'package.json',
+    find: '"name": "pocket-football-canvas-typescript",',
+    replace: '"name": "pocket-football-canvas-engine",',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F18. The owner file states in a comment that it gates nothing,
+    // and names the two ruleset fields as the reason. GITHUB section 9 is where
+    // that number is set; a recorded decision that quietly stops being true is
+    // worse than no comment at all, so the comment is tied to the file it cites.
+    item: 'GH9',
+    name: 'the owner file and the ruleset agree about who has to review',
+    file: '.github/rulesets/protect-main.json',
+    find: '"required_approving_review_count": 0,',
+    replace: '"required_approving_review_count": 1,',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F18, the other half. An owner line with no reason beside it is
+    // the dead file the audit row found; what makes it a recorded decision is
+    // that the reason names the file where the numbers are set, so the next
+    // reader can check it rather than take it.
+    item: 'GH9',
+    name: 'the owner file names where its review numbers are set',
+    file: '.github/CODEOWNERS',
+    find: '# oversight. The ruleset at .github/rulesets/protect-main.json sets\n',
+    replace: '# oversight. The ruleset sets\n',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F15, the sixth declaration. The suite reaches the harness from
+    // four unit test files through this declaration, so it decides what all
+    // four believe about the module; the comparison runs in both directions.
+    item: 'QB13',
+    name: 'the harness declaration is compared against the harness itself',
+    file: 'scripts/mutation-check.d.mts',
+    find: 'export declare function browserDetectorArgs(whole: boolean): string[];',
+    replace:
+      'export declare function browserDetectorArguments(whole: boolean): string[];',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F13, the spelling half. GITHUB section 8 is about the names, not
+    // about how they are written, and git accepts one directory as the bare
+    // name, with a leading `**` segment, with a trailing `/**`, with a parent
+    // in front of it, or as a file inside it. A refusal anchored on the whole
+    // entry sees the bare spelling alone, which leaves the block this vehicle
+    // removed one prefix away from coming back with every gate still green.
+    item: 'GH8',
+    name: 'the ignore file refuses an editor entry however it is spelled',
+    file: '.gitignore',
+    find: '# Tool caches\n',
+    replace:
+      '# Editor and operating system metadata\n**/.vscode/\n**/.idea/\n' +
+      '**/.DS_Store\n\n# Tool caches\n',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F13, the other side of the same file. The refusal above is just
+    // as green on a file emptied of everything, so what the file must carry is
+    // stated as well: GITHUB section 8 names the logs and the local environment
+    // values, and those two entries are the only thing standing between a file
+    // created by habit and a commit to a public repository.
+    item: 'GH8',
+    name: 'the ignore file still carries every block the house rule names',
+    file: '.gitignore',
+    find: '# exist so that a file created by habit cannot be committed by accident.\n.env\n.env.*\n',
+    replace: '# exist so that a file created by habit cannot be committed by accident.\n',
+    detectedBy: 'unit',
+  },
+  {
+    // tooling-F18, the recorded reason read rather than searched. A comment
+    // naming the two ruleset fields satisfies a search for those names while
+    // stating the opposite of what the ruleset sets, and a recorded decision
+    // that is false is worse than no comment at all, so the two values are
+    // parsed out of the comment and compared with the file it cites.
+    item: 'GH9',
+    name: 'the owner file states the review count the ruleset sets',
+    file: '.github/CODEOWNERS',
+    find: 'required_approving_review_count to 0',
+    replace: 'required_approving_review_count to 1',
+    detectedBy: 'unit',
+  },
 ];
 
 /**
@@ -7653,6 +7774,18 @@ export const ADDITIONS = [
       'export function wire(target: HTMLElement): void {\n' +
       '  target.ontouchstart = (): void => undefined;\n' +
       '}\n',
+    detectedBy: 'unit',
+  },
+
+  // tooling-F15. The declarations are compared one file at a time, so the list
+  // of files being compared is itself a claim about the repository: a seventh
+  // declaration written beside a module, with nothing comparing it, is the
+  // state the audit row describes and no per-file comparison can see it.
+  {
+    item: 'QB13',
+    name: 'a new declaration file with nothing comparing it is rejected',
+    file: 'scripts/mutation-declaration-orphan.d.mts',
+    content: 'export declare const orphan: number;\n',
     detectedBy: 'unit',
   },
 ];

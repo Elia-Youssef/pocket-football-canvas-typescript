@@ -1,1 +1,12 @@
+# This file gates nothing today, and that is a recorded decision rather than an
+# oversight. The ruleset at .github/rulesets/protect-main.json sets
+# required_approving_review_count to 0 and require_code_owner_review to false,
+# and GitHub never requests a review from a pull request's own author, so on a
+# one-person repository an owner entry can only ever name the person who opened
+# the pull request. GITHUB section 5 says when that changes: required approvals
+# go from 0 to 1 as soon as a second person joins, and section 9 says where the
+# number is set, which is the ruleset file named above and not this one. Until
+# then the owner is stated so that the answer is already written down, and
+# tests/unit/repository-hygiene.test.ts fails if either ruleset value starts
+# asking for a review while this comment still says neither does.
 * @Elia-Youssef

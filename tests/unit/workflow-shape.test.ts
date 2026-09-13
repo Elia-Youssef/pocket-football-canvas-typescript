@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import * as harness from '../../scripts/mutation-check.mjs';
+
 /**
  * The shape of the gates that decide a merge: the workflow, the dependency
  * policy, the install policy, and the harness's own rule for reading a
@@ -46,72 +48,16 @@ const DEPENDABOT = read('.github/dependabot.yml');
 const NPMRC = read('.npmrc');
 
 /**
- * The harness, loaded through a computed URL.
+ * The harness is imported statically, through the declaration file beside it.
  *
- * `scripts/mutation-check.mjs` is the one gate script with no hand-written
- * declaration file beside it, so a static import would not type check. The
- * shape below is asserted against the module's own export list in the first
- * test in this file, which is the same protection `declarations.test.ts` gives
- * the five modules that do have declarations.
+ * It used to be loaded through a computed URL and cast to a shape written here,
+ * because the declaration beside `scripts/mutation-check.mjs` covered a single
+ * export and was compared by nothing: this file's cast was a second hand-written
+ * shape for the same module, which is the defect `declarations.test.ts` exists
+ * to refuse. The declaration now covers every value export and that test
+ * compares it both ways, so this file drives the real names and the type checker
+ * reads the same file the test grades.
  */
-interface DetectorOutcome {
-  passed: boolean;
-  killed: boolean;
-  output: string;
-}
-
-interface TreeChange {
-  path: string;
-  was: string | null;
-  now: string | null;
-}
-
-interface Incident {
-  entry: string;
-  attempt: number;
-  paths: string[];
-  failed: string[];
-  /** Whether the entry is measured again, which the incident line has to say. */
-  rerun?: boolean;
-}
-
-interface Harness {
-  detectorOutcome(
-    error: unknown,
-    stdout?: string,
-    stderr?: string,
-  ): DetectorOutcome;
-  entryVerdict(outcome: DetectorOutcome): string;
-  sweepSummary(input: {
-    total: number;
-    ran: number;
-    missed: number;
-    stoppedAt?: string | null;
-    stopReason?: string;
-    incidents?: Incident[];
-    finalDrift?: string[];
-  }): { status: number; lines: string[] };
-  treeDrift(
-    before: Map<string, string>,
-    after: Map<string, string>,
-  ): TreeChange[];
-  restorePlan(
-    drift: TreeChange[],
-    known: Map<string, unknown>,
-  ): { restore: string[]; remove: string[] };
-  driftVerdict(input: {
-    paths?: string[];
-    failed?: string[];
-    attempt?: number;
-  }): { stop: string | null; rerun: boolean };
-  incidentLines(incident: Incident): string[];
-  filesUnder(root: string, skip?: Set<string>): string[];
-  treeListing(root?: string, skip?: Set<string>): Map<string, string>;
-}
-
-const harness = (await import(
-  new URL('../../scripts/mutation-check.mjs', import.meta.url).href
-)) as Harness;
 
 /**
  * The two required status check contexts, read from the ruleset rather than
