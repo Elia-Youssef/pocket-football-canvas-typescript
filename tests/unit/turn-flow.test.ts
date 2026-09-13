@@ -431,8 +431,13 @@ describe('PF-7 the match clock, the binding reading', () => {
     set(probe.world.player.position, 640 - 34 - 18 - 1, MIDLINE_Y);
     probe.dispatch({ kind: 'launch', angle: 0, power: 1 });
     let clockBefore = probe.readout().clock ?? 0;
+    let probeSteps = 0;
     while (stateOf(probe).kind !== 'GOAL') {
       probe.update(STEP);
+      probeSteps += 1;
+      if (probeSteps > BUDGET) {
+        throw new Error('the probe never reached its scripted goal');
+      }
       if (stateOf(probe).kind === 'GOAL') {
         break;
       }
@@ -560,9 +565,14 @@ describe('PF-7 PAUSED, SPEC sections 7 and 2.2', () => {
     }
     expect(held.readout().clock).toBe(clockAtPause);
     held.dispatch({ kind: 'resume' });
+    let settlingSteps = 0;
     while (stateOf(free).kind === 'MOVING' || stateOf(held).kind === 'MOVING') {
       free.update(STEP);
       held.update(STEP);
+      settlingSteps += 1;
+      if (settlingSteps > BUDGET) {
+        throw new Error('the paired shots never came to rest');
+      }
     }
     expect(stateOf(free).kind).not.toBe('MOVING');
     expect(digest(held.world)).toBe(digest(free.world));

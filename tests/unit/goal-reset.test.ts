@@ -12,6 +12,7 @@ import {
 } from '../../src/core/config';
 import { GOAL_HOLD_STEPS, createScoring } from '../../src/core/goals';
 import type { Goal } from '../../src/core/goals';
+import type { Scoring } from '../../src/core/goals';
 import type { Match, MatchState } from '../../src/core/match';
 import { createMatch } from '../../src/core/match';
 import { createSimulation } from '../../src/core/physics';
@@ -48,6 +49,11 @@ const STEP = FIXED_STEP;
 
 const BUDGET = 20000;
 
+// A direct full-power ball reaches the right mouth in under 200 fixed steps.
+// Two thousand leaves a tenfold margin while turning a damping regression that
+// stops the ball short into an assertion instead of a synchronous hang.
+const FROZEN_STEP_CAP = 2000;
+
 function stateOf(m: Match): MatchState {
   return m.readout().state;
 }
@@ -59,6 +65,18 @@ function driveUntil(m: Match, ready: (state: MatchState) => boolean): number {
     steps += 1;
     if (steps > BUDGET) {
       throw new Error('the target state never arrived');
+    }
+  }
+  return steps;
+}
+
+function stepUntilFrozen(sim: ReturnType<typeof createSimulation>, scoring: Scoring): number {
+  let steps = 0;
+  while (!scoring.readout().frozen) {
+    sim.step();
+    steps += 1;
+    if (steps > FROZEN_STEP_CAP) {
+      throw new Error('the scripted ball never reached the goal');
     }
   }
   return steps;
@@ -179,9 +197,7 @@ describe('PF-7 the restart order puts the world back before the scoreboard, item
     const sim = createSimulation({ onNonFinite: 'throw', scoring: wrong });
     park(sim.world);
     launch(sim.world.ball, 0, 900);
-    while (!wrong.readout().frozen) {
-      sim.step();
-    }
+    stepUntilFrozen(sim, wrong);
     for (let held = 0; held < 30; held += 1) {
       sim.step();
     }
@@ -200,9 +216,7 @@ describe('PF-7 the restart order puts the world back before the scoreboard, item
     const other = createSimulation({ onNonFinite: 'throw', scoring: right });
     park(other.world);
     launch(other.world.ball, 0, 900);
-    while (!right.readout().frozen) {
-      other.step();
-    }
+    stepUntilFrozen(other, right);
     for (let held = 0; held < 30; held += 1) {
       other.step();
     }
