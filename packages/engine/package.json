@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Placeholder for the shared engine package. See README.md.",
+  "description": "Placeholder for the shared engine extracted at ENG-1; exports the render seam only.",
   "exports": {
     "./render": "./src/render/index.ts"
   }

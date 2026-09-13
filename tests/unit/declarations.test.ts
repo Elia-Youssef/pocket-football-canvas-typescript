@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import * as determinism from '../../scripts/check-determinism.mjs';
+import * as mutation from '../../scripts/mutation-check.mjs';
 import * as fingerprint from '../../scripts/output-fingerprint.mjs';
 import * as record from '../../scripts/check-repository-record.mjs';
 import * as boundary from '../../tools/eslint-plugin-core-boundary/index.js';
@@ -14,14 +15,26 @@ import * as pointer from '../../tools/eslint-plugin-pointer-events/index.js';
  * The hand-written declarations, checked against the modules they describe.
  *
  * WHY THIS EXISTS. `tsconfig.json` includes `scripts` but not `tools`, and
- * `allowJs` is off, so neither the two lint plugins nor the three gate scripts
- * are type checked. The suite reaches all five through declarations written by
+ * `allowJs` is off, so neither the two lint plugins nor the four gate scripts
+ * are type checked. The suite reaches all six through declarations written by
  * hand beside them, which means the declarations, and not the implementations,
  * decide what every test in this project believes about those modules. A
  * declaration that over-states its module type checks and fails at run time; a
  * declaration that under-states one hides an export nobody knows is there. The
  * evidence layer for four gates, three of them attached to Critical items,
- * rests on five files that nothing verified.
+ * rests on six files that nothing verified.
+ *
+ * WHY NOT `checkJs` INSTEAD, which is the other route the audit named. Measured
+ * on this tree: `tsc --allowJs --checkJs` over `scripts/` and `tools/` under
+ * this project's own compiler options reports 194 errors across 13 files, 159
+ * of them a parameter or a destructured binding with no type. The four gate
+ * scripts carry 143 of the 194 and are only reached with the declaration beside
+ * each one out of the way, since a declaration shadows the module it describes;
+ * the two lint plugins carry the other 51 as they stand. That is a refactor of
+ * six modules, not a hygiene change, and it would have to land in one piece
+ * because the declarations come out in the same commit. The comparison below is
+ * the weaker check that can be had today; the stronger one is still owed and is
+ * recorded here rather than in a plan nobody reads.
  *
  * WHAT IS COMPARED, AND WHAT IS NOT. The value exports only, in both
  * directions: a declaration file's `export declare` names plus `export
@@ -103,6 +116,12 @@ const SUBJECTS: readonly Subject[] = [
     anchor: 'checkCommitRecord',
   },
   {
+    label: 'scripts/mutation-check.mjs',
+    declaration: 'scripts/mutation-check.d.mts',
+    namespace: mutation,
+    anchor: 'browserDetectorArgs',
+  },
+  {
     label: 'scripts/output-fingerprint.mjs',
     declaration: 'scripts/output-fingerprint.d.mts',
     namespace: fingerprint,
@@ -124,16 +143,36 @@ const SUBJECTS: readonly Subject[] = [
 
 describe('the hand-written declarations describe the modules they stand for', () => {
   it('covers every module the suite reaches through a declaration', () => {
-    // A list that quietly loses an entry would report five green comparisons of
-    // four modules, so the count is pinned and each label is named.
-    expect(SUBJECTS).toHaveLength(5);
+    // A list that quietly loses an entry would report six green comparisons of
+    // five modules, so the count is pinned and each label is named. The count is
+    // the number of hand-written declaration files in the repository: every one
+    // of them is compared, which is the whole of the claim.
+    expect(SUBJECTS).toHaveLength(6);
     expect(SUBJECTS.map((subject) => subject.label)).toEqual([
       'scripts/check-determinism.mjs',
       'scripts/check-repository-record.mjs',
+      'scripts/mutation-check.mjs',
       'scripts/output-fingerprint.mjs',
       'tools/eslint-plugin-core-boundary/index.js',
       'tools/eslint-plugin-pointer-events/index.js',
     ]);
+  });
+
+  it('leaves no declaration file out of that list', () => {
+    // The list above is hand-written, so on its own it says only that six
+    // comparisons run. What makes it a claim about the repository is this:
+    // every `.d.ts` and `.d.mts` written by hand under `scripts/` and `tools/`
+    // is one of the six. A seventh declaration added beside a module with no
+    // comparison behind it is the exact state audit finding tooling-F15
+    // describes, and it would be invisible to every test above.
+    const declarations = mutation
+      .filesUnder(PROJECT_ROOT)
+      .filter(
+        (relative) =>
+          (relative.startsWith('scripts/') || relative.startsWith('tools/')) &&
+          (relative.endsWith('.d.ts') || relative.endsWith('.d.mts')),
+      );
+    expect(declarations).toEqual(SUBJECTS.map((subject) => subject.declaration));
   });
 
   for (const subject of SUBJECTS) {
