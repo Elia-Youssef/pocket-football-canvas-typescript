@@ -10,6 +10,7 @@ import {
   SPEED_CAP,
   TIME_EPSILON,
 } from '../../src/core/config';
+import { createMatch } from '../../src/core/match';
 import { atRest, contain, createSimulation } from '../../src/core/physics';
 import { addScaled, distance, scale, set, zero } from '../../src/core/vec2';
 import { RATES, driveToSettled, snapshot } from './support/drive';
@@ -297,6 +298,23 @@ describe('PF-2 frame-rate independence, item B1', () => {
     expect(readings.update(3).applied).toBe(0.25);
     expect(readings.update(40).resumed).toBe(true);
     expect(readings.update(40).steps).toBe(0);
+  });
+
+  it('does not consume a negative frame through the public update path', () => {
+    // acceptedFrameDelta owns this refusal. If its non-positive guard goes,
+    // the match clock grows rather than standing still. The physics fast path
+    // alone cannot expose the fault because it deliberately also drops the
+    // invalid delta while distinguishing it from a resume gap.
+    const match = createMatch({ duration: 60 });
+    match.dispatch({ kind: 'start' });
+    const before = match.readout();
+    const world = snapshot(match.world);
+
+    match.update(-FIXED_STEP);
+
+    expect(match.readout().clock).toBe(before.clock);
+    expect(match.readout().state).toEqual(before.state);
+    expect(snapshot(match.world)).toEqual(world);
   });
 
   it('consumes a clamped frame in slices no larger than the catch-up ceiling', () => {

@@ -247,9 +247,14 @@ describe('PF-7 the opponent delay is a simulation timer, item D2', () => {
     }
     expect(held.readout().opponentReady, 'the wait did not run while paused').toBe(false);
     held.dispatch({ kind: 'resume' });
+    let resumedSteps = 0;
     while (!held.readout().opponentReady) {
       held.update(STEP);
       activeTime += STEP;
+      resumedSteps += 1;
+      if (resumedSteps > BUDGET) {
+        throw new Error('the resumed seam never rose');
+      }
     }
     const plain = chargedUntilReady(free, [STEP]);
     expect(activeTime).toBe(plain);
@@ -401,9 +406,14 @@ describe('PF-7 nothing in the match schedules or holds a handle, item D2', () =>
 
     // And the first match, left to finish its own wait, rises on its own
     // accumulation rather than on the other match's completion.
+    let finishingSteps = 0;
     while (!early.readout().opponentReady) {
       early.update(STEP);
       earlyCharged += STEP;
+      finishingSteps += 1;
+      if (finishingSteps > BUDGET) {
+        throw new Error('the independent seam never rose');
+      }
     }
     expect(earlyCharged).toBeGreaterThanOrEqual(OPPONENT_PRELAUNCH_DELAY);
     expect(earlyCharged).toBeLessThan(OPPONENT_PRELAUNCH_DELAY + STEP);

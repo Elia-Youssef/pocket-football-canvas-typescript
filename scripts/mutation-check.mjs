@@ -1117,10 +1117,13 @@ export const EDITS = [
   },
   {
     item: 'B1',
+    // acceptedFrameDelta owns the reading of non-positive elapsed time. The
+    // physics fast path repeats it only while deciding whether a finite gap
+    // resets the accumulator, so removing that half there changes no outcome.
     name: 'a negative delta is no time at all',
-    file: 'src/core/physics.ts',
-    find: '      if (!Number.isFinite(delta) || delta <= 0) {',
-    replace: '      if (!Number.isFinite(delta)) {',
+    file: 'src/core/config.ts',
+    find: '  if (!Number.isFinite(delta) || delta <= 0 || delta > RESUME_GAP) {',
+    replace: '  if (!Number.isFinite(delta) || delta > RESUME_GAP) {',
     detectedBy: 'unit',
   },
   {
@@ -6957,7 +6960,8 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     replace:
       "  const notice = document.createElement('audio');\n" +
       "  notice.setAttribute('controls', '');\n" +
-      "  notice.setAttribute('aria-label', 'Whistle');",
+      "  notice.setAttribute('aria-label', 'Whistle');\n" +
+      "  panel.append(notice);",
     detectedBy: 'unit',
   },
   {
