@@ -681,13 +681,18 @@ describe('PF-1 design tokens', () => {
       expect(CHROME.rows).toHaveLength(4);
       expect(SURFACE.rows).toHaveLength(10);
       expect(ARROW_ACCENT.rows).toHaveLength(1);
+      // Fourteen rows, which is what SPEC section 18's measured table states
+      // once its two rail-FILL rows are gone: the section retired them with
+      // the correction that gave the rail a boundary, and a fill row carrying
+      // a threshold of 3 here would be a guarantee the source no longer makes.
       expect(PAIRS.rows).toHaveLength(14);
       expect(IDENTITY.rows).toHaveLength(2);
       expect(RETRACTED.rows).toHaveLength(2);
-      // Section 8 lists the two cells whose threshold the source scopes to a
-      // named carrier, corrected 2026-08-29 from the two disclosures this
-      // file recorded at PF-1.
-      expect(SCOPED.rows).toHaveLength(2);
+      // Section 8 lists the one cell whose threshold the source scopes to a
+      // named carrier. It listed two until the rail's guarantee moved to the
+      // boundary, which clears on both stripes in both variants and needs no
+      // scoping at all.
+      expect(SCOPED.rows).toHaveLength(1);
       // Section 1 carries a second table, the prose derivations. Reading it by
       // accident would compare the wrong column.
       expect(tablesUnder('1. Numeric scales')).toHaveLength(2);
@@ -945,43 +950,78 @@ describe('PF-1 design tokens', () => {
           checked += 1;
         }
       }
-      // Fourteen rows, two variants, and the two cells section 8 scopes away.
-      expect(checked).toBe(14 * 2 - 2);
-      expect(quiet).toBe(2);
-      expect(scoped.size).toBe(2);
+      // Fourteen rows, two variants, and the one cell section 8 scopes away.
+      expect(checked).toBe(14 * 2 - 1);
+      expect(quiet).toBe(1);
+      expect(scoped.size).toBe(1);
     });
 
-    it('holds the corrected rail cell: re-derives, stays quiet, and the pitch row carries it', () => {
-      const row = SCOPED.rows.find((entry) => field(SCOPED, entry, 'Pair') === 'Rail on ground');
-      if (row === undefined) {
-        throw new Error('the contract scopes no rail cell');
+    it('holds the rail boundary against both mown stripes, in both variants', () => {
+      // SPEC section 18's rail row states the boundary against BOTH stripes,
+      // floodlit first: 5.38 / 4.70 and 3.71 / 3.27. It used to quote the
+      // stripe A pair of the rail FILL alone, which is how the daylight stripe
+      // B cell sat at 2.72 unstated until the 2026-09-08 audit measured it;
+      // the guarantee now belongs to the three-design-unit `--pf-line`
+      // boundary the wall pass draws, and these are its four cells.
+      const rows = PAIRS.rows.filter((entry) =>
+        field(PAIRS, entry, 'Pair').startsWith('Rail boundary on stripe'),
+      );
+      expect(rows.map((entry) => field(PAIRS, entry, 'Pair'))).toEqual([
+        'Rail boundary on stripe A',
+        'Rail boundary on stripe B',
+      ]);
+      /** Re-derived to the quoted cell, and clearing the threshold beside it. */
+      const holds = (quoted: string, derived: number, needs: number): boolean =>
+        round2(derived) === Number(quoted) && derived >= needs;
+      let checked = 0;
+      for (const row of rows) {
+        expect(field(PAIRS, row, 'Foreground'), field(PAIRS, row, 'Pair')).toBe('--pf-line');
+        for (const variant of VARIANTS) {
+          const derived = contrast(
+            resolve(field(PAIRS, row, 'Foreground'), variant),
+            resolve(field(PAIRS, row, 'Background'), variant),
+          );
+          expect(
+            holds(
+              field(PAIRS, row, columnFor(variant)),
+              derived,
+              Number(field(PAIRS, row, 'Needs')),
+            ),
+            `${field(PAIRS, row, 'Pair')}, ${variant}`,
+          ).toBe(true);
+          checked += 1;
+        }
       }
-      expect(variantOf(field(SCOPED, row, 'Variant'))).toBe('daylight');
-      const source = PAIRS.rows.find((entry) => field(PAIRS, entry, 'Pair') === 'Rail on ground');
-      if (source === undefined) {
-        throw new Error('the measured pairs carry no rail row');
-      }
-      const derived = contrast(resolve('--pf-rail', 'daylight'), resolve('--pf-ground', 'daylight'));
-      // Derived, quoted in section 5, and pinned here, so a hex nudged back
-      // toward the retired 8.59 quote fails in three places at once.
-      expect(round2(derived)).toBe(Number(field(SCOPED, row, 'Measured')));
-      expect(field(PAIRS, source, columnFor('daylight'))).toBe(field(SCOPED, row, 'Measured'));
-      // Deliberately quiet: the source scopes the 3:1 to the floodlit variant,
-      // so the cell is asserted BELOW the ceiling, and a rail recoloured until
-      // it clears fails as loudly as one that stopped clearing floodlit. The
-      // recolour is also what would invert the cross-variant luminance order.
-      expect(derived).toBeLessThan(Number(field(SCOPED, row, 'Stays below')));
-      // The carrier the source names: rail on pitch, both variants, and the
-      // floodlit half of the same row still re-derives and clears on its own.
-      for (const variant of VARIANTS) {
-        expect(
-          contrast(resolve('--pf-rail', variant), resolve('--pitch-stripe-a', variant)),
-          `rail on pitch, ${variant}`,
-        ).toBeGreaterThanOrEqual(3);
-      }
+      expect(checked).toBe(4);
+      // THE FOUR CELLS AS LITERALS, in the order the section quotes them, so a
+      // fixture edited to agree with a moved hex fails here as well as there.
       expect(
-        round2(contrast(resolve('--pf-rail', 'floodlit'), resolve('--pf-ground', 'floodlit'))),
-      ).toBe(11.82);
+        round2(contrast(resolve('--pf-line', 'floodlit'), resolve('--pitch-stripe-a', 'floodlit'))),
+      ).toBe(5.38);
+      expect(
+        round2(contrast(resolve('--pf-line', 'floodlit'), resolve('--pitch-stripe-b', 'floodlit'))),
+      ).toBe(4.7);
+      expect(
+        round2(contrast(resolve('--pf-line', 'daylight'), resolve('--pitch-stripe-a', 'daylight'))),
+      ).toBe(3.71);
+      expect(
+        round2(contrast(resolve('--pf-line', 'daylight'), resolve('--pitch-stripe-b', 'daylight'))),
+      ).toBe(3.27);
+      // THE CONTROLS, one per way the check can be wrong. A cell that does not
+      // re-derive is refused; and so is one that re-derives and does not clear,
+      // which the daylight rail FILL on stripe B still is. The fill's own
+      // reading is not quoted here, because SPEC section 18 no longer states
+      // one and a literal would red on a recolour the section now permits: what
+      // is asserted is that the fill re-derives to whatever it re-derives to
+      // and is refused all the same. The 2026-09-08 audit read it at 2.72
+      // against the 3 the table asks for, which is why the row above is the
+      // boundary's rather than the fill's.
+      expect(holds('3.71', 3.81, 3)).toBe(false);
+      const fillOnStripeB = contrast(
+        resolve('--pf-rail', 'daylight'),
+        resolve('--pitch-stripe-b', 'daylight'),
+      );
+      expect(holds(String(round2(fillOnStripeB)), fillOnStripeB, 3)).toBe(false);
     });
 
     it('holds the corrected arrow cells: the fills re-derive and the outline carries the guarantee', () => {
@@ -1026,15 +1066,17 @@ describe('PF-1 design tokens', () => {
           `outline on stripe B, ${variant}`,
         ).toBeGreaterThanOrEqual(3);
       }
-      // Exactly two cells are scoped, and these are they: a third quiet cell
-      // cannot arrive unannounced.
+      // Exactly one cell is scoped, and this is it: a second quiet cell cannot
+      // arrive unannounced. The rail's cell left this table with the boundary
+      // correction, which gave that row a carrier that clears on both stripes
+      // in both variants and needs no scope.
       expect(
         SCOPED.rows
           .map((entry) =>
             cellKey(field(SCOPED, entry, 'Pair'), variantOf(field(SCOPED, entry, 'Variant'))),
           )
           .sort(),
-      ).toEqual(['Aim arrow strong end on pitch  daylight', 'Rail on ground  daylight']);
+      ).toEqual(['Aim arrow strong end on pitch  daylight']);
     });
 
     it('re-derives both identity luminances to two decimal places', () => {

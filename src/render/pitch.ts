@@ -26,6 +26,16 @@
  * floor the table already measured. It is drawn under the markings and the
  * rail, so nothing that carries a contrast guarantee is tinted by it.
  *
+ * THE RAIL'S BOUNDARY IS PLACED IN DEVICE PIXELS, and it is the one thing in
+ * this file that needs the backing-store scale. SPEC section 18 states the
+ * boundary's weight in design units and its 3:1 floor in RENDERED pixels, and
+ * those are two different spaces: three design units cover a whole device
+ * pixel from a backing scale of one third upward and part of one below it, so
+ * WHERE the band falls decides whether any whole device pixel of it is the
+ * boundary's own colour. The scale is the layer's own, handed down from
+ * `renderStaticPitch`; no transform is built here and no dimension is measured
+ * here.
+ *
  * THE PASS ORDER is DESIGN section 7's: pitch, goal frames, effects behind,
  * entities, aim arrow, effects in front. All six live in `drawFrame` below.
  * SPEC section 11's guide joined the aim pass at PF-9, immediately under the
@@ -62,6 +72,7 @@ import {
   GOAL_FRAME_DEPTH,
   GOAL_OPENING_HIGH,
   GOAL_OPENING_LOW,
+  LOGICAL_HEIGHT,
   WALL_THICKNESS,
 } from '../core/config';
 import type { AimPreview } from '../core/aiming';
@@ -203,33 +214,101 @@ function wallRects(): readonly [Rect, Rect, Rect, Rect, Rect, Rect] {
   ];
 }
 
+/**
+ * The weight of the rail's pitch-facing boundary, in design units.
+ *
+ * SPEC section 18 states three, and states the floor it has to hold in
+ * RENDERED pixels. Three design units are three thirds of a device pixel at a
+ * backing scale of one third, so that scale is exactly where they start
+ * covering a WHOLE device pixel of `--pf-line`, and it is a surface whose CSS
+ * width times the device ratio is at least 426.7. Below it the band covers
+ * part of a pixel over the rail and the best pixel across its width is a
+ * line-over-rail blend, which the section records still clearing the floor
+ * down to a 320 CSS pixel surface at ratio 1. The hairline this replaced
+ * covers a third of a pixel at 0.336 and does not appear in the rendered image
+ * at that scale at all: the brightest pixel across its width is the rail fill,
+ * which is 2.72:1 against the daylight stripe B where the table asks for 3.
+ */
+const BOUNDARY_WEIGHT = BORDER.thick;
+
+/** What a centred stroke covers either side of the path it is stroked along. */
+const HALF_BOUNDARY = BOUNDARY_WEIGHT / 2;
+
+/**
+ * A design coordinate moved to where it lands on a whole device pixel.
+ *
+ * A WEIGHT ALONE DOES NOT RESOLVE. A band 1.008 device pixels wide, which is
+ * three design units at the 0.336 the 2026-09-08 audit read, laid across a
+ * pixel boundary covers two pixels by about half each, and a half-covered
+ * pixel is a blend of the boundary and whatever is under it rather than the
+ * boundary's own colour, which is what the 2026-09-08 audit read back off the
+ * live canvas at 2.59:1 where SPEC section 18's table asks for 3. Snapped, the
+ * same band covers one pixel whole and spills 0.008 of a pixel into the next,
+ * and the whole one is what the section's floor is measured on.
+ *
+ * A SCALE THAT IS NOT A POSITIVE FINITE NUMBER has no device pixels to snap
+ * to, and both halves of that are reachable: a surface reports a scale of zero
+ * until its first fit, and the composition root's frame guard refuses a scale
+ * at or below zero and lets everything else through, a NaN included. Either
+ * way the coordinate comes back as it was asked for, which is a drawing rather
+ * than a NaN through every path the wall pass builds.
+ */
+function onDevicePixel(designUnits: number, scale: number): number {
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return designUnits;
+  }
+  return Math.round(designUnits * scale) / scale;
+}
+
+/** The same, through the flip, for a coordinate the transform measures down. */
+function onDeviceRow(designY: number, scale: number): number {
+  return LOGICAL_HEIGHT - onDevicePixel(LOGICAL_HEIGHT - designY, scale);
+}
+
 export function drawWalls(
   context: CanvasRenderingContext2D,
   palette: PitchPalette,
+  scale: number,
 ): void {
   context.fillStyle = palette.rail;
   for (const rect of wallRects()) {
     context.fillRect(rect.x, rect.y, rect.width, rect.height);
   }
-  // The raised rail's boundary: one light hairline along every pitch-facing
-  // edge. SPEC section 18 lists the rail among the objects that carry the
-  // --pf-line outline, and the edge it sits on is against the pitch, which is
-  // the pair the section measures it at.
+  // The raised rail's boundary: SPEC section 18's three design units of
+  // --pf-line along every pitch-facing edge, goal openings excluded. The
+  // section lists the rail among the objects that carry the outline, and the
+  // pair it measures the outline at is the boundary against the two mown
+  // stripes, which are what lies on the other side of this edge.
+  //
+  // THE BAND IS LAID AGAINST THE EDGE, on the rail's side to within the snap,
+  // and both halves of that belong to the measurement. A band centred on the
+  // edge spends half its weight painting over the stripe it is then measured
+  // against, and where the whole band is about one device pixel wide neither
+  // half is one; ended ON the edge, it has the stripe next to it with nothing
+  // of its own in between. The snap rounds, so the side facing the pitch lands
+  // within half a device pixel of the bound rather than exactly on it, and the
+  // band lies on the rail's side of that bound to within the snap. SPEC
+  // section 3's field bounds do not move: they are the physics' and this is a
+  // drawing of them, so the band is laid in the wall band filled above.
+  const top = onDeviceRow(FIELD_TOP, scale) + HALF_BOUNDARY;
+  const bottom = onDeviceRow(FIELD_BOTTOM, scale) - HALF_BOUNDARY;
+  const left = onDevicePixel(FIELD_LEFT, scale) - HALF_BOUNDARY;
+  const right = onDevicePixel(FIELD_RIGHT, scale) + HALF_BOUNDARY;
   context.strokeStyle = palette.line;
-  context.lineWidth = BORDER.hair;
+  context.lineWidth = BOUNDARY_WEIGHT;
   context.beginPath();
-  context.moveTo(FIELD_LEFT - WALL_THICKNESS, FIELD_TOP);
-  context.lineTo(FIELD_RIGHT + WALL_THICKNESS, FIELD_TOP);
-  context.moveTo(FIELD_LEFT - WALL_THICKNESS, FIELD_BOTTOM);
-  context.lineTo(FIELD_RIGHT + WALL_THICKNESS, FIELD_BOTTOM);
-  context.moveTo(FIELD_LEFT, FIELD_BOTTOM - WALL_THICKNESS);
-  context.lineTo(FIELD_LEFT, GOAL_OPENING_LOW);
-  context.moveTo(FIELD_LEFT, GOAL_OPENING_HIGH);
-  context.lineTo(FIELD_LEFT, FIELD_TOP + WALL_THICKNESS);
-  context.moveTo(FIELD_RIGHT, FIELD_BOTTOM - WALL_THICKNESS);
-  context.lineTo(FIELD_RIGHT, GOAL_OPENING_LOW);
-  context.moveTo(FIELD_RIGHT, GOAL_OPENING_HIGH);
-  context.lineTo(FIELD_RIGHT, FIELD_TOP + WALL_THICKNESS);
+  context.moveTo(FIELD_LEFT - WALL_THICKNESS, top);
+  context.lineTo(FIELD_RIGHT + WALL_THICKNESS, top);
+  context.moveTo(FIELD_LEFT - WALL_THICKNESS, bottom);
+  context.lineTo(FIELD_RIGHT + WALL_THICKNESS, bottom);
+  context.moveTo(left, FIELD_BOTTOM - WALL_THICKNESS);
+  context.lineTo(left, GOAL_OPENING_LOW);
+  context.moveTo(left, GOAL_OPENING_HIGH);
+  context.lineTo(left, FIELD_TOP + WALL_THICKNESS);
+  context.moveTo(right, FIELD_BOTTOM - WALL_THICKNESS);
+  context.lineTo(right, GOAL_OPENING_LOW);
+  context.moveTo(right, GOAL_OPENING_HIGH);
+  context.lineTo(right, FIELD_TOP + WALL_THICKNESS);
   context.stroke();
 }
 
@@ -316,7 +395,7 @@ export function renderStaticPitch(
   drawStripes(context, palette);
   drawVignette(context, palette);
   drawCentreMarkings(context, palette);
-  drawWalls(context, palette);
+  drawWalls(context, palette, surface.scale);
   // The goal-frames pass, last of the static layers, exactly as it sits in
   // DESIGN section 7's order.
   drawGoalFrames(context, palette);
