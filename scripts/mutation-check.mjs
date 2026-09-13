@@ -6961,7 +6961,7 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
       "  const notice = document.createElement('audio');\n" +
       "  notice.setAttribute('controls', '');\n" +
       "  notice.setAttribute('aria-label', 'Whistle');\n" +
-      "  panel.append(notice);",
+      "  panel.root.append(notice);",
     detectedBy: 'unit',
   },
   {
