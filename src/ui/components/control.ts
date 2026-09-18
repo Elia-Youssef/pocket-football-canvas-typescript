@@ -81,6 +81,29 @@ export function setHiddenIfChanged(element: HTMLElement, value: boolean): void {
   }
 }
 
+/**
+ * The focus trap's one lever, QUALITY-BAR section 3 and item G9: while an
+ * overlay is open, everything else is `inert`.
+ *
+ * NATIVE INERT RATHER THAN A TAB HANDLER. The platform takes the subtree out of
+ * sequential focus navigation, out of pointer hit-testing and out of the
+ * accessibility tree in one declaration, so Tab and Shift+Tab wrap inside the
+ * open panel without a key listener anywhere. A handwritten trap would have to
+ * synthesise that, and it would have to do it on the same keys SPEC section
+ * 5.1's play surface already calls `preventDefault` for; engines also differ
+ * about which elements a Tab visits, so the list a handler walked would be a
+ * second, worse answer to a question the platform already answers.
+ *
+ * WRITTEN ONLY ON AN EDGE, like every other observable state here: `inert`
+ * changes what assistive technology can see, so a per-frame assignment would be
+ * a per-frame tree change.
+ */
+export function setInertIfChanged(element: HTMLElement, value: boolean): void {
+  if (element.inert !== value) {
+    element.inert = value;
+  }
+}
+
 /** A range's visible thumb must keep the value the game actually holds. */
 export function setValueIfChanged(control: HTMLInputElement, value: string): void {
   if (control.value !== value) {

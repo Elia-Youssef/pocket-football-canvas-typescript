@@ -72,6 +72,15 @@ function settingsRoot(onTheme: (theme: 'system' | 'light' | 'dark') => void): Fa
   }).root as unknown as FakeElement;
 }
 
+function modeRoot(): FakeElement {
+  return createModePanel({
+    initial: { kind: 'quick', duration: 60, difficulty: 'casual' },
+    guideOn: true,
+    onStart: () => undefined,
+    onHowToPlay: () => undefined,
+  }).root as unknown as FakeElement;
+}
+
 function howToRoot(): FakeElement {
   return createHowToPanel({
     onClose: () => undefined,
@@ -459,6 +468,145 @@ describe('PF-13 the panels', () => {
         return title?.textContent;
       });
       expect(texts).toEqual(['Paused', 'Settings', 'How to play', 'Full time']);
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('names each panel by the heading it already shows', () => {
+    // Item G9 pairs the focus trap with the semantics that go with it: an
+    // overlay is a modal dialog, and a dialog needs a name. It is the h2 the
+    // panel already draws rather than an aria-label, because a second copy of
+    // the same words is a second thing to keep in step.
+    const installed = installFakeDocument();
+    try {
+      for (const [root, name] of [
+        [pauseRoot(() => undefined), 'panel-pause'],
+        [settingsRoot(() => undefined), 'panel-settings'],
+        [howToRoot(), 'panel-how-to-play'],
+        [gameRoot(), 'panel-game-over'],
+      ] as const) {
+        const panel = findByMarker(root, name);
+        expect(panel?.getAttribute('role'), name).toBe('dialog');
+        // AND NO `aria-modal`. It declares that content OUTSIDE the dialog is
+        // not perceivable, and item G4's two live regions are deliberately
+        // outside it so the trap cannot silence them; the modality is native
+        // `inert`, which removes everything else from the tree without
+        // promising anything about the regions.
+        expect(panel?.getAttribute('aria-modal'), name).toBeNull();
+        const labelled = panel?.getAttribute('aria-labelledby') ?? '';
+        expect(labelled, name).toBe(`${name}-heading`);
+        const heading = panel === undefined ? undefined : findAllByTag(panel, 'H2')[0];
+        expect(heading?.id, name).toBe(labelled);
+        // The id points at a heading that is actually there, and at one only.
+        expect(panel === undefined ? [] : findAllByTag(panel, 'H2'), name).toHaveLength(1);
+      }
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('groups the two settings choice sets under the lines that name them', () => {
+    // The remainder of the chrome part's visible-label work, graded by item G7.
+    // Every choice already had a real `<label>`; what a screen reader still had
+    // no way to learn was what the choice was OF, because the setting's name was
+    // a paragraph two stops earlier with no relationship to the radios under it.
+    const installed = installFakeDocument();
+    try {
+      const root = settingsRoot(() => undefined);
+      for (const [marker, label, markers] of [
+        ['theme-group', 'Colour theme', ['theme-system', 'theme-light', 'theme-dark']],
+        [
+          'surface-scale-group',
+          'Play surface size',
+          [
+            'surface-scale-100',
+            'surface-scale-125',
+            'surface-scale-150',
+            'surface-scale-200',
+          ],
+        ],
+      ] as const) {
+        const group = findByMarker(root, marker);
+        expect(group?.getAttribute('role'), marker).toBe('radiogroup');
+        expect(group?.getAttribute('aria-labelledby'), marker).toBe(`${marker}-label`);
+        // THE LABEL IS THE VISIBLE LINE, not a copy of it: the element the id
+        // points at is the paragraph the sighted player reads, and it is the
+        // only one in the group so the id cannot be pointing at another.
+        const lines = group === undefined ? [] : findAllByTag(group, 'P');
+        expect(lines, marker).toHaveLength(1);
+        const paragraph = lines[0];
+        expect(paragraph?.id, marker).toBe(`${marker}-label`);
+        expect(paragraph?.textContent, marker).toBe(label);
+        expect(paragraph?.className, marker).toBe('pf-panel-text');
+        // And every radio of the set is inside the group rather than beside it.
+        for (const name of markers) {
+          const radio = findByMarker(root, name);
+          expect(radio, name).toBeDefined();
+          expect(
+            group === undefined || radio === undefined ? false : findAllByTag(group, 'INPUT')
+              .includes(radio),
+            name,
+          ).toBe(true);
+        }
+      }
+      // The two groups hold every input the panel has, so a third choice set
+      // added outside one would be visible here rather than merely unlabelled.
+      const grouped = ['theme-group', 'surface-scale-group'].flatMap((marker) => {
+        const group = findByMarker(root, marker);
+        return group === undefined ? [] : findAllByTag(group, 'INPUT');
+      });
+      expect(grouped).toHaveLength(findAllByTag(root, 'INPUT').length);
+      expect(grouped).toHaveLength(7);
+    } finally {
+      installed.restore();
+    }
+  });
+
+  it('groups the menu choice sets under the lines that name them too', () => {
+    // THE OTHER HALF OF THE SAME REMAINDER, and the bigger one: the menu is
+    // where a player chooses four things at once, and its four sets reached a
+    // screen reader as four unrelated sentences followed by eleven loose radios.
+    // Every rule the settings groups are held to is the same rule here.
+    const installed = installFakeDocument();
+    try {
+      const root = modeRoot();
+      for (const [marker, label, markers] of [
+        ['mode-group', 'Mode', ['mode-quick', 'mode-first-to', 'mode-ladder', 'mode-hotseat']],
+        ['duration-group', 'Match length', ['duration-60', 'duration-90', 'duration-120']],
+        ['target-group', 'Goal target', ['target-3', 'target-5', 'target-7']],
+        ['difficulty-group', 'Difficulty', ['difficulty-casual', 'difficulty-pro', 'difficulty-ace']],
+      ] as const) {
+        const group = findByMarker(root, marker);
+        expect(group?.getAttribute('role'), marker).toBe('radiogroup');
+        expect(group?.getAttribute('aria-labelledby'), marker).toBe(`${marker}-label`);
+        const lines = group === undefined ? [] : findAllByTag(group, 'P');
+        expect(lines, marker).toHaveLength(1);
+        expect(lines[0]?.id, marker).toBe(`${marker}-label`);
+        expect(lines[0]?.textContent, marker).toBe(label);
+        for (const name of markers) {
+          const radio = findByMarker(root, name);
+          expect(radio, name).toBeDefined();
+          expect(
+            group === undefined || radio === undefined
+              ? false
+              : findAllByTag(group, 'INPUT').includes(radio),
+            name,
+          ).toBe(true);
+        }
+      }
+      // Every radio in the menu is inside one of the four. The aim guide is a
+      // CHECKBOX and belongs to no group, which is why the count is the inputs
+      // less one rather than all of them.
+      const grouped = ['mode-group', 'duration-group', 'target-group', 'difficulty-group'].flatMap(
+        (marker) => {
+          const group = findByMarker(root, marker);
+          return group === undefined ? [] : findAllByTag(group, 'INPUT');
+        },
+      );
+      expect(grouped).toHaveLength(13);
+      expect(findAllByTag(root, 'INPUT')).toHaveLength(14);
+      expect(findByMarker(root, 'mode-guide')?.type).toBe('checkbox');
     } finally {
       installed.restore();
     }

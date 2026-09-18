@@ -209,6 +209,9 @@ describe('the workflow keeps every commit on the default branch a completed run'
       ['Lint, including the core boundary', 'npm run lint'],
       ['Unit and headless tests', 'npm run test'],
       ['Browser tests', 'npm run test:browser'],
+      // Item G8 is method A, so the measurement is a merge gate rather than
+      // something anybody runs by hand: it is here or it is not a gate.
+      ['Flash rate, item G8', 'node scripts/flash-rate.mjs'],
       ['Deterministic build', 'npm run verify:build'],
     ] as const) {
       expect(WORKFLOW, step).toContain(`- name: ${step}`);
@@ -219,6 +222,31 @@ describe('the workflow keeps every commit on the default branch a completed run'
         false,
       );
     }
+  });
+
+  it('keeps the evidence item G8 is graded on, after the run that made it', () => {
+    // THE STEP THAT PRODUCES THE ARTIFACT IS NOT THE STEP THAT KEEPS IT.
+    // ACCEPTANCE section 5 names G8's evidence `report/flash-rate`, and
+    // `artifacts/` is git-ignored, so the measurement's own report exists only
+    // in the runner's working directory until something uploads it. Deleting
+    // the upload step left every other gate green and the item's named evidence
+    // gone the moment the job ended, which is the defect this pins.
+    expect(WORKFLOW).toContain('- name: Upload the flash-rate report');
+    expect(WORKFLOW).toContain('name: flash-rate-report');
+    expect(WORKFLOW).toContain('path: artifacts/reports/flash-rate.md');
+    // ON ALWAYS, because a FAILING measurement is the run whose numbers a
+    // reader most needs; a failure-only upload keeps the one artifact nobody
+    // has to read and discards the rest.
+    const upload = WORKFLOW.slice(WORKFLOW.indexOf('- name: Upload the flash-rate report'));
+    expect(upload.slice(0, 400)).toContain('if: always()');
+    // And by the same pinned action revision the other upload uses: an action
+    // referenced by a moving tag is a third party editing this workflow.
+    const pinned = [...WORKFLOW.matchAll(/uses: actions\/upload-artifact@([0-9a-f]{40})/g)].map(
+      (match) => match[1] ?? '',
+    );
+    expect(pinned).toHaveLength(2);
+    expect(new Set(pinned).size, `revisions: ${pinned.join(', ')}`).toBe(1);
+    expect(pinned[0]).toBe('043fb46d1a93c77aae656e7c1c64a875d1fc6a0a');
   });
 
   it('pins one runtime in both jobs, and one the manifest supports', () => {

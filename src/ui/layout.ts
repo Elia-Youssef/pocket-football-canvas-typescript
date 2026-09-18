@@ -19,6 +19,19 @@
  * beneath them; the game-over panel opens without an invoker and uses the
  * HUD's pause control as its stable anchor on the way out.
  *
+ * AND WHILE ONE IS OPEN, NOTHING ELSE IS REACHABLE. Item G9 asks every overlay
+ * to trap focus, and the trap is `inert` on every other element of the app
+ * column: the platform then takes them out of the tab order, out of pointer
+ * hit-testing and out of the accessibility tree together, so a Tab walk wraps
+ * inside the open panel at both ends with no key handler anywhere. It is applied
+ * HERE because the stack is here: a panel can sit over another one (settings and
+ * how-to-play both open from the pause overlay, and how-to-play opens over the
+ * menu on first launch), so the only element that stays live is the TOP-MOST
+ * open one, which is the last open panel in source order because that is the one
+ * the browser paints on top. The elements the composition root mounts rather
+ * than this wiring arrive as `background`, so the column's membership is stated
+ * in one place rather than split between two modules that would drift.
+ *
  * THE THEME OVERRIDE WRAPS THE PLATFORM READ. Choosing Light or Dark writes
  * `data-theme` on the root, which the token stylesheet answers in both
  * directions; System clears it and the composition root falls back to the
@@ -51,12 +64,14 @@
 import type { Match } from '../core/match';
 import type { ModeChoice, ModeSetup } from '../core/modes';
 import { NEW_SETTINGS } from '../core/storage';
+import { setInertIfChanged } from './components/control';
 import { createGameOverPanel } from './components/game-over-panel';
 import type { GameOverContext, GameOverPanelOptions } from './components/game-over-panel';
 import { createHowToPanel } from './components/how-to-panel';
 import { createHud } from './components/hud';
 import { createModePanel } from './components/mode-panel';
 import type { ModePanel } from './components/mode-panel';
+import type { Panel } from './components/panel';
 import { createPausePanel } from './components/pause-panel';
 import { createPortraitHint } from './components/portrait-hint';
 import { createSettingsPanel } from './components/settings-panel';
@@ -131,9 +146,25 @@ export interface ChromeOptions {
   readonly onResetData: () => void;
   /** SPEC section 9's mode menu, which every composition that plays has. */
   readonly modes: ModeWiring;
+  /**
+   * The elements of the app column this wiring did NOT mount: the play stage,
+   * the accessible mirror beside it and SPEC section 5.0's aim row. Item G9's
+   * trap makes every one of them `inert` while an overlay is open, and they are
+   * handed in rather than looked up because a wiring that searched the column
+   * for them would find whatever a later part added and call it background.
+   */
+  readonly background: readonly HTMLElement[];
 }
 
 export interface Chrome {
+  /**
+   * SPEC section 12's bar, which is the sticky top half of QUALITY-BAR section
+   * 5's arrangement. The composition root measures it for the scroll padding
+   * WCAG 2.2 SC 2.4.11 needs, because a css box is not something anything under
+   * `ui/` may measure and a bar's height is content plus padding plus whatever
+   * the safe-area insets add.
+   */
+  readonly hudBar: HTMLElement;
   /** Re-reads the match readout and brings every readout and panel in line. */
   sync(): void;
   /** SPEC section 19's overlay, opened on first launch and from the menu. */
@@ -142,6 +173,12 @@ export interface Chrome {
   applyMode(setup: ModeSetup): void;
   /** The guide setting the menu shows, for a mode that changed its default. */
   setGuide(on: boolean): void;
+  /**
+   * The marker of the overlay that currently holds focus, or `null` while the
+   * page is playable. Item G9's trap is applied by `sync`; this is what a test
+   * reads to say which panel the trap is around.
+   */
+  modalMarker(): string | null;
 }
 
 /** The theme a player who has never chosen one gets, and the reset's target. */
@@ -221,8 +258,12 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       options.onSurfaceScaleChange(NEW_SURFACE_SCALE);
       options.onResetData();
     },
-    onClose: () => settings.hide(),
-    onEscape: () => settings.hide(),
+    onClose: () => {
+      dismiss(settings);
+    },
+    onEscape: () => {
+      dismiss(settings);
+    },
   });
   const theme = options.initialTheme;
   applyTheme(theme);
@@ -251,10 +292,12 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
       match.dispatch({ kind: 'resume' });
       sync();
     },
-    onOpenSettings: () =>
-      settings.show(controlByMarker(pause.controls(), 'pause-settings', hud.pause)),
-    onOpenHowToPlay: () =>
-      howTo.show(controlByMarker(pause.controls(), 'pause-how-to', hud.pause)),
+    onOpenSettings: () => {
+      open(settings, controlByMarker(pause.controls(), 'pause-settings', hud.pause));
+    },
+    onOpenHowToPlay: () => {
+      open(howTo, controlByMarker(pause.controls(), 'pause-how-to', hud.pause));
+    },
     onQuit: () => {
       match.dispatch({ kind: 'quit' });
       sync();
@@ -290,7 +333,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
 
   /** SPEC section 19: putting How to Play away is the dismissal that persists. */
   function dismissHowTo(): void {
-    howTo.hide();
+    dismiss(howTo);
     modes.onHowToDismissed();
   }
 
@@ -299,12 +342,102 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
     // while the menu is open, and the pause control otherwise, so focus never
     // lands on the document body when the overlay closes.
     const anchor = mode.isOpen() ? menuAnchor(mode) : hud.pause;
-    howTo.show(anchor);
+    open(howTo, anchor);
   }
 
   function menuAnchor(panel: ModePanel): HTMLElement {
-    const controls = panel.controls();
-    return controls.at(-1) ?? hud.pause;
+    // BY MARKER, like every other invoker in this file. It was the LAST control
+    // in the menu's list, which is the How to play button only for as long as
+    // nothing is added after it: a control appended later would silently become
+    // the thing focus came back to. `controlByMarker` is the rule stated a few
+    // lines above `mountChrome` and this was the one place not following it.
+    return controlByMarker(panel.controls(), 'mode-how-to', hud.pause);
+  }
+
+  /**
+   * The overlays, in the order the document holds them, which is the order they
+   * paint in: every panel is fixed at the same stacking level, so the LAST open
+   * one is the one on top and the one the trap is built around. The menu is
+   * first because every other overlay can open above it.
+   */
+  const STACK: readonly Panel[] = [mode, pause, settings, howTo, game];
+
+  /**
+   * The overlays closing in the call now running.
+   *
+   * THE TRAP HAS TO BE LIFTED BEFORE THE FOCUS COMES BACK, and that is the only
+   * reason this set exists. A panel hands focus to the control that opened it as
+   * it closes, an `inert` element REFUSES focus, and the refusal is silent:
+   * focus falls to the document body, which is exactly the outcome QUALITY-BAR
+   * section 3 and item C12 forbid. So a panel about to close is treated as
+   * already closed while the stack is recomputed, the background it was covering
+   * comes back to life, and only then does it hand focus over. Measured, not
+   * theorised: three keyboard tests failed this way before the set existed.
+   */
+  const closing = new Set<Panel>();
+
+  /** The top-most open overlay, or nothing while the page is playable. */
+  function topOpen(): Panel | null {
+    for (let at = STACK.length - 1; at >= 0; at -= 1) {
+      const panel = STACK[at];
+      if (panel !== undefined && panel.isOpen() && !closing.has(panel)) {
+        return panel;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Item G9's trap: everything except the top-most open overlay is `inert`.
+   *
+   * Applied on every sync rather than on an open, because an overlay can close
+   * underneath an open one (the pause stack closes with the pause) and because
+   * `setInertIfChanged` makes a sync that changes nothing cost nothing.
+   */
+  function applyModal(): void {
+    const top = topOpen();
+    for (const element of [hud.root, hint.root, ...options.background]) {
+      setInertIfChanged(element, top !== null);
+    }
+    for (const panel of STACK) {
+      setInertIfChanged(panel.root, top !== null && panel !== top);
+    }
+  }
+
+  /**
+   * Open or close an overlay the MATCH does not decide: settings and how-to-play
+   * are chrome-owned, so `sync` has no state to derive them from and the trap
+   * has to be reapplied where they are actually opened and closed.
+   */
+  /**
+   * Show an overlay and put focus on its first control.
+   *
+   * THE TRAP COMES OFF THE PANEL FIRST, and it is the same rule as `dismiss`
+   * below read the other way round: a panel opening from inside another one was
+   * that one's background a moment ago and is still `inert`, so its own `show`
+   * would ask an inert control to take focus and be silently refused. Settings
+   * and How to Play both open from the pause overlay, and the menu opens
+   * underneath it on a quit, so all three arrive here already inert.
+   */
+  function reveal(panel: Panel, invoker: HTMLElement): void {
+    setInertIfChanged(panel.root, false);
+    panel.show(invoker);
+  }
+
+  function open(panel: Panel, invoker: HTMLElement): void {
+    reveal(panel, invoker);
+    applyModal();
+  }
+
+  /**
+   * Close an overlay, lifting the trap off its opener before it hands focus
+   * back. Every `hide` in this wiring goes through here for that reason.
+   */
+  function dismiss(panel: Panel): void {
+    closing.add(panel);
+    applyModal();
+    panel.hide();
+    closing.delete(panel);
   }
 
   /** True while the readout is a paused match, tracked so the stack closes on the edge. */
@@ -316,26 +449,26 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
     if (readout.state.kind === 'GAME_OVER') {
       game.update(readout, modes.gameOver());
       if (!game.isOpen()) {
-        game.show(hud.pause);
+        reveal(game, hud.pause);
       }
     } else if (game.isOpen()) {
-      game.hide();
+      dismiss(game);
     }
     const inMenu = readout.state.kind === 'MENU';
     if (inMenu && !mode.isOpen()) {
       // Derived on every open, never pushed: see `ModeWiring.ladderRung`.
       mode.setLadderRung(modes.ladderRung());
-      mode.show(hud.pause);
+      reveal(mode, hud.pause);
     } else if (!inMenu && mode.isOpen()) {
-      mode.hide();
+      dismiss(mode);
     }
     const paused = readout.state.kind === 'PAUSED';
     if (paused && !pause.isOpen()) {
-      pause.show(hud.pause);
+      reveal(pause, hud.pause);
     }
     if (!paused) {
       if (pause.isOpen()) {
-        pause.hide();
+        dismiss(pause);
       }
       if (wasPaused) {
         // The pause stack closes with the pause, whatever dismissed it: a
@@ -343,14 +476,18 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
         // looking at. It closes on the EDGE, so an overlay opened outside a
         // pause, which is what first launch does, is left where it is.
         if (settings.isOpen()) {
-          settings.hide();
+          dismiss(settings);
         }
         if (howTo.isOpen()) {
-          howTo.hide();
+          dismiss(howTo);
         }
       }
     }
     wasPaused = paused;
+    // LAST, and that is the order: every branch above can open or close a
+    // panel, so the trap is applied once from the settled stack rather than
+    // reapplied by each of them.
+    applyModal();
   }
 
   // The HUD leads the document so the play surface follows it in reading
@@ -374,6 +511,7 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
 
   sync();
   return {
+    hudBar: hud.root,
     sync,
     showHowToPlay,
 
@@ -388,6 +526,10 @@ export function mountChrome(host: HTMLElement, options: ChromeOptions): Chrome {
 
     setGuide(on: boolean): void {
       mode.setGuide(on);
+    },
+
+    modalMarker(): string | null {
+      return topOpen()?.root.dataset['pf'] ?? null;
     },
   };
 }

@@ -43,17 +43,13 @@ describe('B3 chrome write budget', () => {
         onLaunch: () => undefined,
         onCancel: () => undefined,
       });
-      controls.sync(0, null, false);
+      controls.sync(null, false);
       const before = writeCounts(controls.root as unknown as FakeElement);
 
-      controls.sync(0, null, false);
+      controls.sync(null, false);
       expect(writeCounts(controls.root as unknown as FakeElement)).toEqual(before);
 
-      controls.sync(
-        0.5,
-        { aim: { angleRad: 0, power01: 0.5 }, reach: 90, launchable: true },
-        true,
-      );
+      controls.sync({ aim: { angleRad: 0, power01: 0.5 }, reach: 90, launchable: true }, true);
       const after = writeCounts(controls.root as unknown as FakeElement);
       expect(after.attributes).toBeGreaterThan(before.attributes);
       expect(after.text).toBeGreaterThan(before.text);

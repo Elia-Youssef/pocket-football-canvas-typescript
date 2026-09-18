@@ -61,11 +61,14 @@ import {
 } from './render/surface';
 import { drawFrame } from './render/pitch';
 import type { FrameOptions, PitchCacheCell } from './render/pitch';
-import { pitchFor } from './render/tokens';
+import { playSurfaceFor } from './render/tokens';
 import type { Theme } from './render/tokens';
-import { barsStick, breakpointFor } from './ui/breakpoints';
+import { DEFAULT_ROOT_FONT_SIZE, barsStick, breakpointFor } from './ui/breakpoints';
 import { createAimControls } from './ui/components/aim-controls';
 import type { GameOverContext } from './ui/components/game-over-panel';
+import { createPlayMirror, outcomeLine, politeLine, titleFor } from './ui/components/play-mirror';
+import type { PlayMirror, SideNames } from './ui/components/play-mirror';
+import { ASSERTIVE_MARKER, POLITE_MARKER, createLiveRegions } from './ui/live-region';
 import { mountChrome } from './ui/layout';
 
 /**
@@ -101,6 +104,19 @@ const THEME_QUERY = '(prefers-color-scheme: dark)';
  * setting lands with the part that owns both halves.
  */
 const MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+/**
+ * QUALITY-BAR section 5 and SPEC section 18: canvas pixels are untouched by
+ * forced colours, so the play surface answers the query itself.
+ *
+ * READ HERE AND BESIDE THE THEME, for the same reason the theme is read here:
+ * nothing under `render/` may ask the platform anything, and the stylesheet
+ * answers the same query for the chrome, so the pitch and the DOM adopt one
+ * palette rather than two. It takes PRECEDENCE over the theme for the play
+ * surface and for nothing else, which is the whole of the section's "one set
+ * replacing both brightness variants whichever theme is in force".
+ */
+const FORCED_COLORS_QUERY = '(forced-colors: active)';
 
 /**
  * SPEC section 5.1: the play surface is a single focusable element with an
@@ -171,6 +187,19 @@ function reducedMotionInForce(): boolean {
 }
 
 /**
+ * Whether forced colours are in force, read the same way and cached for the
+ * same reason: the list is live, so a preference turned on mid-session moves
+ * the pitch on the next frame, and the pitch cache invalidates on palette
+ * identity rather than on a flag anybody has to remember to raise.
+ */
+let forcedColorsQuery: MediaQueryList | null = null;
+
+function forcedColorsInForce(): boolean {
+  forcedColorsQuery ??= window.matchMedia(FORCED_COLORS_QUERY);
+  return forcedColorsQuery.matches;
+}
+
+/**
  * QUALITY-BAR section 8's dangerous half: `window.localStorage` can throw a
  * SecurityError on PROPERTY ACCESS, before any method is called, in a
  * partitioned or cookie-blocked context. This is the one expression that
@@ -202,12 +231,104 @@ function openStorage(): KeyValueStore {
 function applyViewport(): void {
   const root = document.documentElement;
   root.dataset['pfBreakpoint'] = breakpointFor(window.innerWidth, window.innerHeight);
-  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';
+  // THE SIZE THE PAGE IS LAID OUT AT, not the size a stylesheet asked for. The
+  // sticky floor is 25 rem, so it follows a browser's own text-size setting and
+  // an inline root font size alike, and the computed style is the one place that
+  // answers both. It is read on the same refit as the two window figures.
+  root.dataset['pfBars'] = barsStick(window.innerHeight, rootFontSize()) ? 'sticky' : 'static';
+}
+
+/** The root element's computed font size in CSS pixels, or the default if unreadable. */
+function rootFontSize(): number {
+  const size = Number.parseFloat(
+    window.getComputedStyle(document.documentElement).fontSize,
+  );
+  return Number.isFinite(size) && size > 0 ? size : DEFAULT_ROOT_FONT_SIZE;
 }
 
 /** Stamp the marker. Called below, on import, and by nothing outside this file. */
 function boot(): void {
   document.documentElement.dataset['game'] = GAME_ID;
+}
+
+/** An element `index.html` promises, found once and refused if it is missing. */
+function required(marker: string): HTMLElement {
+  const found = document.querySelector(`[data-pf="${marker}"]`);
+  if (!(found instanceof HTMLElement)) {
+    throw new Error(`the document carries no ${marker} element`);
+  }
+  return found;
+}
+
+/**
+ * WCAG 2.2 SC 2.4.11, Focus Not Obscured: the two sticky bars' heights, written
+ * where `chrome.css` reads them as scroll padding.
+ *
+ * MEASURED RATHER THAN STATED. A bar is its content plus its padding plus
+ * whatever the safe-area insets add, and the HUD grows a row when it wraps, so
+ * no token could carry the number and a constant would be wrong at the first
+ * breakpoint. The observer reads the BORDER box, which is the whole of what
+ * stands over the page; the content box would leave the padding uncovered, and
+ * the padding is most of a compact bar.
+ *
+ * ONE OBSERVER FOR BOTH, created once and never torn down (DESIGN section 8),
+ * and the write is edge-only because a custom property on the root element is a
+ * style invalidation for the whole document.
+ */
+function watchBars(top: HTMLElement, bottom: HTMLElement): void {
+  const root = document.documentElement;
+  const write = (name: string, size: number): void => {
+    const value = `${String(Math.ceil(size))}px`;
+    if (root.style.getPropertyValue(name) !== value) {
+      root.style.setProperty(name, value);
+    }
+  };
+  const observer = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const size = entry.borderBoxSize[0]?.blockSize ?? 0;
+      write(entry.target === top ? '--pf-bar-top' : '--pf-bar-bottom', size);
+    }
+  });
+  observer.observe(top);
+  observer.observe(bottom);
+}
+
+/**
+ * The other half of SC 2.4.11, and the half that is the platform's.
+ *
+ * Scroll padding declares the region a focused control has to end up inside;
+ * something still has to ask for the scroll. Every engine scrolls a control into
+ * view when it is focused by a keyboard, but `nearest` is the only request that
+ * is a no-op when the control is already inside that region, so a pointer press
+ * on a visible button moves nothing and a Tab that lands under a stuck bar does.
+ *
+ * WHAT IS INSIDE THE STAGE IS LEFT ALONE, and that is not caution. The play
+ * frame is a scroll container of its own at QUALITY-BAR section 4's larger
+ * sizes and the root already scrolls it once a frame to follow the play, so
+ * asking the platform to scroll its contents as well would be two answers to
+ * where the pitch should be looking.
+ *
+ * THE FRAME ITSELF IS NOT INSIDE IT, though, and it is a control: SPEC section
+ * 5.1's keys reach the model through it, so it is a tab stop like the pause
+ * button. Measured on webkit at 200 percent text on a 320 by 400 viewport,
+ * where the bars are static and the page scrolls: the frame sat entirely below
+ * the fold and focusing it moved nothing, because this handler skipped
+ * everything the stage contained. Scrolling the PAGE to it is a different
+ * question from scrolling the pitch inside it, and the page owes it the same
+ * answer it owes every other control.
+ */
+function followFocus(stage: HTMLElement): void {
+  document.addEventListener('focusin', (event: FocusEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const isPlayFrame = target.getAttribute('role') === 'application';
+    if (stage.contains(target) && !isPlayFrame) {
+      return;
+    }
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
 }
 
 /** Everything the play surface has to ask the root, and nothing it decides. */
@@ -348,6 +469,16 @@ function mountPlaySurface(
   render: () => void;
   refresh: (elapsed: number) => void;
   setScale: (percent: number) => void;
+  /** QUALITY-BAR section 4's structured mirror, fed from the same sync. */
+  mirror: PlayMirror;
+  /** The aim line for the one announcement queue, or nothing to state. */
+  announcement: () => string | null;
+  /** The column's non-chrome elements, which item G9's trap makes inert. */
+  background: readonly HTMLElement[];
+  /** The two sticky bars' bottom half, for the scroll padding SC 2.4.11 needs. */
+  aimBar: HTMLElement;
+  /** The box the pitch is fitted into, which scrolls itself when magnified. */
+  stage: HTMLElement;
 } {
   const match = context.match;
   const stage = document.createElement('div');
@@ -377,6 +508,15 @@ function mountPlaySurface(
     surface: frame,
     onPause: context.onPause,
   });
+
+  // QUALITY-BAR section 4's structured mirror, mounted AFTER the play frame and
+  // OUTSIDE it. Outside, because SPEC section 5.1's `role="application"` on the
+  // frame suppresses the browse-mode navigation a mirror exists to be read with;
+  // after it, because the reading order a player without sight follows is the
+  // pitch, then what is on it, then the controls that act on it. The module's
+  // own header carries the whole of the decision.
+  const mirror = createPlayMirror();
+  host.appendChild(mirror.root);
 
   // SPEC section 5.0's no-drag path, mounted after the surface so it follows
   // the pitch in reading order and in the tab order. Every control asks the
@@ -468,7 +608,7 @@ function mountPlaySurface(
     if (surface.scale <= 0) {
       return;
     }
-    const palette = pitchFor(themeInForce());
+    const palette = playSurfaceFor(themeInForce(), forcedColorsInForce());
     drawFrame(surface, cache, world, palette, frameOptionsFor(world, context, input.preview()));
     follow();
   };
@@ -509,7 +649,7 @@ function mountPlaySurface(
    */
   const refresh = (elapsed: number): void => {
     input.refresh(elapsed);
-    controls.sync(elapsed, input.preview(), input.allowed());
+    controls.sync(input.preview(), input.allowed());
     const reading = match.readout();
     const frozen = reading.state.kind === 'PAUSED';
     context.effects()?.observe({
@@ -518,14 +658,31 @@ function mountPlaySurface(
       elapsed: frozen ? 0 : elapsed,
       reducedMotion: reducedMotionInForce(),
     });
+    // THE SAME SYNC THE CANVAS READS, which is what QUALITY-BAR section 4 asks
+    // of the mirror: one pass over one world, so the words and the pixels can
+    // never describe two different moments.
+    mirror.sync(world);
   };
 
   refit();
   new ResizeObserver(refit).observe(stage);
+  // AND ONE OF THE TWO BARS, because QUALITY-BAR section 5's sticky floor is a
+  // height in REM and therefore a question about the text as well as about the
+  // viewport. The stage alone cannot answer it: under the static arrangement the
+  // stage takes a viewport of its own, so shrinking the bars back changes
+  // nothing about its box and a text size going back down would never be
+  // noticed. The aim bar is one of the two bars the threshold is about and its
+  // height follows the text exactly, so it is the honest second subject.
+  new ResizeObserver(refit).observe(controls.root);
   watchDeviceRatio(window, refit);
   return {
     render,
     refresh,
+    mirror,
+    announcement: () => controls.announcement(),
+    background: [stage, mirror.root, controls.root],
+    aimBar: controls.root,
+    stage,
 
     setScale(percent: number): void {
       sizePercent = percent;
@@ -575,6 +732,11 @@ function mount(host: HTMLElement): void {
   // than in index.html because the arrangement is this root's, and the
   // stylesheet stays class-based like every other rule in it.
   host.className = 'pf-app';
+
+  // QUALITY-BAR section 4's two live regions, which `index.html` carries so
+  // that both exist before anything has a first line to say. One queue owns
+  // them; this root only hands it the elements and, once a frame, what is true.
+  const regions = createLiveRegions(required(POLITE_MARKER), required(ASSERTIVE_MARKER));
 
   const store: DataStore = createDataStore(openStorage);
   // Everything that only wants the ladder rung or the onboarding flag keeps
@@ -702,6 +864,10 @@ function mount(host: HTMLElement): void {
     beginMatch();
     match.dispatch({ kind: 'configure', configuration: setup.configuration });
     chrome.applyMode(setup);
+    // The mirror and the announcements name the two sides the way the HUD does,
+    // from the same mode and in the same call, so a ladder rung cannot be
+    // announced by one name and mirrored by another.
+    play.mirror.setNames(setup.opponentName, setup.playerName);
     chrome.setGuide(guideEnabled);
     match.dispatch({ kind: 'start' });
     chrome.sync();
@@ -845,6 +1011,9 @@ function mount(host: HTMLElement): void {
       // root's copy and the fit along with it. A second writer here would be
       // a second place for the two to disagree.
     },
+    // Item G9's trap reaches the whole app column, and three of its elements
+    // are this root's rather than the wiring's.
+    background: play.background,
     modes: {
       initial: startingChoice,
       guideOn: guideEnabled,
@@ -862,6 +1031,38 @@ function mount(host: HTMLElement): void {
       gameOver: gameOverContext,
     },
   });
+
+  // WCAG 2.2 SC 2.4.11's two halves, wired once the chrome exists: the bars
+  // report their own heights into the scroll padding, and a focus move asks the
+  // platform to honour it. Neither is a per-frame cost: the observer fires on a
+  // box change and the listener on a focus.
+  watchBars(chrome.hudBar, play.aimBar);
+  followFocus(play.stage);
+
+  /** The two sides as the mode in force names them, for every line of words. */
+  function sideNames(): SideNames {
+    return { opponent: setup.opponentName, player: setup.playerName };
+  }
+
+  /**
+   * The accessible half of one frame: the title, the polite line and the
+   * outcome, all derived from the readout the canvas was drawn from.
+   *
+   * THE AIM WINS THE POLITE CHANNEL WHERE THERE IS ONE, and `politeLine` states
+   * why. The title is written on the edge alone, because a document title is
+   * observable and a browser puts it in the tab, the window and the history.
+   */
+  function announce(delta: number): void {
+    const reading = match.readout();
+    const names = sideNames();
+    const title = titleFor(reading, names);
+    if (document.title !== title) {
+      document.title = title;
+    }
+    regions.say(politeLine(reading, names, play.announcement()));
+    regions.outcome(outcomeLine(reading, names));
+    regions.pump(delta);
+  }
 
   // SPEC section 19: How to Play is shown on first launch, and once dismissed
   // it is not shown again. The overlay opens over the menu, which is where a
@@ -892,6 +1093,10 @@ function mount(host: HTMLElement): void {
     play.refresh(delta);
     chrome.sync();
     play.render();
+    // LAST, and after the chrome, because the aim line it reads is the one the
+    // refresh above has just settled and the state is the one the chrome has
+    // just derived every panel from.
+    announce(delta);
   });
 }
 

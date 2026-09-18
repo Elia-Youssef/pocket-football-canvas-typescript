@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import {
   BREAKPOINTS,
   MEDIUM_MIN_WIDTH,
+  DEFAULT_ROOT_FONT_SIZE,
   STICKY_MIN_HEIGHT,
+  STICKY_MIN_REM,
   WIDE_MIN_WIDTH,
   barsStick,
   breakpointFor,
@@ -126,7 +128,7 @@ describe('PF-14 the breakpoints, against QUALITY-BAR section 5', () => {
     it('parses both tables, at the size it depends on', () => {
       expect(SECTION).toHaveLength(2);
       expect(NAMES.rows).toHaveLength(4);
-      expect(FIGURES.rows).toHaveLength(3);
+      expect(FIGURES.rows).toHaveLength(4);
       expect(NAMES.rows.map((row) => field(NAMES, row, 'Name'))).toEqual([
         'wide',
         'medium',
@@ -177,9 +179,16 @@ describe('PF-14 the breakpoints, against QUALITY-BAR section 5', () => {
       expect(stated('Smallest supported width')).toBe(
         'No two-dimensional scrolling at 320 x 256 CSS pixels',
       );
-      expect(stated('Sticky bars unstick below')).toBe(
-        'must collapse or unstick below a 400 px viewport height',
-      );
+      // THE SENTENCE SCALES NOW. QUALITY-BAR section 5 states the floor in rem
+      // so it follows a text-size setting, and the contract carries both
+      // numbers: the rem rule and what it resolves to at the default size.
+      const stickySentence =
+        'must collapse or unstick below a viewport height of 25 rem, which is 400 px ' +
+        'at the default text size and scales with the text (SC 1.4.4)';
+      expect(stated('Sticky bars unstick below')).toBe(stickySentence);
+      expect(figureOf('Sticky bars unstick below, in rem')).toBe(25);
+      expect(figureOf('Sticky bars unstick below, in rem')).toBe(STICKY_MIN_REM);
+      expect(stated('Sticky bars unstick below, in rem')).toBe(stickySentence);
     });
   });
 
@@ -270,26 +279,57 @@ describe('PF-14 the breakpoints, against QUALITY-BAR section 5', () => {
   });
 
   describe('the sticky-bar threshold', () => {
-    it('sticks at and above 400 and unsticks below it', () => {
-      expect(barsStick(401)).toBe(true);
-      expect(barsStick(400)).toBe(true);
-      expect(barsStick(399)).toBe(false);
-      expect(barsStick(256)).toBe(false);
+    it('sticks at and above 400 and unsticks below it, at the default text size', () => {
+      expect(barsStick(401, DEFAULT_ROOT_FONT_SIZE)).toBe(true);
+      expect(barsStick(400, DEFAULT_ROOT_FONT_SIZE)).toBe(true);
+      expect(barsStick(399, DEFAULT_ROOT_FONT_SIZE)).toBe(false);
+      expect(barsStick(256, DEFAULT_ROOT_FONT_SIZE)).toBe(false);
       // QUALITY-BAR section 5 states the rule as a floor - bars must unstick
-      // BELOW 400 - so 400 itself staying stuck is the document's answer and
-      // not a rounding of it.
-      expect(barsStick(STICKY_MIN_HEIGHT)).toBe(true);
-      expect(barsStick(STICKY_MIN_HEIGHT - 1)).toBe(false);
+      // BELOW the threshold - so the threshold itself staying stuck is the
+      // document's answer and not a rounding of it.
+      expect(barsStick(STICKY_MIN_HEIGHT, DEFAULT_ROOT_FONT_SIZE)).toBe(true);
+      expect(barsStick(STICKY_MIN_HEIGHT - 1, DEFAULT_ROOT_FONT_SIZE)).toBe(false);
+      // And 400 is what 25 rem resolves to at the default size, which is the
+      // whole of why the document can state both numbers.
+      expect(STICKY_MIN_REM * DEFAULT_ROOT_FONT_SIZE).toBe(STICKY_MIN_HEIGHT);
     });
 
-    it('is a question about height alone, and says so in its own shape', () => {
-      // QUALITY-BAR section 5 makes the sticky rule a statement about height
-      // and nothing else, and the signature is what says so: a width cannot
-      // reach this answer because there is nowhere to hand one in. A loop over
-      // widths would have been four copies of the same two assertions.
-      expect(barsStick).toHaveLength(1);
-      expect(barsStick(500)).toBe(true);
-      expect(barsStick(300)).toBe(false);
+    it('scales with the text, which is what a rem threshold is for', () => {
+      // MEASURED, AND IT WAS A DEFECT. A 400 px literal covers browser zoom and
+      // misses a text-size setting: at 200 percent text the two bars measured
+      // 205 and 403 CSS pixels on a 500 px viewport and stayed STUCK, so the
+      // later painted over the earlier and the pause control was wholly
+      // obscured on all three engines. At 25 rem the floor doubles with the
+      // text and that viewport is no longer one the bars stick to.
+      expect(barsStick(500, 32)).toBe(false);
+      expect(barsStick(400, 32)).toBe(false);
+      expect(barsStick(800, 32)).toBe(true);
+      expect(barsStick(799, 32)).toBe(false);
+      // Halfway up the same line, so the rule is a multiplication and not two
+      // hard-coded answers.
+      expect(barsStick(500, 20)).toBe(true);
+      expect(barsStick(499, 20)).toBe(false);
+    });
+
+    it('answers for a root size no page could be laid out at', () => {
+      // A total answer for an impossible input rather than a refusal: a size
+      // that is zero, negative or not a number resolves no rem at all, so the
+      // threshold falls back to the default the document states.
+      for (const size of [0, -16, Number.NaN]) {
+        expect(barsStick(400, size), String(size)).toBe(true);
+        expect(barsStick(399, size), String(size)).toBe(false);
+      }
+    });
+
+    it('is a question about height and text size, and says so in its own shape', () => {
+      // QUALITY-BAR section 5 makes the sticky rule a statement about the
+      // viewport's height against a threshold in rem, and the signature is what
+      // says so: a width cannot reach this answer because there is nowhere to
+      // hand one in. A loop over widths would have been four copies of the same
+      // two assertions.
+      expect(barsStick).toHaveLength(2);
+      expect(barsStick(500, DEFAULT_ROOT_FONT_SIZE)).toBe(true);
+      expect(barsStick(300, DEFAULT_ROOT_FONT_SIZE)).toBe(false);
     });
   });
 });

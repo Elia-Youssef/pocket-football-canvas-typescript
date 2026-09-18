@@ -705,14 +705,25 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
   });
 
   test('announces the aim and the power, throttled, as a percentage', async ({ page }) => {
+    // RE-HOMED AT PF-15, and the disclosure is the test itself. This row held
+    // the only live region in the game from PF-6, so the throttle and the
+    // `aria-live` were both on the visible readout. QUALITY-BAR section 4 asks
+    // for ONE queue and both region elements in the initial HTML, so the queue
+    // and the regions moved to `src/ui/live-region.ts` and the readout kept the
+    // words. What is graded here is unchanged: the aim is announced, throttled,
+    // as a percentage. What moved is which element is watched.
     const readout = page.locator('[data-pf="aim-readout"]');
-    await expect(readout).toHaveAttribute('aria-live', 'polite');
+    const region = page.locator('[data-pf="live-polite"]');
+    await expect(region).toHaveAttribute('aria-live', 'polite');
     await expect(readout).toBeVisible();
+    // The readout is no longer a region of its own: two regions with two
+    // intervals would be two disciplines for one rule.
+    expect(await readout.getAttribute('aria-live')).toBeNull();
 
     await page.evaluate(() => {
-      const target = document.querySelector('[data-pf="aim-readout"]');
+      const target = document.querySelector('[data-pf="live-polite"]');
       if (!(target instanceof HTMLElement)) {
-        throw new Error('the aim readout is not in the document');
+        throw new Error('the polite live region is not in the document');
       }
       const store = window as unknown as { __pfSaid?: string[] };
       store.__pfSaid = [];
@@ -749,9 +760,20 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
     await nextFrames(page, 4);
     const observed = (Date.now() - opened) / 1000;
 
-    const said = await page.evaluate(
+    const everything = await page.evaluate(
       () => (window as unknown as { __pfSaid?: string[] }).__pfSaid ?? [],
     );
+    // THE CHANNEL CARRIES MORE THAN THE AIM. The one polite region also states
+    // the play state in words, and which of the two is true at a given moment is
+    // decided in `politeLine`: the aim wins while there is one, because a state
+    // change only ever happens when there is not. A line that is neither is a
+    // line nobody wrote, so the split is asserted rather than filtered quietly.
+    const AIM_LINE = /^Aim \d+ degrees, power \d+ percent$/;
+    const STATE_LINE = /^[A-Z][^.]*\.$/;
+    for (const line of everything) {
+      expect(AIM_LINE.test(line) || STATE_LINE.test(line), line).toBe(true);
+    }
+    const said = everything.filter((line) => AIM_LINE.test(line));
     // THE FLOOR IS PROPORTIONAL TO THE SWEEP, not a bare one. A lower bound of
     // one line admits a region that spoke once in a second and a quarter of
     // continuous sweeping, which is a region that has stopped announcing and
@@ -773,7 +795,7 @@ test.describe('PF-6 the keyboard aiming model, item G5', () => {
       Math.ceil(observed / ANNOUNCE_INTERVAL) + 2,
     );
     for (const line of said) {
-      expect(line).toMatch(/^Aim \d+ degrees, power \d+ percent$/);
+      expect(line).toMatch(AIM_LINE);
     }
     // The last thing said is what the controls are showing, so the region
     // never falls behind the aim it is describing.
