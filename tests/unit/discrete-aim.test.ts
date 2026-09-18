@@ -265,7 +265,7 @@ function rig(options: MatchOptions = {}, started = true): Rig {
     step(delta: number): void {
       match.update(delta);
       input.refresh(delta);
-      controls.sync(delta, input.preview(), input.allowed());
+      controls.sync(input.preview(), input.allowed());
     },
     preview: () => input.preview(),
     shown(): { degrees: number; percent: number } {
@@ -623,7 +623,7 @@ describe('PF-6 the keyboard model, item G5', () => {
       // put it: re-seating the origin rather than restarting the ramp is what
       // stops every touch of a control buying another 250 ms of stillness,
       // and what stops the next frame overwriting the control outright.
-      harness.controls.sync(0, harness.preview(), harness.input.allowed());
+      harness.controls.sync(harness.preview(), harness.input.allowed());
       harness.press('aim-right');
       expect(liveDegrees(harness.input)).toBeCloseTo(150, 9);
       advance(harness, 0.25);
@@ -1084,7 +1084,7 @@ describe('PF-6 the no-drag controls, item C11', () => {
       });
       const root = controls.root as unknown as FakeElement;
 
-      controls.sync(0, null, false);
+      controls.sync(null, false);
       for (const marker of ['aim-left', 'power-up', 'aim-launch', 'aim-cancel']) {
         findByMarker(root, marker)?.dispatch('click');
       }
@@ -1095,7 +1095,7 @@ describe('PF-6 the no-drag controls, item C11', () => {
 
       // And the same presses land the moment the phase allows them, so the
       // silence above was the refusal and not a control that never worked.
-      controls.sync(0, null, true);
+      controls.sync(null, true);
       findByMarker(root, 'aim-left')?.dispatch('click');
       findByMarker(root, 'aim-launch')?.dispatch('click');
       findByMarker(root, 'aim-cancel')?.dispatch('click');
@@ -1255,35 +1255,53 @@ describe('PF-6 the no-drag controls, item C11', () => {
     }
   });
 
-  it('announces the aim as degrees and a percentage, at most twice a second', () => {
+  it('states the aim as degrees and a percentage, and offers it to the one queue', () => {
+    // RE-HOMED AT PF-15, and the disclosure is the test itself. This row held
+    // the only live region in the game from PF-6, so it carried QUALITY-BAR
+    // section 4's announcement rule alone: `aria-live` on the readout and a
+    // 500 ms floor with coalescing replaces. Section 4 asks for ONE queue and
+    // both region elements in the initial HTML, so the queue and the two
+    // regions moved to `src/ui/live-region.ts` and the floor moved with them;
+    // `tests/unit/live-region.test.ts` grades it there, over the same shape and
+    // with controls this rig could not carry. What is asserted here is the half
+    // that stayed: the words, the retirement of the attribute, and the line the
+    // row offers the queue every frame.
     const harness = rig();
     try {
       const readout = findByMarker(harness.root, 'aim-readout');
-      expect(readout?.getAttribute('aria-live')).toBe('polite');
+      // THE ATTRIBUTE IS GONE, and that is the point of the move: two live
+      // regions with two intervals would be two disciplines for one rule.
+      expect(readout?.getAttribute('aria-live')).toBeNull();
       expect(readout?.textContent).toBe('No aim yet');
+      expect(harness.controls.announcement()).toBeNull();
 
       harness.tap(900, 500);
       harness.step(1 / 60);
       // Power is a percentage and never a pixel distance: a drag length is
       // meaningless to a player who never dragged (SPEC section 5.1).
       expect(readout?.textContent).toBe('Aim 13 degrees, power 60 percent');
+      expect(harness.controls.announcement()).toBe('Aim 13 degrees, power 60 percent');
 
-      // A held key sweeps 240 degrees a second, so the region would be
-      // rewritten every frame without the floor. Nothing is written for the
-      // next half second, and what lands then is the NEWEST value rather than
-      // the oldest one queued behind it.
+      // A held key sweeps 240 degrees a second. The VISIBLE readout follows it
+      // frame by frame, which is what a player with low vision wanted all
+      // along: the throttle existed for the region and never for them.
       harness.frame.fire('focus');
       harness.frame.fire('keydown', { key: 'ArrowLeft' });
       for (let at = 0; at < 20; at += 1) {
         harness.step(0.02);
       }
-      expect(readout?.textContent).toBe('Aim 13 degrees, power 60 percent');
-      harness.step(0.12);
-      const spoken = readout?.textContent ?? '';
-      expect(spoken).not.toBe('Aim 13 degrees, power 60 percent');
-      expect(spoken).toBe(
-        `Aim ${String(aimDegrees(harness.preview()?.aim ?? { angleRad: 0, power01: 0 }))} degrees, power 60 percent`,
-      );
+      const swept = aimDegrees(harness.preview()?.aim ?? { angleRad: 0, power01: 0 });
+      expect(swept).not.toBe(13);
+      expect(readout?.textContent).toBe(`Aim ${String(swept)} degrees, power 60 percent`);
+      expect(harness.controls.announcement()).toBe(readout?.textContent);
+
+      // And an aim that ends takes the line with it, so the queue is offered
+      // nothing rather than a stale angle.
+      harness.frame.fire('keyup', { key: 'ArrowLeft' });
+      harness.press('aim-cancel');
+      harness.step(1 / 60);
+      expect(harness.controls.announcement()).toBeNull();
+      expect(readout?.textContent).toBe('No aim yet');
     } finally {
       harness.close();
     }

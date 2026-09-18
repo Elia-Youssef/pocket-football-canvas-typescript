@@ -24,6 +24,59 @@
   display: none;
 }
 
+/*
+ * QUALITY-BAR section 4's hidden half: the document's one h1, the two live
+ * regions and the structured mirror are all real content with real semantics
+ * that the sighted player has the HUD and the pitch for instead.
+ *
+ * HIDDEN FROM SIGHT IS NOT HIDDEN FROM THE ACCESSIBILITY TREE, and the recipe
+ * is chosen for exactly that. `display: none` and the `hidden` attribute remove
+ * the element from both; a zero-sized box is skipped by some assistive
+ * technology; a negative text indent breaks in a right-to-left context. One
+ * pixel, clipped away, is the shape that every reader still computes a box for.
+ *
+ * IT IS PINNED TO THE TOP CORNER RATHER THAN LEFT WHERE IT FALLS. An absolutely
+ * positioned box with no offsets keeps its static position, which for the
+ * announcer below the app column is one viewport down the page, and that one
+ * pixel would make the document taller than the viewport and give a page that
+ * fits a scrollbar it had no reason to have.
+ */
+.pf-visually-hidden {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * WCAG 2.2 SC 2.4.11, Focus Not Obscured. The two chrome bars are sticky above
+ * the sticky threshold, so anything between them can be scrolled underneath
+ * one of them; scroll padding is what keeps the browser's own focus scrolling
+ * clear of both, because a scroll container's optimal viewing region is the
+ * scrollport less its padding.
+ *
+ * THE TWO LENGTHS ARE MEASURED, NOT GUESSED. A bar's height is its content plus
+ * its padding plus whatever the safe-area insets add, and it grows a row when
+ * the HUD wraps, so no constant states it and no token could. The composition
+ * root observes both bars and writes their border-box block sizes here; the
+ * defaults below are what the rule resolves to before the first measurement and
+ * on the breakpoints where the bars do not stick at all.
+ */
+:root {
+  --pf-bar-top: 0;
+  --pf-bar-bottom: 0;
+}
+
+:root[data-pf-bars='sticky'] {
+  scroll-padding-block: var(--pf-bar-top) var(--pf-bar-bottom);
+}
+
 body {
   /*
    * QUALITY-BAR section 5's safe-area insets, read once here and inherited by
@@ -241,6 +294,19 @@ input {
 .pf-panel-text {
   margin: 0;
   color: var(--pf-text);
+}
+
+/*
+ * A labelled set of choices. It is a box in the body's column and repeats the
+ * body's own arrangement, so a group of radios looks exactly like the loose
+ * rows it replaced: the change is a relationship for assistive technology, not
+ * a change of layout, and a group that looked different would be a redesign
+ * riding on an accessibility fix.
+ */
+.pf-panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .pf-panel-result {

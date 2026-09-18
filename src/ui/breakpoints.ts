@@ -40,13 +40,31 @@ export const WIDE_MIN_WIDTH = 1024;
 export const MEDIUM_MIN_WIDTH = 768;
 
 /**
- * Viewport height at and above which the two chrome bars stay stuck.
+ * Viewport height at and above which the two chrome bars stay stuck, IN REM.
  *
  * QUALITY-BAR section 5 states the rule as a floor: sticky top and bottom bars
- * must collapse or unstick BELOW a 400 px viewport height. At exactly 400 they
- * may stay stuck, and they do, because the threshold is the document's and
- * this is the one place it is written down.
+ * must collapse or unstick BELOW a viewport height of 25 rem. At exactly the
+ * threshold they may stay stuck, and they do, because the floor is the
+ * document's and this is the one place it is written down.
+ *
+ * IN REM BECAUSE THE BARS ARE. The rule was written as 400 CSS px, which covers
+ * browser ZOOM (zoom scales CSS pixels, so a zoomed viewport is smaller in them
+ * and the threshold moves with it) and misses a TEXT-SIZE setting entirely: text
+ * scaling grows every bar without changing the viewport's CSS pixels, so the
+ * bars kept sticking to a viewport they no longer fit. Measured at 200 percent
+ * text on three engines: 205 and 403 CSS px of bar against a 500 px viewport,
+ * the later painted over the earlier, the pause control wholly covered and the
+ * scroll padding declaring a region of negative height. At 25 rem the threshold
+ * follows the text: 400 px at the default size, 800 px at 200 percent, so a
+ * viewport the two bars cannot both fit is never one they are stuck to.
  */
+export const STICKY_MIN_REM = 25;
+
+/** The root font size a browser lays a page out at before any text-size setting. */
+export const DEFAULT_ROOT_FONT_SIZE = 16;
+
+/** The same floor in CSS pixels at the default root size, which is what QUALITY-BAR
+ * section 5 states beside the rem rule and what the design contract carries. */
 export const STICKY_MIN_HEIGHT = 400;
 
 /**
@@ -67,7 +85,16 @@ export function breakpointFor(width: number, height: number): Breakpoint {
   return height >= width ? 'portrait' : 'compact';
 }
 
-/** Whether the two chrome bars stay stuck to the viewport at this height. */
-export function barsStick(height: number): boolean {
-  return height >= STICKY_MIN_HEIGHT;
+/**
+ * Whether the two chrome bars stay stuck to the viewport at this height.
+ *
+ * THE ROOT SIZE IS AN ARGUMENT, like the width and the height above: this module
+ * reads no document, and the size the page is laid out at is the caller's to
+ * find. A root size that is not a positive number cannot resolve a rem at all,
+ * so the answer falls back to the default one QUALITY-BAR section 5 states,
+ * which is a total answer for an impossible input rather than a refusal.
+ */
+export function barsStick(height: number, rootFontSize: number): boolean {
+  const resolved = rootFontSize > 0 ? rootFontSize : DEFAULT_ROOT_FONT_SIZE;
+  return height >= STICKY_MIN_REM * resolved;
 }

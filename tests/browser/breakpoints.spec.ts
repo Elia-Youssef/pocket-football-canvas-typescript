@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 import { A_WHOLE_TEST, SETTLE, startMatch } from './support/game';
+import {
+  VIEWPORTS,
+  controlBoxes,
+  overlaps,
+  scrollsSideways,
+  useViewport,
+} from './support/viewports';
 
 /**
  * Item F1, method T, evidence `playwright/breakpoints`:
@@ -30,21 +37,13 @@ import { A_WHOLE_TEST, SETTLE, startMatch } from './support/game';
  * own beneath, at the two extremes.
  */
 
-/** Every viewport that resolves to each name, with a height that keeps the bars stuck. */
-const VIEWPORTS = [
-  { name: 'wide', width: 1280, height: 900 },
-  { name: 'medium', width: 900, height: 700 },
-  { name: 'compact', width: 700, height: 420 },
-  { name: 'portrait', width: 420, height: 800 },
-] as const;
-
-interface Box {
-  readonly label: string;
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
+/**
+ * THE SWEEP IS SHARED WITH ITEM G6. `VIEWPORTS`, `controlBoxes`, `overlaps` and
+ * the sideways-scroll reading moved to `support/viewports.ts` at PF-15, because
+ * G6 asks the same question of the same four viewports with the root font size
+ * doubled and two copies of a sweep prove nothing about each other. Nothing
+ * about them changed on the way: the assertions below are the ones F1 closed on.
+ */
 
 function at(page: Page, marker: string): ReturnType<Page['locator']> {
   return page.locator(`[data-pf="${marker}"]`);
@@ -55,45 +54,6 @@ async function resolved(page: Page): Promise<{ breakpoint: string; bars: string 
     breakpoint: document.documentElement.dataset['pfBreakpoint'] ?? '',
     bars: document.documentElement.dataset['pfBars'] ?? '',
   }));
-}
-
-/** Whether the PAGE can be scrolled sideways, which item F2 forbids outright. */
-async function scrollsSideways(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
-  );
-}
-
-/** Every visible control, with the box the platform gives it. */
-async function controlBoxes(page: Page): Promise<Box[]> {
-  const found: Box[] = [];
-  for (const locator of await page.locator('button:visible, input:visible').all()) {
-    const box = await locator.boundingBox();
-    if (box === null) {
-      continue;
-    }
-    const marker = (await locator.getAttribute('data-pf')) ?? '';
-    const label = (await locator.getAttribute('aria-label')) ?? (await locator.innerText());
-    found.push({
-      label: `${marker}|${label}`,
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-    });
-  }
-  return found;
-}
-
-/** True where two boxes share area. A shared edge is not an overlap. */
-function overlaps(one: Box, other: Box): boolean {
-  const slack = 0.5;
-  return (
-    one.x + one.width - slack > other.x &&
-    other.x + other.width - slack > one.x &&
-    one.y + one.height - slack > other.y &&
-    other.y + other.height - slack > one.y
-  );
 }
 
 test.describe('PF-14 every supported breakpoint, item F1', () => {
@@ -108,11 +68,9 @@ test.describe('PF-14 every supported breakpoint, item F1', () => {
   }) => {
     await startMatch(page, { mode: 'first-to', target: 3, firstEver: true });
     for (const viewport of VIEWPORTS) {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expect
-        .poll(async () => (await resolved(page)).breakpoint, SETTLE)
-        .toBe(viewport.name);
+      await useViewport(page, viewport);
       const state = await resolved(page);
+      expect(state.breakpoint, viewport.name).toBe(viewport.name);
       // Every one of these heights is at or above the sticky threshold, so
       // both bars are stuck and the HUD is in view without scrolling.
       expect(state.bars, viewport.name).toBe('sticky');
@@ -140,10 +98,7 @@ test.describe('PF-14 every supported breakpoint, item F1', () => {
   }) => {
     await startMatch(page, { mode: 'first-to', target: 3, firstEver: true });
     for (const viewport of VIEWPORTS) {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expect
-        .poll(async () => (await resolved(page)).breakpoint, SETTLE)
-        .toBe(viewport.name);
+      await useViewport(page, viewport);
       const boxes = await controlBoxes(page);
       // The sweep is not vacuous: the pause control and SPEC section 5.0's
       // eight aim controls are all present at every breakpoint.
@@ -177,10 +132,7 @@ test.describe('PF-14 every supported breakpoint, item F1', () => {
   test('keeps the whole pitch inside the box it was fitted into', async ({ page }) => {
     await startMatch(page, { mode: 'first-to', target: 3, firstEver: true });
     for (const viewport of VIEWPORTS) {
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expect
-        .poll(async () => (await resolved(page)).breakpoint, SETTLE)
-        .toBe(viewport.name);
+      await useViewport(page, viewport);
       const measured = await page.evaluate(() => {
         const canvas = document.querySelector('[data-pf="play-surface"]');
         const stage = document.querySelector('[data-pf="stage"]');

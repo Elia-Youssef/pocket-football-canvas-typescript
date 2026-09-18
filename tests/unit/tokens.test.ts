@@ -14,6 +14,7 @@ import {
   SPACE,
   duration,
   pitchFor,
+  playSurfaceFor,
 } from '../../src/render/tokens';
 import type { Brightness, DurationStep, Theme } from '../../src/render/tokens';
 
@@ -132,16 +133,27 @@ const PAIRS = tableUnder('5. Measured pairs');
 const IDENTITY = tableUnder('6. Identity separation, in relative luminance');
 const RETRACTED = tableUnder('7. The retracted claim');
 const SCOPED = tableUnder('8. Cells the threshold does not govern');
+const FORCED_ONLY = tableUnder('10. Cells stated for the high-contrast variant alone');
+/** SPEC section 18's own luminance column for the eleven high-contrast values. */
+const FORCED_LUMINANCE = tablesUnder('10. Cells stated for the high-contrast variant alone')[1] ?? {
+  headers: [],
+  rows: [],
+};
 
 /** A play-surface token's value per variant, including the arrow's accent. */
 const SURFACE_BY_VARIANT: Record<Brightness, Map<string, string>> = {
   floodlit: new Map(),
   daylight: new Map(),
+  highcontrast: new Map(),
 };
 for (const table of [SURFACE, ARROW_ACCENT]) {
   for (const row of table.rows) {
     SURFACE_BY_VARIANT.floodlit.set(field(table, row, 'Token'), field(table, row, 'Floodlit'));
     SURFACE_BY_VARIANT.daylight.set(field(table, row, 'Token'), field(table, row, 'Daylight'));
+    SURFACE_BY_VARIANT.highcontrast.set(
+      field(table, row, 'Token'),
+      field(table, row, 'High-contrast'),
+    );
   }
 }
 
@@ -158,9 +170,18 @@ for (const row of CHROME.rows) {
  * The theme a brightness variant belongs to, stated here independently so that
  * the renderer's own statement of the same tie is something this file checks
  * rather than something it inherits.
+ *
+ * THE THIRD VARIANT BELONGS TO NEITHER THEME, which is the whole of SPEC section
+ * 18's high-contrast subsection: it is selected by `forced-colors: active` and by
+ * nothing else, and it replaces both brightness variants whichever theme is in
+ * force. The map is therefore partial on purpose, and `resolve` below reaches the
+ * chrome palette only for the two variants a theme can name.
  */
-const THEME_BY_VARIANT = { floodlit: 'dark', daylight: 'light' } as const;
-const VARIANTS: readonly Brightness[] = ['floodlit', 'daylight'];
+const THEME_BY_VARIANT: Partial<Record<Brightness, Theme>> = {
+  floodlit: 'dark',
+  daylight: 'light',
+};
+const VARIANTS: readonly Brightness[] = ['floodlit', 'daylight', 'highcontrast'];
 
 /** A token's hex in one variant: play surface by variant, chrome by theme. */
 function resolve(token: string, variant: Brightness): string {
@@ -168,17 +189,31 @@ function resolve(token: string, variant: Brightness): string {
   if (surface !== undefined) {
     return surface;
   }
-  const chrome = CHROME_BY_THEME[THEME_BY_VARIANT[variant]].get(token);
+  const theme = THEME_BY_VARIANT[variant];
+  const chrome = theme === undefined ? undefined : CHROME_BY_THEME[theme].get(token);
   if (chrome !== undefined) {
     return chrome;
   }
   throw new Error(`the contract states no ${variant} value for ${token}`);
 }
 
+/**
+ * A ground the page cannot predict, written as its own six-digit hex.
+ *
+ * SPEC section 18 measures the rail against a black and a white SYSTEM ground,
+ * because beyond the wall band the canvas is transparent and meets the chrome's
+ * ground, which under `forced-colors: active` is whatever the platform supplies.
+ * It is not a token and there is nothing to look up, so a hex in a background
+ * column answers for itself and everything else still has to be a token name.
+ */
+function ground(token: string, variant: Brightness): string {
+  return /^#[0-9A-F]{6}$/.test(token) ? token : resolve(token, variant);
+}
+
 /** A variant named in a contract cell, checked rather than cast. */
 function variantOf(text: string): Brightness {
-  const value = text.toLowerCase();
-  if (value !== 'floodlit' && value !== 'daylight') {
+  const value = text.toLowerCase().replace('-', '');
+  if (value !== 'floodlit' && value !== 'daylight' && value !== 'highcontrast') {
     throw new Error(`not a brightness variant: ${JSON.stringify(text)}`);
   }
   return value;
@@ -186,7 +221,10 @@ function variantOf(text: string): Brightness {
 
 /** The column a variant's number is quoted in. */
 function columnFor(variant: Brightness): string {
-  return variant === 'floodlit' ? 'Floodlit' : 'Daylight';
+  if (variant === 'floodlit') {
+    return 'Floodlit';
+  }
+  return variant === 'daylight' ? 'Daylight' : 'High-contrast';
 }
 
 /** One cell of the measured-pairs table, named the way section 8 names it. */
@@ -194,9 +232,18 @@ function cellKey(pair: string, variant: Brightness): string {
   return `${pair}  ${variant}`;
 }
 
-/** Tokens that hold a different colour in each variant, read off the contract. */
+/**
+ * Tokens that hold a different colour in at least one variant, read off the
+ * contract. `--team-opponent` joined them with the high-contrast set: it is one
+ * colour in the two brightness variants and darker in the third, so a rule that
+ * asked only whether floodlit and daylight differ would file it as fixed and
+ * then have nothing to say about the variant that moves it.
+ */
 const VARYING = SURFACE.rows
-  .filter((row) => field(SURFACE, row, 'Floodlit') !== field(SURFACE, row, 'Daylight'))
+  .filter(
+    (row) =>
+      new Set(VARIANTS.map((variant) => field(SURFACE, row, columnFor(variant)))).size > 1,
+  )
   .map((row) => field(SURFACE, row, 'Token'));
 const FIXED = SURFACE.rows
   .map((row) => field(SURFACE, row, 'Token'))
@@ -338,6 +385,28 @@ const DARK_BY_PREFERENCE = block('(prefers-color-scheme: dark)', ":root:not([dat
 const DARK_BY_SETTING = block(null, ":root[data-theme='dark']");
 const LIGHT_BY_SETTING = block(null, ":root[data-theme='light']");
 const REDUCED_MOTION = block('(prefers-reduced-motion: reduce)', ':root');
+const FORCED_COLORS = block(
+  '(forced-colors: active)',
+  ":root:not([data-theme='light']), :root[data-theme='light']",
+);
+
+/**
+ * The system colours the chrome adopts under `forced-colors: active`, and the
+ * chrome token each of them answers for.
+ *
+ * WHY A KEYWORD AND NOT A HEX. The platform supplies the value and the page
+ * cannot predict it, which is the whole of QUALITY-BAR section 5's rule: under
+ * the query the chrome adopts the SYSTEM palette rather than one of its own. The
+ * four names below are the CSS system colours for exactly the four roles the
+ * chrome palette states, so the substitution is one for one and the chrome keeps
+ * meaning what it meant.
+ */
+const SYSTEM_COLOURS: ReadonlyArray<readonly [string, string]> = [
+  ['--pf-ground', 'Canvas'],
+  ['--pf-text', 'CanvasText'],
+  ['--pf-text-muted', 'GrayText'],
+  ['--pf-accent', 'Highlight'],
+];
 
 function declared(from: Block, token: string): string {
   const value = from.declarations.get(token);
@@ -377,6 +446,19 @@ const RENDERER_COLOURS: Record<Brightness, ReadonlyArray<readonly [string, strin
     ['--ball-body', PLAY_SURFACE.daylight.ballBody],
     ['--ball-panel', PLAY_SURFACE.daylight.ballPanel],
     ['--pf-accent', PLAY_SURFACE.daylight.accent],
+  ],
+  highcontrast: [
+    ['--pitch-stripe-a', PLAY_SURFACE.highcontrast.stripeA],
+    ['--pitch-stripe-b', PLAY_SURFACE.highcontrast.stripeB],
+    ['--pf-line', PLAY_SURFACE.highcontrast.line],
+    ['--pf-rail', PLAY_SURFACE.highcontrast.rail],
+    ['--team-player', PLAY_SURFACE.highcontrast.teamPlayer],
+    ['--team-opponent', PLAY_SURFACE.highcontrast.teamOpponent],
+    ['--glyph-on-player', PLAY_SURFACE.highcontrast.glyphOnPlayer],
+    ['--glyph-on-opponent', PLAY_SURFACE.highcontrast.glyphOnOpponent],
+    ['--ball-body', PLAY_SURFACE.highcontrast.ballBody],
+    ['--ball-panel', PLAY_SURFACE.highcontrast.ballPanel],
+    ['--pf-accent', PLAY_SURFACE.highcontrast.accent],
   ],
 };
 
@@ -558,6 +640,18 @@ const DIMENSION_EXEMPT: readonly Exemption[] = [
     count: 1,
     why: 'a panel card fills the box its parent gives it, which is a relationship not a size',
   },
+  {
+    file: 'src/ui/components/chrome.css',
+    literal: '1px',
+    count: 2,
+    why: 'a visually hidden box keeps one pixel so the platform still lays it out; not a design size',
+  },
+  {
+    file: 'src/ui/components/chrome.css',
+    literal: '50%',
+    count: 1,
+    why: 'the clip that hides it takes half of nothing from every side, which is a shape not a size',
+  },
 ];
 
 /**
@@ -685,6 +779,17 @@ describe('PF-1 design tokens', () => {
       expect(CHROME.rows).toHaveLength(4);
       expect(SURFACE.rows).toHaveLength(10);
       expect(ARROW_ACCENT.rows).toHaveLength(1);
+      // SPEC section 18's high-contrast subsection arrives as a COLUMN on the
+      // three palette tables rather than as a second fixture, because it states
+      // a third value for the same ten tokens and the same eleventh colour. A
+      // column that had quietly stopped being read would leave every
+      // high-contrast assertion below comparing an empty string with itself.
+      for (const table of [SURFACE, ARROW_ACCENT]) {
+        expect(table.headers).toContain('High-contrast');
+      }
+      expect(PAIRS.headers).toContain('High-contrast');
+      expect(PAIRS.headers).toContain('High-contrast target');
+      expect(IDENTITY.headers).toContain('High-contrast relative luminance');
       // Fourteen rows, which is what SPEC section 18's measured table states
       // once its two rail-FILL rows are gone: the section retired them with
       // the correction that gave the rail a boundary, and a fill row carrying
@@ -692,24 +797,46 @@ describe('PF-1 design tokens', () => {
       expect(PAIRS.rows).toHaveLength(14);
       expect(IDENTITY.rows).toHaveLength(2);
       expect(RETRACTED.rows).toHaveLength(2);
-      // Section 8 lists the one cell whose threshold the source scopes to a
-      // named carrier. It listed two until the rail's guarantee moved to the
-      // boundary, which clears on both stripes in both variants and needs no
-      // scoping at all.
-      expect(SCOPED.rows).toHaveLength(1);
+      // Section 8 lists every cell whose threshold the source scopes to a named
+      // carrier. It listed two until the rail's guarantee moved to the boundary,
+      // then one; SPEC section 18's high-contrast subsection adds three of its
+      // own, two carried by an outline and one refused outright, and the section
+      // says of the last that the refusal is arithmetic rather than taste.
+      expect(SCOPED.rows).toHaveLength(4);
+      // Section 10 holds the cells SPEC section 18 states for the high-contrast
+      // variant ALONE: the arrow against the second mown stripe, and the rail
+      // where the canvas ends and a system ground the page cannot predict
+      // begins. They are here rather than in section 5 because a system ground
+      // is not a token, and a background column that could hold either would
+      // stop the lookup above being a lookup.
+      expect(FORCED_ONLY.rows).toHaveLength(6);
       // Section 1 carries a second table, the prose derivations. Reading it by
       // accident would compare the wrong column.
       expect(tablesUnder('1. Numeric scales')).toHaveLength(2);
     });
 
-    it('separates the three brightness variants from the seven fixed colours', () => {
-      expect(VARYING).toEqual(['--pitch-stripe-a', '--pitch-stripe-b', '--pf-rail']);
-      expect(FIXED).toHaveLength(7);
+    it('separates the four varying colours from the six fixed ones', () => {
+      // `--team-opponent` is here because the high-contrast variant darkens it;
+      // it is one colour in both brightness variants, which is why a rule that
+      // compared only those two filed it as fixed.
+      expect(VARYING).toEqual([
+        '--pitch-stripe-a',
+        '--pitch-stripe-b',
+        '--pf-rail',
+        '--team-opponent',
+      ]);
+      expect(FIXED).toHaveLength(6);
+      expect(VARIANTS).toEqual(['floodlit', 'daylight', 'highcontrast']);
     });
   });
 
   describe('the stylesheet mechanism, pinned so the parser cannot be blinded', () => {
-    it('is exactly five blocks: a base, a preference, two settings and reduced motion', () => {
+    it('is exactly six blocks, with forced colours written last', () => {
+      // THE ORDER IS PART OF THE LIST. The forced-colors block selects at the
+      // same specificity as the two theme blocks, so the only thing deciding it
+      // against them is that it comes after them; a reorder that moved it above
+      // either one would leave the query inert on the machines that match that
+      // theme, and every assertion below it would still pass.
       expect(
         BLOCKS.map((entry) => `${entry.media ?? 'top level'}  ${entry.selector}`),
       ).toEqual([
@@ -718,7 +845,26 @@ describe('PF-1 design tokens', () => {
         "top level  :root[data-theme='dark']",
         "top level  :root[data-theme='light']",
         '(prefers-reduced-motion: reduce)  :root',
+        "(forced-colors: active)  :root:not([data-theme='light']), :root[data-theme='light']",
       ]);
+    });
+
+    it('answers forced colours at the specificity of the blocks it has to beat', () => {
+      // A plain `:root` here is (0, 1, 0) against the dark-preference block's
+      // (0, 2, 0), so on a machine with no stored theme the query would lose and
+      // the chrome would keep the floodlit palette with every test green. The
+      // selector therefore names both theme cases explicitly, which is the same
+      // specificity as each, and the file order decides it.
+      expect(FORCED_COLORS.selector).toContain(":root:not([data-theme='light'])");
+      expect(FORCED_COLORS.selector).toContain(":root[data-theme='light']");
+      expect(FORCED_COLORS.selector).not.toBe(':root');
+      const source = stripComments(stylesheetText, false);
+      expect(source.indexOf('@media (forced-colors: active)')).toBeGreaterThan(
+        source.indexOf(":root[data-theme='light']"),
+      );
+      expect(source.indexOf('@media (forced-colors: active)')).toBeGreaterThan(
+        source.indexOf('@media (prefers-color-scheme: dark)'),
+      );
     });
 
     it('quotes the theme attribute the one way this file reads it', () => {
@@ -764,8 +910,9 @@ describe('PF-1 design tokens', () => {
       }
       for (const token of VARYING) {
         expected.add(token);
-        expected.add(`${token}-floodlit`);
-        expected.add(`${token}-daylight`);
+        for (const variant of VARIANTS) {
+          expected.add(`${token}-${variant}`);
+        }
       }
       for (const token of FIXED) {
         expected.add(token);
@@ -818,12 +965,19 @@ describe('PF-1 design tokens', () => {
 
     it('declares the play surface exactly as the spec measured it', () => {
       for (const token of VARYING) {
-        expect(declared(BASE, `${token}-floodlit`), token).toBe(resolve(token, 'floodlit'));
-        expect(declared(BASE, `${token}-daylight`), token).toBe(resolve(token, 'daylight'));
+        for (const variant of VARIANTS) {
+          expect(declared(BASE, `${token}-${variant}`), `${token} ${variant}`).toBe(
+            resolve(token, variant),
+          );
+        }
       }
       for (const token of FIXED) {
         expect(declared(BASE, token), token).toBe(resolve(token, 'floodlit'));
-        expect(resolve(token, 'daylight'), token).toBe(resolve(token, 'floodlit'));
+        for (const variant of VARIANTS) {
+          expect(resolve(token, variant), `${token} ${variant}`).toBe(
+            resolve(token, 'floodlit'),
+          );
+        }
       }
     });
 
@@ -840,14 +994,67 @@ describe('PF-1 design tokens', () => {
     it('ties the arrow accent on the pitch to the chrome accent of that theme', () => {
       // The eleventh colour is a cross-reference, not a decision: if it ever
       // stops being the chrome accent it has become a colour somebody chose.
+      let tied = 0;
       for (const variant of VARIANTS) {
         const theme = THEME_BY_VARIANT[variant];
+        if (theme === undefined) {
+          continue;
+        }
         expect(resolve('--pf-accent', variant), variant).toBe(
           CHROME_BY_THEME[theme].get('--pf-accent'),
         );
         expect(pitchFor(theme).accent, theme).toBe(resolve('--pf-accent', variant));
+        tied += 1;
       }
+      expect(tied).toBe(2);
       expect(BRIGHTNESS_BY_THEME).toEqual({ dark: 'floodlit', light: 'daylight' });
+    });
+
+    it('states the eleventh colour outright in the variant no theme can reach', () => {
+      // THE ONE EXCEPTION TO THE TIE ABOVE, and SPEC section 18 says why: under
+      // `forced-colors: active` the chrome accent is a system colour the page
+      // cannot predict, so an arrow strong end read through the theme would be
+      // read through a value nobody here knows. The section states the hex, and
+      // it is the one the floodlit pitch had already measured.
+      expect(resolve('--pf-accent', 'highcontrast')).toBe('#F5C542');
+      expect(resolve('--pf-accent', 'highcontrast')).toBe(resolve('--pf-accent', 'floodlit'));
+      expect(THEME_BY_VARIANT['highcontrast']).toBeUndefined();
+      expect(Object.values(BRIGHTNESS_BY_THEME)).not.toContain('highcontrast');
+      // And the renderer hands it out for either theme under the query, which is
+      // the "one set replacing both brightness variants" the section states.
+      for (const theme of ['dark', 'light'] as const) {
+        expect(playSurfaceFor(theme, true), theme).toBe(PLAY_SURFACE.highcontrast);
+        expect(playSurfaceFor(theme, true).accent, theme).toBe('#F5C542');
+        expect(playSurfaceFor(theme, true)).not.toBe(playSurfaceFor(theme, false));
+        expect(playSurfaceFor(theme, false), theme).toBe(pitchFor(theme));
+      }
+    });
+
+    it('overrides the chrome with system colours under forced colours, and nothing else', () => {
+      // QUALITY-BAR section 5: the chrome adopts the SYSTEM palette. Every
+      // chrome rule resolves its colour through one of these four names, so the
+      // four are the whole of the chrome half; each is asserted to be a system
+      // keyword and NOT the theme's hex, which is the difference a vacuous block
+      // of aliases pointing back at the theme would not have.
+      for (const [token, keyword] of SYSTEM_COLOURS) {
+        expect(declared(FORCED_COLORS, token), token).toBe(keyword);
+        expect(declared(FORCED_COLORS, token), token).not.toMatch(/^#|^var\(/);
+        expect(declared(BASE, token), token).toMatch(/^var\(/);
+      }
+      // The play-surface half: the four that move take their high-contrast
+      // value, and the six that do not are absent here exactly as they are
+      // absent from the theme blocks.
+      for (const token of VARYING) {
+        expect(declared(FORCED_COLORS, token), token).toBe(`var(${token}-highcontrast)`);
+      }
+      for (const token of FIXED) {
+        expect(FORCED_COLORS.declarations.has(token), token).toBe(false);
+      }
+      // No token is declared here that a theme block does not also decide, so
+      // the query flips a set rather than reaching past one.
+      expect([...FORCED_COLORS.declarations.keys()].sort()).toEqual(
+        [...DARK_BY_SETTING.declarations.keys()].sort(),
+      );
     });
 
     it('keeps two tokens at the same colour as two declarations', () => {
@@ -911,53 +1118,198 @@ describe('PF-1 design tokens', () => {
       // The Needs column is data, and a threshold lowered to suit a colour is
       // as quiet a change as a colour moved to suit a threshold. Two rows clear
       // theirs by 0.09, so the distribution is pinned rather than the ceiling.
-      const counts = new Map<string, number>();
-      for (const row of PAIRS.rows) {
-        const needs = field(PAIRS, row, 'Needs');
-        counts.set(needs, (counts.get(needs) ?? 0) + 1);
-      }
-      expect([...counts].sort()).toEqual([
+      const spread = (table: Table, header: string): [string, number][] => {
+        const counts = new Map<string, number>();
+        for (const row of table.rows) {
+          const value = field(table, row, header);
+          counts.set(value, (counts.get(value) ?? 0) + 1);
+        }
+        return [...counts].sort();
+      };
+      expect(spread(PAIRS, 'Needs')).toEqual([
         ['3', 12],
         ['4.5', 2],
       ]);
+      // SPEC section 18's high-contrast subsection states a second floor above
+      // the first: the MINIMUM is the Needs column unchanged, and the TARGET is
+      // 4.5:1 for every graphical pair and 7:1 for the two glyph pairs. Both
+      // distributions are pinned, because a target quietly relaxed to the
+      // minimum would make every "met" below true by construction.
+      expect(spread(PAIRS, 'High-contrast target')).toEqual([
+        ['4.5', 12],
+        ['7', 2],
+      ]);
+      // Section 8's bound is whichever of the two the scoped cell falls under,
+      // so the column is no longer one number and is pinned as a distribution.
+      // A bound written as something neither the row's minimum nor its target
+      // is a bound nobody stated.
+      expect(spread(SCOPED, 'Stays below')).toEqual([
+        ['3', 1],
+        ['4.5', 2],
+        ['7', 1],
+      ]);
       for (const row of SCOPED.rows) {
-        expect(field(SCOPED, row, 'Stays below'), field(SCOPED, row, 'Pair')).toBe('3');
+        const pair = field(SCOPED, row, 'Pair');
+        const bound = field(SCOPED, row, 'Stays below');
+        const stated = PAIRS.rows.find((entry) => field(PAIRS, entry, 'Pair') === pair);
+        if (stated === undefined) {
+          throw new Error(`section 8 scopes a pair section 5 does not measure: ${pair}`);
+        }
+        expect(
+          [field(PAIRS, stated, 'Needs'), field(PAIRS, stated, 'High-contrast target')],
+          pair,
+        ).toContain(bound);
       }
     });
 
-    it('re-derives every measured pair the spec quotes, in both variants', () => {
-      const scoped = new Set(
-        SCOPED.rows.map((row) =>
+    it('re-derives every measured pair the spec quotes, in all three variants', () => {
+      // WHICH FLOOR A SCOPED CELL IS SCOPED FROM, read off its own bound rather
+      // than assumed. The daylight arrow is below the MINIMUM its row states and
+      // its outline carries the guarantee instead; the three high-contrast cells
+      // clear their minimum and fall short of the TARGET alone. Collapsing the
+      // two would stop the minimum being checked on three cells that meet it.
+      const scoped = new Map<string, string>();
+      for (const row of SCOPED.rows) {
+        scoped.set(
           cellKey(field(SCOPED, row, 'Pair'), variantOf(field(SCOPED, row, 'Variant'))),
-        ),
-      );
+          field(SCOPED, row, 'Stays below'),
+        );
+      }
       let checked = 0;
-      let quiet = 0;
+      let minimumScoped = 0;
+      let targeted = 0;
+      let targetScoped = 0;
       for (const row of PAIRS.rows) {
         const pair = field(PAIRS, row, 'Pair');
         const foreground = field(PAIRS, row, 'Foreground');
         const background = field(PAIRS, row, 'Background');
-        const needs = Number(field(PAIRS, row, 'Needs'));
+        const needs = field(PAIRS, row, 'Needs');
+        const target = field(PAIRS, row, 'High-contrast target');
         for (const variant of VARIANTS) {
           const quoted = field(PAIRS, row, columnFor(variant));
           const key = cellKey(pair, variant);
+          const bound = scoped.get(key);
           const derived = contrast(resolve(foreground, variant), resolve(background, variant));
-          // Every cell re-derives from the hexes, the two quiet ones included.
+          // Every cell re-derives from the hexes, the quiet ones included.
           expect(round2(derived), key).toBe(Number(quoted));
-          if (scoped.has(key)) {
-            // The threshold is scoped to another carrier; the section 8 tests
-            // assert the quiet cell stays quiet and the carrier clears.
-            quiet += 1;
+          if (bound === needs) {
+            // Scoped from the minimum: the section 8 tests assert the quiet cell
+            // stays quiet and its named carrier clears.
+            minimumScoped += 1;
             continue;
           }
-          expect(derived, `${key}, needs ${String(needs)}`).toBeGreaterThanOrEqual(needs);
+          expect(derived, `${key}, needs ${needs}`).toBeGreaterThanOrEqual(Number(needs));
           checked += 1;
+          if (variant !== 'highcontrast') {
+            continue;
+          }
+          if (bound === target) {
+            // Scoped from the target alone, which is the only floor the
+            // high-contrast subsection adds. The minimum above still applied.
+            targetScoped += 1;
+            continue;
+          }
+          // The second floor, and the reason the variant exists at all: the
+          // high-contrast set is not merely legal, it is aimed at 4.5 and 7.
+          expect(derived, `${key}, target ${target}`).toBeGreaterThanOrEqual(Number(target));
+          targeted += 1;
         }
       }
-      // Fourteen rows, two variants, and the one cell section 8 scopes away.
-      expect(checked).toBe(14 * 2 - 1);
-      expect(quiet).toBe(1);
-      expect(scoped.size).toBe(1);
+      // Fourteen rows, three variants, less the one cell scoped from its floor.
+      expect(checked).toBe(14 * 3 - 1);
+      expect(minimumScoped).toBe(1);
+      expect(targetScoped).toBe(3);
+      expect(targeted).toBe(14 - 3);
+      expect(scoped.size).toBe(4);
+    });
+
+    it('re-derives every relative luminance SPEC section 18 states for the variant', () => {
+      // NINE OF THE ELEVEN WERE PINNED BY NOTHING. The contract carried the
+      // hexes, the ratios, the floors and the targets, and not the luminance
+      // column the section states beside them; only two survived, rounded to
+      // two decimals, through the identity table. A stated number nothing
+      // re-derives is a number that can be wrong in an approved document.
+      expect(FORCED_LUMINANCE.headers).toEqual([
+        'Token',
+        'High-contrast',
+        'Relative luminance',
+        'From',
+      ]);
+      expect(FORCED_LUMINANCE.rows).toHaveLength(11);
+      for (const row of FORCED_LUMINANCE.rows) {
+        const token = field(FORCED_LUMINANCE, row, 'Token');
+        const hex = field(FORCED_LUMINANCE, row, 'High-contrast');
+        // The value is the one the renderer draws with, not a third copy.
+        const name = token.replace(' on the pitch', '');
+        expect(SURFACE_BY_VARIANT.highcontrast.get(name), token).toBe(hex);
+        // And the luminance is re-derived from that hex to three decimals,
+        // which is the precision the section states them at.
+        const stated = Number(field(FORCED_LUMINANCE, row, 'Relative luminance'));
+        expect(Math.round(luminance(hex) * 1000) / 1000, `${token} ${hex}`).toBe(stated);
+      }
+    });
+
+    it('holds the cells the high-contrast variant alone is measured for', () => {
+      // SPEC section 18 states four cells that only exist under the query, and
+      // two readings that carry its one refusal: the arrow against the second
+      // mown stripe, the rail fill where the canvas ends and a system ground
+      // begins, and the boundary token's own reading on that ground, which is
+      // what makes "the boundary cannot carry this edge" a measurement rather
+      // than a sentence.
+      let derivedCells = 0;
+      let carried = 0;
+      for (const row of FORCED_ONLY.rows) {
+        const pair = field(FORCED_ONLY, row, 'Pair');
+        const foreground = field(FORCED_ONLY, row, 'Foreground');
+        const background = field(FORCED_ONLY, row, 'Ground');
+        const derived = contrast(
+          ground(foreground, 'highcontrast'),
+          ground(background, 'highcontrast'),
+        );
+        expect(round2(derived), pair).toBe(Number(field(FORCED_ONLY, row, 'Ratio')));
+        derivedCells += 1;
+        const minimum = field(FORCED_ONLY, row, 'Minimum');
+        const target = field(FORCED_ONLY, row, 'Target');
+        if (minimum === '-') {
+          // Ungoverned, and the row says who carries the edge instead. The
+          // carrier is the darkened rail fill, and it is asserted here rather
+          // than taken from the prose.
+          expect(field(FORCED_ONLY, row, 'Target met'), pair).toContain('rail fill');
+          expect(target, pair).toBe('-');
+          carried += 1;
+          continue;
+        }
+        if (minimum === 'outline carries 3:1') {
+          // The arrow's own guarantee is its `--pf-line` outline, exactly as the
+          // two brightness variants have it; the fill is measured beside it.
+          expect(
+            contrast(resolve('--pf-line', 'highcontrast'), ground(background, 'highcontrast')),
+            pair,
+          ).toBeGreaterThanOrEqual(3);
+        } else {
+          expect(derived, `${pair}, minimum ${minimum}`).toBeGreaterThanOrEqual(
+            Number(minimum),
+          );
+        }
+        const met = field(FORCED_ONLY, row, 'Target met');
+        if (met === 'yes') {
+          expect(derived, `${pair}, target ${target}`).toBeGreaterThanOrEqual(Number(target));
+        } else {
+          expect(derived, `${pair}, target ${target}`).toBeLessThan(Number(target));
+          expect(met.length, pair).toBeGreaterThan('yes'.length);
+        }
+      }
+      expect(derivedCells).toBe(6);
+      expect(carried).toBe(2);
+      // The refused edge and its carrier, side by side: the boundary token reads
+      // 1.08 on a white system ground and cannot carry it, and the darkened rail
+      // fill reads 3.12 there and does.
+      const rail = resolve('--pf-rail', 'highcontrast');
+      const line = resolve('--pf-line', 'highcontrast');
+      expect(round2(contrast(line, '#FFFFFF'))).toBe(1.08);
+      expect(round2(contrast(rail, '#FFFFFF'))).toBe(3.12);
+      expect(contrast(rail, '#FFFFFF')).toBeGreaterThanOrEqual(3);
+      expect(contrast(rail, '#000000')).toBeGreaterThanOrEqual(3);
     });
 
     it('holds the rail boundary against both mown stripes, in both variants', () => {
@@ -996,8 +1348,8 @@ describe('PF-1 design tokens', () => {
           checked += 1;
         }
       }
-      expect(checked).toBe(4);
-      // THE FOUR CELLS AS LITERALS, in the order the section quotes them, so a
+      expect(checked).toBe(6);
+      // THE SIX CELLS AS LITERALS, in the order the section quotes them, so a
       // fixture edited to agree with a moved hex fails here as well as there.
       expect(
         round2(contrast(resolve('--pf-line', 'floodlit'), resolve('--pitch-stripe-a', 'floodlit'))),
@@ -1011,6 +1363,22 @@ describe('PF-1 design tokens', () => {
       expect(
         round2(contrast(resolve('--pf-line', 'daylight'), resolve('--pitch-stripe-b', 'daylight'))),
       ).toBe(3.27);
+      expect(
+        round2(
+          contrast(
+            resolve('--pf-line', 'highcontrast'),
+            resolve('--pitch-stripe-a', 'highcontrast'),
+          ),
+        ),
+      ).toBe(8.34);
+      expect(
+        round2(
+          contrast(
+            resolve('--pf-line', 'highcontrast'),
+            resolve('--pitch-stripe-b', 'highcontrast'),
+          ),
+        ),
+      ).toBe(7.15);
       // THE CONTROLS, one per way the check can be wrong. A cell that does not
       // re-derive is refused; and so is one that re-derives and does not clear,
       // which the daylight rail FILL on stripe B still is. The fill's own
@@ -1070,17 +1438,65 @@ describe('PF-1 design tokens', () => {
           `outline on stripe B, ${variant}`,
         ).toBeGreaterThanOrEqual(3);
       }
-      // Exactly one cell is scoped, and this is it: a second quiet cell cannot
-      // arrive unannounced. The rail's cell left this table with the boundary
-      // correction, which gave that row a carrier that clears on both stripes
-      // in both variants and needs no scope.
+      // Exactly these cells are scoped, and a fifth cannot arrive unannounced.
+      // The rail's cell left this table with the boundary correction, which gave
+      // that row a carrier that clears on both stripes in every variant; the
+      // three that arrived with the high-contrast set fall short of its TARGET
+      // and of nothing else, which is why each of them names a carrier or, in
+      // the one case the section refuses outright, says so.
       expect(
         SCOPED.rows
           .map((entry) =>
             cellKey(field(SCOPED, entry, 'Pair'), variantOf(field(SCOPED, entry, 'Variant'))),
           )
           .sort(),
-      ).toEqual(['Aim arrow strong end on pitch  daylight']);
+      ).toEqual([
+        'Aim arrow strong end on pitch  daylight',
+        'Ball on player fill  highcontrast',
+        'Entity ring on player fill  highcontrast',
+        'Glyph on player  highcontrast',
+      ]);
+    });
+
+    it('carries the high-contrast target misses to the carrier each one names', () => {
+      // SPEC section 18: "The three target misses are arithmetic, not taste."
+      // The ring and the ball on the player fill are carried by their outlines
+      // against the pitch, the scoping the arrow cells already use; the dark
+      // glyph is refused, because a 7:1 glyph needs the player fill at 0.3684
+      // relative luminance or above while the ring's 3:1 minimum caps that fill
+      // at 0.2729, which is an empty window and not a preference.
+      const onPitch = contrast(
+        resolve('--pf-line', 'highcontrast'),
+        resolve('--pitch-stripe-a', 'highcontrast'),
+      );
+      expect(round2(onPitch)).toBe(8.34);
+      for (const pair of ['Entity ring on player fill', 'Ball on player fill']) {
+        const row = SCOPED.rows.find(
+          (entry) =>
+            field(SCOPED, entry, 'Pair') === pair &&
+            field(SCOPED, entry, 'Variant') === 'High-contrast',
+        );
+        if (row === undefined) {
+          throw new Error(`the contract scopes no high-contrast cell for ${pair}`);
+        }
+        expect(field(SCOPED, row, 'Carried by'), pair).toContain('8.34');
+        expect(onPitch, pair).toBeGreaterThanOrEqual(4.5);
+      }
+      // The refusal, re-derived rather than quoted: the window the two floors
+      // leave for the player fill is empty, to four decimal places.
+      const fill = luminance(resolve('--team-player', 'highcontrast'));
+      const glyph = luminance(resolve('--glyph-on-player', 'highcontrast'));
+      const line = luminance(resolve('--pf-line', 'highcontrast'));
+      // A 7:1 dark glyph on the fill needs the fill at least this bright.
+      const floorForGlyph = 7 * (glyph + 0.05) - 0.05;
+      // The ring's own 3:1 against the fill caps the fill at this.
+      const ceilingForRing = (line + 0.05) / 3 - 0.05;
+      expect(Number(floorForGlyph.toFixed(4))).toBe(0.3684);
+      expect(Number(ceilingForRing.toFixed(4))).toBe(0.2729);
+      expect(floorForGlyph).toBeGreaterThan(ceilingForRing);
+      expect(fill).toBeLessThanOrEqual(ceilingForRing);
+      expect(round2(contrast(resolve('--glyph-on-player', 'highcontrast'),
+        resolve('--team-player', 'highcontrast')))).toBe(5.24);
     });
 
     it('re-derives both identity luminances to two decimal places', () => {
@@ -1089,11 +1505,39 @@ describe('PF-1 design tokens', () => {
         expect(round2(luminance(resolve(token, 'floodlit'))), token).toBe(
           Number(field(IDENTITY, row, 'Relative luminance')),
         );
+        expect(round2(luminance(resolve(token, 'highcontrast'))), token).toBe(
+          Number(field(IDENTITY, row, 'High-contrast relative luminance')),
+        );
       }
-      // The gap is what identity rests on, and it survives every dichromacy.
-      const player = luminance(resolve('--team-player', 'floodlit'));
-      const opponent = luminance(resolve('--team-opponent', 'floodlit'));
-      expect(player).toBeGreaterThan(opponent);
+      // The gap is what identity rests on, and it survives every dichromacy. The
+      // high-contrast set WIDENS it rather than merely keeping it: SPEC section
+      // 18 records 0.26 against 0.04 becoming 0.26 against 0.01, and the fills
+      // against each other rising from 3.49 to 4.97.
+      for (const variant of VARIANTS) {
+        const player = luminance(resolve('--team-player', variant));
+        const opponent = luminance(resolve('--team-opponent', variant));
+        expect(player, variant).toBeGreaterThan(opponent);
+      }
+      const brightened =
+        luminance(resolve('--team-player', 'highcontrast')) -
+        luminance(resolve('--team-opponent', 'highcontrast'));
+      const before =
+        luminance(resolve('--team-player', 'floodlit')) -
+        luminance(resolve('--team-opponent', 'floodlit'));
+      expect(brightened).toBeGreaterThan(before);
+      expect(
+        round2(
+          contrast(
+            resolve('--team-player', 'highcontrast'),
+            resolve('--team-opponent', 'highcontrast'),
+          ),
+        ),
+      ).toBe(4.97);
+      expect(
+        round2(
+          contrast(resolve('--team-player', 'floodlit'), resolve('--team-opponent', 'floodlit')),
+        ),
+      ).toBe(3.49);
     });
   });
 
@@ -1131,35 +1575,93 @@ describe('PF-1 design tokens', () => {
     });
   });
 
-  describe('the two brightness variants', () => {
+  describe('the three variants', () => {
     it('redefines the pitch per theme, and only where the spec says it changes', () => {
-      for (const token of VARYING) {
-        expect(resolve(token, 'floodlit'), token).not.toBe(resolve(token, 'daylight'));
-        // Daylight is the brighter of the two, which is what makes it a
-        // brightness variant rather than a second palette.
+      // THE THREE MOWN-AND-RAIL TOKENS ARE THE BRIGHTNESS PAIR. Daylight is the
+      // brighter of the two, which is what makes it a brightness variant rather
+      // than a second palette. `--team-opponent` is not one of them: it is the
+      // same colour in both themes and darkens only under the query, so the two
+      // rules are stated apart rather than run together.
+      const themed = VARYING.filter(
+        (token) => resolve(token, 'floodlit') !== resolve(token, 'daylight'),
+      );
+      expect(themed).toEqual(['--pitch-stripe-a', '--pitch-stripe-b', '--pf-rail']);
+      for (const token of themed) {
         expect(
           luminance(resolve(token, 'daylight')),
           token,
         ).toBeGreaterThan(luminance(resolve(token, 'floodlit')));
+      }
+      expect(resolve('--team-opponent', 'floodlit')).toBe(resolve('--team-opponent', 'daylight'));
+      // Every varying token is aliased per block all the same, so a theme change
+      // flips the whole set or none of it.
+      for (const token of VARYING) {
         expect(DARK_BY_SETTING.declarations.get(token), token).toBe(`var(${token}-floodlit)`);
         expect(LIGHT_BY_SETTING.declarations.get(token), token).toBe(`var(${token}-daylight)`);
+        expect(FORCED_COLORS.declarations.get(token), token).toBe(
+          `var(${token}-highcontrast)`,
+        );
       }
       for (const token of FIXED) {
         expect(DARK_BY_SETTING.declarations.has(token), token).toBe(false);
         expect(LIGHT_BY_SETTING.declarations.has(token), token).toBe(false);
+        expect(FORCED_COLORS.declarations.has(token), token).toBe(false);
       }
     });
 
-    it('keeps the luminance order of the play surface identical in both', () => {
+    it('darkens the high-contrast pitch rather than recolouring it', () => {
+      // SPEC section 18: every moved value is the floodlit value with its three
+      // channels scaled by one factor and rounded half up, which is what makes
+      // it "a darkening of the pitch the two themes share, not a second
+      // palette". Re-derived here from the floodlit hexes and the four factors
+      // the section states, so a hand-picked colour that happened to look right
+      // could not pass.
+      const scaled = (hex: string, factor: number): string => {
+        const digits = hex.slice(1);
+        const byte = (at: number): number => Number.parseInt(digits.slice(at, at + 2), 16);
+        const part = (at: number): string =>
+          Math.floor(byte(at) * factor + 0.5)
+            .toString(16)
+            .toUpperCase()
+            .padStart(2, '0');
+        return `#${part(0)}${part(2)}${part(4)}`;
+      };
+      const factors: ReadonlyArray<readonly [string, number]> = [
+        ['--pitch-stripe-a', 0.72],
+        ['--pitch-stripe-b', 0.75],
+        ['--pf-rail', 0.71],
+        ['--team-opponent', 0.55],
+      ];
+      for (const [token, factor] of factors) {
+        expect(scaled(resolve(token, 'floodlit'), factor), token).toBe(
+          resolve(token, 'highcontrast'),
+        );
+        expect(
+          luminance(resolve(token, 'highcontrast')),
+          token,
+        ).toBeLessThan(luminance(resolve(token, 'floodlit')));
+      }
+      expect(factors.map(([token]) => token)).toEqual([...VARYING]);
+      // The control: a factor that is not the one the section states does not
+      // reproduce the hex, so the check above is a derivation and not a copy.
+      expect(scaled(resolve('--pitch-stripe-a', 'floodlit'), 0.73)).not.toBe(
+        resolve('--pitch-stripe-a', 'highcontrast'),
+      );
+    });
+
+    it('keeps the luminance order of the play surface identical in all three', () => {
       // SPEC section 18 rests every contrast guarantee on this. If the order
       // moved, a pair that clears its threshold in one variant could fail in
-      // the other with nothing else changing.
+      // another with nothing else changing, and the high-contrast subsection
+      // says so in as many words: the order is identical, so every guarantee
+      // built on it carries.
       const order = (variant: Brightness): string[] =>
         [...VARYING, ...FIXED]
           .map((token) => ({ token, value: luminance(resolve(token, variant)) }))
           .sort((one, other) => one.value - other.value)
           .map((entry) => entry.token);
       expect(order('daylight')).toEqual(order('floodlit'));
+      expect(order('highcontrast')).toEqual(order('floodlit'));
       expect(order('floodlit')).toHaveLength(10);
     });
   });
@@ -1193,6 +1695,30 @@ describe('PF-1 design tokens', () => {
       // Reduced motion removes the animation and leaves the sequence alone, so
       // the zero is a duration and never a skipped step.
       expect(duration(4, true)).toBe(duration(0, false));
+    });
+  });
+
+  describe('the composition root reads the query the third variant answers', () => {
+    it('asks the platform for forced colours, once, beside the theme', () => {
+      // SPEC section 18's wiring, read as source because the composition root is
+      // what does it and no unit test can mount one. Nothing under `render/` may
+      // ask the platform anything, so the read is here, and the stylesheet
+      // answers the same query for the chrome: one palette rather than two.
+      const entry = readFileSync(ENTRY, 'utf8');
+      expect(entry).toContain("const FORCED_COLORS_QUERY = '(forced-colors: active)';");
+      expect(entry).toContain('forcedColorsQuery ??= window.matchMedia(FORCED_COLORS_QUERY);');
+      // AND HANDS IT TO THE RESOLVER, which is the half a query read and thrown
+      // away would leave out: the frame draws with whatever this returns.
+      expect(entry).toContain(
+        'const palette = playSurfaceFor(themeInForce(), forcedColorsInForce());',
+      );
+      // The list is built once and asked every frame, the same way the theme and
+      // the motion policy are: a MediaQueryList is live, so a preference turned
+      // on mid-session moves the pitch on the next frame.
+      expect(entry).toContain('let forcedColorsQuery: MediaQueryList | null = null;');
+      // And the theme-only resolver is NOT what the frame calls, because it
+      // cannot see the query at all.
+      expect(entry).not.toContain('pitchFor(themeInForce())');
     });
   });
 
@@ -1258,14 +1784,16 @@ describe('PF-1 design tokens', () => {
         'src/ui/components/chrome.css 100vh x2',
         'src/ui/components/chrome.css 100dvh x2',
         'src/ui/components/chrome.css 100% x1',
+        'src/ui/components/chrome.css 1px x2',
+        'src/ui/components/chrome.css 50% x1',
       ]);
-      expect(DIMENSION_EXEMPT).toHaveLength(3);
+      expect(DIMENSION_EXEMPT).toHaveLength(5);
       for (const entry of DIMENSION_EXEMPT) {
         expect(entry.why.length, entry.literal).toBeGreaterThan(20);
       }
-      // Five occurrences in one file, and the file is a real one the sweep
+      // Eight occurrences in one file, and the file is a real one the sweep
       // reaches rather than a name nothing walks to.
-      expect(DIMENSION_EXEMPT.reduce((total, entry) => total + entry.count, 0)).toBe(5);
+      expect(DIMENSION_EXEMPT.reduce((total, entry) => total + entry.count, 0)).toBe(8);
       expect(walkSource().scanned).toContain('src/ui/components/chrome.css');
     });
 

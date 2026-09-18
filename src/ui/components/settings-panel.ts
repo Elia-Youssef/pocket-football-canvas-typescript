@@ -40,6 +40,12 @@
  * best effort by design and requires settings to say so plainly, because
  * script-writable storage is deleted by browsers that have never heard of this
  * game.
+ *
+ * THE TWO CHOICE SETS ARE LABELLED GROUPS. Each is a `role="radiogroup"` named
+ * by the line already above it, which is the remainder of the chrome part's
+ * visible-label work: the per-choice labels landed there, and what was left was
+ * the setting's own name reaching a screen reader as a paragraph with no
+ * relationship to the radios beneath it.
  */
 
 import { SURFACE_SCALES, THEME_SETTINGS } from '../../core/storage';
@@ -105,7 +111,12 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     onEscape: options.onEscape,
   });
 
-  panel.addText('Colour theme');
+  // THE TWO LINES THAT NAME THE SETTINGS NOW LABEL THEM. They were paragraphs
+  // in the flat column of the panel body, so the words a sighted player reads
+  // above the radios reached a screen reader as an unrelated sentence two stops
+  // earlier, and "System" arrived as a choice of nothing in particular. The
+  // group carries `role="radiogroup"` and is named by that same line.
+  const themes = panel.addRadioGroup('theme-group', 'Colour theme');
 
   const radios = new Map<ThemeChoice, HTMLInputElement>();
   for (const choice of THEME_CHOICES) {
@@ -123,10 +134,10 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     });
     const radio = control.input;
     radios.set(choice, radio);
-    panel.addControl(control.root, radio);
+    themes.addControl(control.root, radio);
   }
 
-  panel.addText('Play surface size');
+  const scales = panel.addRadioGroup('surface-scale-group', 'Play surface size');
 
   const sizes = new Map<number, HTMLInputElement>();
   for (const percent of SURFACE_SCALES) {
@@ -144,7 +155,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     });
     const radio = control.input;
     sizes.set(percent, radio);
-    panel.addControl(control.root, radio);
+    scales.addControl(control.root, radio);
   }
 
   const notice = panel.addText(STORAGE_NOTICE);

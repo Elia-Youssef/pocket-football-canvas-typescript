@@ -22,9 +22,16 @@
  * half-applies, and it is the one this file exists to avoid.
  *
  * The blocks below are the whole file, in this order: the base, the system
- * preference, the two stored-setting overrides, and reduced motion. The test
- * pins that list, because a parser that has quietly stopped finding a block
- * reports agreement it never checked.
+ * preference, the two stored-setting overrides, reduced motion, and forced
+ * colours. The test pins that list, because a parser that has quietly stopped
+ * finding a block reports agreement it never checked.
+ *
+ * FORCED COLOURS IS WRITTEN LAST, AND THAT IS THE MECHANISM. It selects at the
+ * specificity of the theme blocks above it and has to win against both of them,
+ * whichever of the two is in force; a plain `:root` would lose to the
+ * dark-preference block's `:root:not([data-theme='light'])` on any machine that
+ * has not stored a light theme, and the query would then do nothing at all on
+ * exactly the default setup.
  */
 
 :root {
@@ -123,22 +130,35 @@
   --pf-accent-light: #7A5A06;
 
   /*
-   * Play surface, SPEC section 18. Three tokens are brightness variants of each
-   * other: the dark theme is a floodlit night pitch, the light theme is
-   * daylight, and the luminance ORDER of everything on the pitch is identical
-   * in both, which is what every contrast guarantee in that section is built
+   * Play surface, SPEC section 18. Four tokens are variants of each other: the
+   * dark theme is a floodlit night pitch, the light theme is daylight, the
+   * high-contrast set answers `forced-colors: active` whichever theme is in
+   * force, and the luminance ORDER of everything on the pitch is identical in
+   * all three, which is what every contrast guarantee in that section is built
    * on. The test asserts the order rather than assuming it.
+   *
+   * --team-opponent varies only in the third variant, and is written out per
+   * variant all the same: a token declared three ways in one place is a token a
+   * reader can compare, where one declared twice plus an override somewhere
+   * below is a token whose value depends on where you stopped reading.
    */
   --pitch-stripe-a-floodlit: #2A7336;
   --pitch-stripe-b-floodlit: #2F7D3C;
   --pf-rail-floodlit: #C8CFCB;
+  --team-opponent-floodlit: #6E1712;
 
   --pitch-stripe-a-daylight: #359045;
   --pitch-stripe-b-daylight: #3C9A4D;
   --pf-rail-daylight: #DDE3DF;
+  --team-opponent-daylight: #6E1712;
+
+  --pitch-stripe-a-highcontrast: #1E5327;
+  --pitch-stripe-b-highcontrast: #235E2D;
+  --pf-rail-highcontrast: #8E9390;
+  --team-opponent-highcontrast: #3D0D0A;
 
   /*
-   * The other seven are one colour in both variants, so they carry no variant
+   * The other six are one colour in every variant, so they carry no variant
    * name. --glyph-on-opponent holds the same colour as --pf-line and is still
    * written out: section 18 states the two independently, and an alias would
    * turn two decisions that agree today into one decision used twice.
@@ -152,7 +172,6 @@
    */
   --pf-line: #F2F7F3;
   --team-player: #5590CE;
-  --team-opponent: #6E1712;
   --glyph-on-player: #0A1A2B;
   --glyph-on-opponent: #F2F7F3;
   --ball-body: #FAFAF8;
@@ -160,7 +179,7 @@
 
   /*
    * The set in force. Light is the base, so a browser that reports no colour
-   * preference gets daylight; the two blocks below select the other set.
+   * preference gets daylight; the three blocks below select another set.
    */
   --pf-ground: var(--pf-ground-light);
   --pf-text: var(--pf-text-light);
@@ -169,6 +188,7 @@
   --pitch-stripe-a: var(--pitch-stripe-a-daylight);
   --pitch-stripe-b: var(--pitch-stripe-b-daylight);
   --pf-rail: var(--pf-rail-daylight);
+  --team-opponent: var(--team-opponent-daylight);
 }
 
 /*
@@ -187,6 +207,7 @@
     --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
     --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
     --pf-rail: var(--pf-rail-floodlit);
+    --team-opponent: var(--team-opponent-floodlit);
   }
 }
 
@@ -199,6 +220,7 @@
   --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
   --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
   --pf-rail: var(--pf-rail-floodlit);
+  --team-opponent: var(--team-opponent-floodlit);
 }
 
 /*
@@ -214,6 +236,7 @@
   --pitch-stripe-a: var(--pitch-stripe-a-daylight);
   --pitch-stripe-b: var(--pitch-stripe-b-daylight);
   --pf-rail: var(--pf-rail-daylight);
+  --team-opponent: var(--team-opponent-daylight);
 }
 
 /*
@@ -234,5 +257,50 @@
     --dur-2: var(--dur-0);
     --dur-3: var(--dur-0);
     --dur-4: var(--dur-0);
+  }
+}
+
+/*
+ * Forced colours, QUALITY-BAR section 5 and SPEC section 18. WRITTEN LAST, and
+ * selecting at the specificity of the two theme blocks above: the file's header
+ * states why, and the short form is that a plain `:root` loses to
+ * `:root:not([data-theme='light'])` on a machine with no stored theme, which is
+ * the default setup.
+ *
+ * THE TWO HALVES ARE ONE BLOCK BECAUSE THEY ARE ONE DECISION. The chrome adopts
+ * the system palette, which is what the section asks of DOM: every chrome rule
+ * already resolves its colour through one of these four names, so overriding
+ * the four here moves the whole of the chrome without a per-rule edit, and
+ * anything the browser does not force for itself (an accent colour, a gradient,
+ * a shadow) follows with it. The play surface cannot adopt it: canvas pixels are
+ * untouched by the media feature, so the pitch answers the query by switching to
+ * the high-contrast variant of its own palette, which is the same set
+ * `src/render/tokens.ts` carries as data for the drawing calls.
+ *
+ * The eleventh colour is NOT overridden here. Under this query the chrome accent
+ * is a system colour the page cannot predict, so the aim arrow's strong end
+ * takes the explicit value in the renderer record instead of reading one through
+ * the theme; a `--pf-accent` written here would be the chrome's and never the
+ * pitch's.
+ *
+ * AND THE FOUR PLAY-SURFACE LINES BELOW ARE INERT AT RUNTIME, which is worth
+ * saying so nobody reads them as the mechanism. No chrome rule reads
+ * `--pitch-stripe-*`, `--pf-rail` or `--team-opponent`, and the canvas does not
+ * read the stylesheet at all: it draws from `src/render/tokens.ts` and the root
+ * asks the query itself through `forcedColorsInForce()`. They are here so that
+ * the stylesheet states the same switch the renderer performs, in the one place
+ * a reader looks for a media-query response, and so `tokens.test.ts` can hold
+ * the two forms against each other.
+ */
+@media (forced-colors: active) {
+  :root:not([data-theme='light']), :root[data-theme='light'] {
+    --pf-ground: Canvas;
+    --pf-text: CanvasText;
+    --pf-text-muted: GrayText;
+    --pf-accent: Highlight;
+    --pitch-stripe-a: var(--pitch-stripe-a-highcontrast);
+    --pitch-stripe-b: var(--pitch-stripe-b-highcontrast);
+    --pf-rail: var(--pf-rail-highcontrast);
+    --team-opponent: var(--team-opponent-highcontrast);
   }
 }

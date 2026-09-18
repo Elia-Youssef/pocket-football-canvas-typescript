@@ -9,10 +9,37 @@
     <title>Pocket Football</title>
   </head>
   <body>
-    <!-- The chrome mounts here as real DOM. The canvas play surface arrives
-         with the renderer; QUALITY-BAR section 1 keeps every button, readout
-         and label out of it permanently. -->
-    <div id="app"></div>
+    <!-- QUALITY-BAR section 4's landmark and heading rule. ONE main landmark
+         holds every piece of page content, which is what makes "all page
+         content is inside a landmark" true rather than nearly true, and the
+         document's one h1 names the page. The heading is visually hidden
+         because SPEC section 12 gives the visible chrome a HUD and no title
+         bar; hidden from sight is not hidden from the accessibility tree. -->
+    <main>
+      <h1 class="pf-visually-hidden">Pocket Football</h1>
+
+      <!-- The chrome mounts here as real DOM. The canvas play surface arrives
+           with the renderer; QUALITY-BAR section 1 keeps every button, readout
+           and label out of it permanently. -->
+      <div id="app"></div>
+
+      <!-- QUALITY-BAR section 4's two live regions, and they are HERE rather
+           than built with the chrome for the reason that section states: both
+           region elements exist in the initial HTML and only their text
+           changes. A region created at the moment it first has something to
+           say is a region the assistive technology was not yet watching, and
+           its first line is the one that goes unspoken.
+
+           They also sit OUTSIDE #app on purpose. The focus trap makes every
+           background element inert while an overlay is open, and inert content
+           is out of the accessibility tree: a region inside the app column
+           would fall silent exactly when a panel needed to announce something.
+           src/ui/live-region.ts owns the one queue that writes both. -->
+      <div class="pf-visually-hidden" data-pf="announcer">
+        <p data-pf="live-polite" aria-live="polite" aria-atomic="true"></p>
+        <p data-pf="live-assertive" aria-live="assertive" aria-atomic="true"></p>
+      </div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

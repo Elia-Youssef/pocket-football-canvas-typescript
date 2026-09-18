@@ -918,8 +918,15 @@ export const EDITS = [
     item: 'E1',
     name: 'a measured pair is checked against its own threshold',
     file: 'tests/reference/design-contract.json',
-    find: '["Entity ring on player fill", "--pf-line", "--team-player", "3.09", "3.09", "3"]',
-    replace: '["Entity ring on player fill", "--pf-line", "--team-player", "3.09", "3.09", "5"]',
+    // RE-POINTED at PF-15: SPEC section 18's high-contrast subsection gave
+    // every measured row a third variant cell and a target column, so the row
+    // text moved. Same property, same row, same threshold lowered.
+    find:
+      '["Entity ring on player fill", "--pf-line", "--team-player", ' +
+      '"3.09", "3.09", "3.09", "3", "4.5"]',
+    replace:
+      '["Entity ring on player fill", "--pf-line", "--team-player", ' +
+      '"3.09", "3.09", "3.09", "5", "4.5"]',
     detectedBy: 'unit',
   },
   {
@@ -944,8 +951,13 @@ export const EDITS = [
     item: 'E1',
     name: 'a filled arrow cell is re-derived and not trusted',
     file: 'tests/reference/design-contract.json',
-    find: '["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"]',
-    replace: '["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", "5.38", "3.81", "3"]',
+    // RE-POINTED at PF-15 with the two columns the third variant added.
+    find:
+      '["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", ' +
+      '"5.38", "3.71", "8.34", "3", "4.5"]',
+    replace:
+      '["Aim arrow weak end on pitch", "--pf-line", "--pitch-stripe-a", ' +
+      '"5.38", "3.81", "8.34", "3", "4.5"]',
     detectedBy: 'unit',
   },
   {
@@ -964,10 +976,14 @@ export const EDITS = [
     item: 'E1',
     name: 'a scoped cell cannot be deleted',
     file: 'tests/reference/design-contract.json',
+    // RE-POINTED at PF-15: the scoped table is four rows now, because the
+    // high-contrast subsection scopes three cells of its own away from the
+    // TARGET it adds. Emptying the table is no longer one edit, so what this
+    // protects is the deletion of the row it always protected.
     find:
-      '[["Aim arrow strong end on pitch", "Daylight", "1.59", "3", ' +
-      '"The arrow outline, both variants"]]',
-    replace: '[]',
+      '      ["Aim arrow strong end on pitch", "Daylight", "1.59", "3", ' +
+      '"The arrow outline, both variants"],\n',
+    replace: '',
     detectedBy: 'unit',
   },
   {
@@ -978,8 +994,13 @@ export const EDITS = [
     item: 'E1',
     name: 'a stated threshold cannot be quietly lowered',
     file: 'tests/reference/design-contract.json',
-    find: '["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "3"]',
-    replace: '["Ball on pitch", "--ball-body", "--pitch-stripe-a", "5.58", "3.84", "1"]',
+    // RE-POINTED at PF-15 with the two columns the third variant added.
+    find:
+      '["Ball on pitch", "--ball-body", "--pitch-stripe-a", ' +
+      '"5.58", "3.84", "8.65", "3", "4.5"]',
+    replace:
+      '["Ball on pitch", "--ball-body", "--pitch-stripe-a", ' +
+      '"5.58", "3.84", "8.65", "1", "4.5"]',
     detectedBy: 'unit',
   },
 
@@ -991,15 +1012,24 @@ export const EDITS = [
     item: 'E1',
     name: 'a rail boundary cell is re-derived and not trusted',
     file: 'tests/reference/design-contract.json',
-    find: '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.27", "3"]',
-    replace: '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", "4.70", "3.37", "3"]',
+    // RE-POINTED at PF-15 with the two columns the third variant added.
+    find:
+      '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", ' +
+      '"4.70", "3.27", "7.15", "3", "4.5"]',
+    replace:
+      '["Rail boundary on stripe B", "--pf-line", "--pitch-stripe-b", ' +
+      '"4.70", "3.37", "7.15", "3", "4.5"]',
     detectedBy: 'unit',
   },
   {
     item: 'E1',
     name: 'a rail boundary row cannot be deleted',
     file: 'tests/reference/design-contract.json',
-    find: '["Rail boundary on stripe A", "--pf-line", "--pitch-stripe-a", "5.38", "3.71", "3"], ',
+    // RE-POINTED at PF-15: the rows are one per line now and each carries the
+    // third variant, so the deletion this protects takes the whole line.
+    find:
+      '      ["Rail boundary on stripe A", "--pf-line", "--pitch-stripe-a", ' +
+      '"5.38", "3.71", "8.34", "3", "4.5"],\n',
     replace: '',
     detectedBy: 'unit',
   },
@@ -1007,13 +1037,18 @@ export const EDITS = [
     item: 'E1',
     name: 'the pitch is redefined per theme',
     file: 'src/ui/tokens.css',
+    // RE-POINTED at PF-15: SPEC section 18's high-contrast subsection made
+    // `--team-opponent` a varying token, so the stored-setting block that flips
+    // the pitch gained a fourth alias. Same block, same flip, one line wider.
     find: `  --pitch-stripe-a: var(--pitch-stripe-a-floodlit);
   --pitch-stripe-b: var(--pitch-stripe-b-floodlit);
   --pf-rail: var(--pf-rail-floodlit);
+  --team-opponent: var(--team-opponent-floodlit);
 }`,
     replace: `  --pitch-stripe-a: var(--pitch-stripe-a-daylight);
   --pitch-stripe-b: var(--pitch-stripe-b-daylight);
   --pf-rail: var(--pf-rail-daylight);
+  --team-opponent: var(--team-opponent-daylight);
 }`,
     detectedBy: 'unit',
   },
@@ -3004,8 +3039,11 @@ export const EDITS = [
     file: 'src/ui/layout.ts',
     // RE-POINTED at PF-9: the same block, one level deeper inside the edge
     // test the menu's own overlay required. Same block, same break.
+    // RE-POINTED at PF-15: item G9's focus trap has to come off a control
+    // before focus goes back to it, so every close in this wiring goes through
+    // `dismiss`. Same block, same break.
     find: `        if (settings.isOpen()) {
-          settings.hide();
+          dismiss(settings);
         }`,
     replace: '      void settings;',
     detectedBy: 'unit',
@@ -3014,8 +3052,11 @@ export const EDITS = [
     item: 'M1',
     name: 'the game-over panel hands focus to a stable anchor on the way out',
     file: 'src/ui/layout.ts',
-    find: '        game.show(hud.pause);',
-    replace: '        game.show();',
+    // RE-POINTED at PF-15 with the same rule read the other way round: a
+    // panel opening from inside another one is still inert, so every open goes
+    // through `reveal`, which lifts the trap first. Same anchor, same break.
+    find: '        reveal(game, hud.pause);',
+    replace: '        reveal(game, document.body);',
     detectedBy: 'unit',
   },
   {
@@ -3760,18 +3801,25 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C11',
     name: 'the tracks are written back over a refused move, every frame',
     file: 'src/ui/components/aim-controls.ts',
+    // RE-POINTED at PF-15: the row's own announcement queue retired into
+    // `src/ui/live-region.ts`, so the `pump` that used to follow these two
+    // lines is gone. Same two writes, same removal.
     find: `      setValueIfChanged(angleSlider, String(shownDegrees));
-      setValueIfChanged(powerSlider, String(shownPercent));
-      pump(elapsed);`,
-    replace: '      pump(elapsed);',
+      setValueIfChanged(powerSlider, String(shownPercent));`,
+    replace: '      void shownPercent;',
     detectedBy: 'unit',
   },
   {
     item: 'G5',
     name: 'the announcement returns to the no-aim state when an aim ends',
     file: 'src/ui/components/aim-controls.ts',
-    find: '        queue(NO_AIM_TEXT);',
-    replace: '        void NO_AIM_TEXT;',
+    // RE-POINTED at PF-15: the row offers a line to the one queue rather
+    // than owning one, so the no-aim state is `null` rather than a queued
+    // string. Same property: an aim that ended stops being described.
+    find: `      if (preview === null) {
+        line = null;`,
+    replace: `      if (preview === null) {
+        line ??= null;`,
     detectedBy: 'unit',
   },
   {
@@ -3912,25 +3960,36 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
   {
     item: 'G5',
     name: 'the announcement floor is the half second section 4 states',
-    file: 'src/ui/components/aim-controls.ts',
-    find: 'const ANNOUNCE_INTERVAL = 0.5;',
-    replace: 'const ANNOUNCE_INTERVAL = 0.005;',
+    // RE-POINTED at PF-15: QUALITY-BAR section 4 asks for ONE queue and both
+    // region elements in the initial HTML, so the floor moved with the queue
+    // into `src/ui/live-region.ts`. Same number, same rule, new home; item G5
+    // still owns it, which is why no second entry was added beside this one.
+    file: 'src/ui/live-region.ts',
+    find: 'export const ANNOUNCE_INTERVAL = 0.5;',
+    replace: 'export const ANNOUNCE_INTERVAL = 0.005;',
     detectedBy: 'unit',
   },
   {
     item: 'G5',
     name: 'the announcement states power as a percentage',
     file: 'src/ui/components/aim-controls.ts',
-    find: '          `Aim ${formatNumber(shownDegrees)} degrees, power ${formatNumber(',
-    replace: '          `Aim ${formatNumber(shownDegrees)} degrees, reach ${formatNumber(',
+    // RE-POINTED at PF-15: the line is assigned rather than queued, so it
+    // moved two characters left. Same words, same break.
+    find: '        line = `Aim ${formatNumber(shownDegrees)} degrees, power ${formatNumber(',
+    replace: '        line = `Aim ${formatNumber(shownDegrees)} degrees, reach ${formatNumber(',
     detectedBy: 'unit',
   },
   {
     item: 'G5',
-    name: 'the aim readout is a polite live region',
-    file: 'src/ui/components/aim-controls.ts',
-    find: "  readout.setAttribute('aria-live', 'polite');",
-    replace: "  readout.setAttribute('aria-live', 'off');",
+    // RE-POINTED at PF-15, and renamed with it. The readout's own `aria-live`
+    // retired into the initial-HTML polite region that `src/ui/live-region.ts`
+    // owns, because section 4 asks for one queue and two elements rather than a
+    // region per component. The property is unchanged: the region the aim is
+    // announced through is a polite live region.
+    name: 'the region the aim is announced through is a polite live one',
+    file: 'index.html',
+    find: '<p data-pf="live-polite" aria-live="polite" aria-atomic="true"></p>',
+    replace: '<p data-pf="live-polite" aria-atomic="true"></p>',
     detectedBy: 'unit',
   },
   {
@@ -4002,8 +4061,10 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'C11',
     name: 'the controls are brought in line with the aim every frame',
     file: 'src/main.ts',
-    find: '    controls.sync(elapsed, input.preview(), input.allowed());',
-    replace: '    controls.sync(elapsed, null, input.allowed());',
+    // RE-POINTED at PF-15: `sync` lost its elapsed argument when the row's
+    // own announcement clock retired into the one queue. Same call, same break.
+    find: '    controls.sync(input.preview(), input.allowed());',
+    replace: '    controls.sync(null, input.allowed());',
     detectedBy: 'browser',
   },
   {
@@ -5581,8 +5642,11 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F7',
     name: 'the bars stay stuck AT the threshold and unstick below it',
     file: 'src/ui/breakpoints.ts',
-    find: '  return height >= STICKY_MIN_HEIGHT;',
-    replace: '  return height > STICKY_MIN_HEIGHT;',
+    // RE-POINTED at PF-15's fix round: QUALITY-BAR section 5's floor is stated
+    // in rem now, so the comparison it is a floor OF moved with it. The
+    // property is unchanged: at exactly the threshold the bars stay stuck.
+    find: '  return height >= STICKY_MIN_REM * resolved;',
+    replace: '  return height > STICKY_MIN_REM * resolved;',
     detectedBy: 'unit',
   },
   {
@@ -5697,8 +5761,10 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     item: 'F7',
     name: 'the bars are told to stick above the threshold and not below it',
     file: 'src/main.ts',
-    find: "  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';",
-    replace: "  root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'static' : 'sticky';",
+    // RE-POINTED at PF-15's fix round with the root size the rem needs.
+    find: "  root.dataset['pfBars'] = barsStick(window.innerHeight, rootFontSize()) ? 'sticky' : 'static';",
+    replace:
+      "  root.dataset['pfBars'] = barsStick(window.innerHeight, rootFontSize()) ? 'static' : 'sticky';",
     detectedBy: 'unit',
   },
   {
@@ -7663,6 +7729,558 @@ const EXEMPT_COORDINATE: readonly string[] = ['render/input.ts', 'render/surface
     file: '.github/CODEOWNERS',
     find: 'required_approving_review_count to 0',
     replace: 'required_approving_review_count to 1',
+    detectedBy: 'unit',
+  },
+
+  // ---------------------------------------------------------------------
+  // PF-15. The accessibility part: the scan, the mirror and the one queue,
+  // the semantics, the text scale, the flash measurement, the focus trap,
+  // forced colours and focus not obscured.
+  //
+  // EVERY ONE OF THEM IS UNIT DETECTED, which is the directive of 2026-09-02
+  // and took building for. Four of the properties below live in a browser
+  // spec, where nothing cheaper can normally witness them, so each of those
+  // specs has an assertion inventory beside it in the unit suite the way
+  // `browser-gate.test.ts` has one for item A2: a scan that has stopped
+  // scanning and a sweep that has stopped sweeping both report green, and a
+  // browser entry would have cost a build and a Playwright run apiece.
+  // ---------------------------------------------------------------------
+
+  {
+    item: 'G1',
+    name: 'a level rule the tag filter cannot reach is asked for by id',
+    file: 'tests/browser/axe.spec.ts',
+    // RE-POINTED at PF-15's fix round: the list is the SEVEN rules axe's own
+    // `tagExclude` holds back, measured, and `target-size` is not one of them
+    // (a tag match bypasses a rule's `enabled: false`). Dropping one is a scan
+    // that reports a pass on a question it did not ask, and the derived
+    // comparison in the coverage test is what catches it.
+    find: "  'td-has-header',\n",
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G1',
+    name: 'the scan enables every WCAG 2.2 A and AA tag',
+    file: 'tests/browser/axe.spec.ts',
+    // RE-POINTED at PF-15's own fix round, because the list it anchored on was
+    // WRONG and the entry could not say so: WCAG 2.2 contains 2.1, and the four
+    // tags here ran no rule whose criterion arrived in 2.1 (four of them on
+    // axe-core 4.13.0, SC 1.4.12 and SC 1.3.4 among them). The list is six tags
+    // now; the mutation drops the pair that was missing, which is the exact
+    // regression the correction was for.
+    find: "  'wcag21a',\n  'wcag21aa',\n",
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G1',
+    name: 'every excluded rule is run by id rather than taken on trust',
+    file: 'tests/browser/axe.spec.ts',
+    find: '      const results = await new AxeBuilder({ page }).withRules(allExcluded()).analyze();',
+    replace: "      const results = await new AxeBuilder({ page }).withRules(['region']).analyze();",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G1',
+    name: 'the scan covers the screen a first launch lands on',
+    file: 'tests/browser/axe.spec.ts',
+    find: "      await take('first launch, how to play over the menu');",
+    replace: "      await take('first launch');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G1',
+    name: 'the landmark control plants its content OUTSIDE the landmark',
+    file: 'tests/browser/axe.spec.ts',
+    // RE-POINTED at PF-15's own fix round, with the name corrected to the break.
+    // The marker line was the anchor and the marker is not the property: renaming
+    // it left the stray paragraph outside the landmark, so `region` still fired
+    // and the control still controlled. What the control turns on is WHERE the
+    // paragraph is appended, and appending it to the landmark instead is the
+    // single edit that makes the control unable to fire.
+    find: '        document.body.appendChild(stray);',
+    replace: "        document.querySelector('main')?.appendChild(stray);",
+    detectedBy: 'unit',
+  },
+
+  // THE FLOOR ITSELF IS NOT HERE, and that is deliberate rather than an
+  // omission. QUALITY-BAR section 4's half second moved into this module with
+  // the queue, and item G5's own entry moved with it: `the announcement floor
+  // is the half second section 4 states` now names `src/ui/live-region.ts`. A
+  // second entry mutating the same constant would be two entries for one
+  // property, which is how a guard gets duplicated and an entry made
+  // undetectable; the 2026-09-13 phase gate found one of those.
+  {
+    item: 'G4',
+    name: 'a polite line coalesces rather than queueing behind one',
+    file: 'src/ui/live-region.ts',
+    find: '      pending = line === spoken ? null : line;',
+    replace: '      pending = pending ?? (line === spoken ? null : line);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'an outcome is queued once and never dropped',
+    file: 'src/ui/live-region.ts',
+    find: '      announced = line;\n      waiting.push(line);',
+    replace: '      announced = line;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'an outcome does not wait behind the polite floor',
+    file: 'src/ui/live-region.ts',
+    // RE-POINTED at PF-15's own fix round: the line gained the assertive floor
+    // below, so the polite half of the reading is now the `free` branch and the
+    // mutation adds `since` back beside it.
+    find: '      const next = free ? waiting.shift() : undefined;',
+    replace: '      const next = free && since >= ANNOUNCE_INTERVAL ? waiting.shift() : undefined;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'one outcome stands its floor before the next replaces it',
+    file: 'src/ui/live-region.ts',
+    find: '      const free = standing >= ANNOUNCE_INTERVAL;',
+    replace: '      const free = true;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'both region elements exist before either has anything to say',
+    file: 'index.html',
+    // THE ELEMENT, NOT ITS POLITENESS. The mutation was `aria-live="polite"` on
+    // the assertive region, which is a real break and a differently named one:
+    // the entry claims the element EXISTS in the initial HTML, which is
+    // QUALITY-BAR section 4's own requirement, so the edit that tests it is the
+    // one that takes the element out.
+    find: '        <p data-pf="live-assertive" aria-live="assertive" aria-atomic="true"></p>\n',
+    replace: '',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the assertive region is assertive and not a second polite one',
+    file: 'index.html',
+    find: '<p data-pf="live-assertive" aria-live="assertive"',
+    replace: '<p data-pf="live-assertive" aria-live="polite"',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the mirror gives a position in pitch-relative terms',
+    file: 'src/ui/components/play-mirror.ts',
+    find: "const THIRDS: readonly string[] = ['left third', 'middle third', 'right third'];",
+    replace: "const THIRDS: readonly string[] = ['left third', 'left third', 'right third'];",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the mirror is fed from the same sync as the canvas',
+    file: 'src/main.ts',
+    find: '    mirror.sync(world);',
+    replace: '    void world;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the mirror is mounted outside the application frame',
+    file: 'src/main.ts',
+    find: '  host.appendChild(mirror.root);',
+    replace: '  frame.appendChild(mirror.root);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the aim readout offers its line to the one queue',
+    file: 'src/ui/components/aim-controls.ts',
+    find: '    announcement(): string | null {\n      return line;\n    },',
+    replace: '    announcement(): string | null {\n      return null;\n    },',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'an outcome survives the pause that interrupts it',
+    file: 'src/ui/components/play-mirror.ts',
+    find: "  const state = live.kind === 'PAUSED' ? live.interrupted : live;",
+    replace: '  const state = live;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G4',
+    name: 'the mirror writes nothing for a pitch that has not moved',
+    file: 'src/ui/components/play-mirror.ts',
+    find: "      setTextIfChanged(ball, mirrorLine('Ball', world.ball.position.x, world.ball.position.y));",
+    replace: "      ball.textContent = mirrorLine('Ball', world.ball.position.x, world.ball.position.y);",
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G6',
+    name: 'the size the sweep measures at is two hundred percent',
+    file: 'tests/browser/support/viewports.ts',
+    find: "export const DOUBLED_ROOT_FONT_SIZE = '32px';",
+    replace: "export const DOUBLED_ROOT_FONT_SIZE = '17px';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G6',
+    name: 'two controls that share area are an overlap',
+    file: 'tests/browser/support/viewports.ts',
+    find: '  const slack = 0.5;',
+    replace: '  const slack = 500;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G6',
+    name: 'the shared sweep is the one item F1 closed on',
+    file: 'tests/browser/support/viewports.ts',
+    find: "  { name: 'portrait', width: 420, height: 800 },",
+    replace: "  { name: 'portrait', width: 420, height: 700 },",
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G7',
+    name: 'the document exposes a single h1',
+    file: 'index.html',
+    find: '<h1 class="pf-visually-hidden">Pocket Football</h1>',
+    replace: '<p class="pf-visually-hidden">Pocket Football</p>',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'the landmark holding every piece of content is a landmark',
+    file: 'index.html',
+    find: '    <main>',
+    replace: '    <main role="presentation">',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'the hidden half is hidden from sight and not from the tree',
+    file: 'src/ui/components/chrome.css',
+    find: '  clip-path: inset(50%);',
+    replace: '  display: none;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'the document title reflects the state it is in',
+    file: 'src/ui/components/play-mirror.ts',
+    find: '  return `${phrase}, ${scoreline(readout)} - ${GAME_NAME}`;',
+    replace: '  return GAME_NAME;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'the two settings choice sets are labelled groups',
+    file: 'src/ui/components/panel.ts',
+    find: "      group.setAttribute('role', 'radiogroup');",
+    replace: "      group.setAttribute('role', 'group');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'the menu choice sets are labelled groups as well',
+    file: 'src/ui/components/mode-panel.ts',
+    find: "  const modeGroup = panel.addRadioGroup('mode-group', 'Mode');",
+    replace: "  const modeGroup = panel.addRadioGroup('mode-group', '');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G7',
+    name: 'a menu radio is added into its group and not beside it',
+    file: 'src/ui/components/mode-panel.ts',
+    find: '    into.addControl(choice.root, choice.input);',
+    replace: '    panel.addControl(choice.root, choice.input);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'the menu hands focus back to the control that opened the overlay',
+    file: 'src/ui/layout.ts',
+    // THE MARKER IS THE BREAK, and the position is not: `mode-how-to` is also
+    // the last control the menu adds, so `controls().at(-1)` names the same
+    // element today and a mutation to it would change nothing observable. What
+    // the reading protects is that the invoker is THAT control, so the mutation
+    // names a different one; the position-to-marker change itself is armour
+    // against a control being added after it, which no test can witness until
+    // one is.
+    find: "    return controlByMarker(panel.controls(), 'mode-how-to', hud.pause);",
+    replace: "    return controlByMarker(panel.controls(), 'mode-start', hud.pause);",
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G8',
+    name: 'the flash threshold is the one the documents state',
+    file: 'scripts/flash-rate.mjs',
+    find: 'export const FLASH_LIMIT = 3;',
+    replace: 'export const FLASH_LIMIT = 4;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the flash window rolls rather than bucketing',
+    file: 'scripts/flash-rate.mjs',
+    find: '    while (sorted[at] - sorted[from] > window) {',
+    replace: '    while (Math.floor(sorted[at]) !== Math.floor(sorted[from])) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'a measurement that drove nothing is not a pass',
+    file: 'scripts/flash-rate.mjs',
+    find: '    if (workload.frames <= 0 || workload.seconds <= 0) {',
+    replace: '    if (workload.frames < 0 || workload.seconds < 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'each workload has to have exercised the region grid on its own',
+    file: 'scripts/flash-rate.mjs',
+    // RE-POINTED at PF-15's fix round: the anchor was the diagnostic string on
+    // the line after the guard, so what it protected was the wording. The guard
+    // is the comparison, and weakening it is what the name claims.
+    find: '    if (regions <= 1) {',
+    replace: '    if (regions <= 0) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the combined reading over both populations is bounded at the same limit',
+    file: 'scripts/flash-rate.mjs',
+    find: '    if (together > limit) {',
+    replace: '    if (together > limit + 10) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the combined reading over both populations is taken and printed',
+    file: 'scripts/flash-rate.mjs',
+    find: '    const together = Math.max(0, ...regionMaxima(bothKinds(workload)).values());',
+    replace: '    const together = peak;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the seconds of one driven match are not another match',
+    file: 'scripts/flash-rate.mjs',
+    find: '    const key = `${String(onset.run)}:${String(onset.region)}`;',
+    replace: '    const key = String(onset.region);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the evidence the measurement writes outlives the run that wrote it',
+    file: '.github/workflows/ci.yml',
+    // `artifacts/` is git-ignored, so the upload step IS item G8's named
+    // evidence. Without it every gate stays green and the report exists
+    // nowhere after the job ends.
+    find: '      - name: Upload the flash-rate report',
+    replace: '      - name: Upload something else entirely',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the evidence is uploaded on a failing run as well as a passing one',
+    file: '.github/workflows/ci.yml',
+    find: '        if: always()\n        uses: actions/upload-artifact',
+    replace: '        if: failure()\n        uses: actions/upload-artifact',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G8',
+    name: 'the measurement runs on every merge',
+    file: '.github/workflows/ci.yml',
+    find: '      - name: Flash rate, item G8\n        run: node scripts/flash-rate.mjs',
+    replace: '      - name: Flash rate, item G8\n        run: node --version',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G9',
+    name: 'everything but the top overlay is out of reach while one is open',
+    file: 'src/ui/layout.ts',
+    find: '      setInertIfChanged(element, top !== null);',
+    replace: '      setInertIfChanged(element, false);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'the trap is built around the top of the stack',
+    file: 'src/ui/layout.ts',
+    find: '    for (let at = STACK.length - 1; at >= 0; at -= 1) {',
+    replace: '    for (let at = 0; at < STACK.length; at += 1) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'the trap comes off a control before focus goes back to it',
+    file: 'src/ui/layout.ts',
+    find: '    closing.add(panel);\n    applyModal();',
+    replace: '    applyModal();',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'an overlay opening from inside another one can take focus',
+    file: 'src/ui/layout.ts',
+    find: '    setInertIfChanged(panel.root, false);\n    panel.show(invoker);',
+    replace: '    panel.show(invoker);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'a tab at either end of an overlay wraps back into it',
+    file: 'src/ui/components/panel.ts',
+    find: '    if (!event.shiftKey && active === last) {',
+    replace: '    if (!event.shiftKey && active === first) {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'a radio group is one tab stop, and it is the checked one',
+    file: 'src/ui/components/panel.ts',
+    find: '      walk.push(checkedIn(group) ?? element);',
+    replace: '      walk.push(element);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'an overlay says it is a dialog, and is named by its own heading',
+    file: 'src/ui/components/panel.ts',
+    // RE-POINTED at PF-15's fix round, with the property the panels now carry.
+    // `aria-modal` is gone: it declares that content outside the dialog is not
+    // perceivable, and item G4's two live regions are outside it on purpose.
+    // What the frame still promises is the role and the name, and this is the
+    // single edit that takes the role away.
+    find: "  root.setAttribute('role', 'dialog');",
+    replace: "  root.setAttribute('role', 'group');",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G9',
+    name: 'escape closes a dismissible overlay and no other',
+    // INVERTED RATHER THAN REMOVED, and the difference is whether the entry
+    // grades anything. Both non-dismissible panels are built with no `onEscape`
+    // at all, so deleting the guard leaves `options.onEscape?.()` a no-op for
+    // exactly the two panels the guard exists for: the mutation changes no
+    // behaviour and the suite stays green on it. The inversion breaks the half
+    // that IS wired, which is the property the name claims.
+    file: 'src/ui/components/panel.ts',
+    find: '      if (options.dismissible === true) {',
+    replace: '      if (options.dismissible !== true) {',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G10',
+    name: 'the play surface answers the forced-colors query',
+    file: 'src/main.ts',
+    find: '    const palette = playSurfaceFor(themeInForce(), forcedColorsInForce());',
+    replace: '    const palette = playSurfaceFor(themeInForce(), false);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'the forced-colors block beats both theme blocks',
+    file: 'src/ui/tokens.css',
+    find: "  :root:not([data-theme='light']), :root[data-theme='light'] {",
+    replace: '  :root {',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'the chrome adopts the system palette under the query',
+    file: 'src/ui/tokens.css',
+    find: '    --pf-ground: Canvas;',
+    replace: '    --pf-ground: var(--pf-ground-light);',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'every high-contrast luminance the spec states is re-derived',
+    file: 'tests/reference/design-contract.json',
+    // SPEC section 18 states a relative luminance beside each of the eleven
+    // values; nine of them were pinned by nothing until PF-15's fix round.
+    find: '["--pf-rail", "#8E9390", "0.286", "floodlit x 0.71"]',
+    replace: '["--pf-rail", "#8E9390", "0.386", "floodlit x 0.71"]',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'the chrome sweep compares the values the canvas alone supplies',
+    file: 'tests/browser/forced-colors.spec.ts',
+    // The exclusion list is the two accents the pitch READS from the chrome.
+    // Excluding more than that lets a chrome rule hard-code a canvas colour.
+    find: "const SHARED_WITH_THE_CHROME: readonly string[] = ['#F5C542', '#7A5A06'];",
+    replace:
+      "const SHARED_WITH_THE_CHROME: readonly string[] = ['#F5C542', '#7A5A06', '#F2F7F3'];",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'the high-contrast pitch is the set the spec states',
+    file: 'src/render/tokens.ts',
+    find: "    stripeA: '#1E5327',",
+    replace: "    stripeA: '#1E5328',",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G10',
+    name: 'the third variant replaces the theme rather than joining it',
+    file: 'src/render/tokens.ts',
+    find: '  return forcedColors ? PLAY_SURFACE.highcontrast : pitchFor(theme);',
+    replace: '  return pitchFor(theme);',
+    detectedBy: 'unit',
+  },
+
+  {
+    item: 'G11',
+    name: 'the sticky floor is a height in rem and not a pixel literal',
+    file: 'src/ui/breakpoints.ts',
+    // QUALITY-BAR section 5's floor scales with the text (SC 1.4.4): a pixel
+    // literal covers zoom and misses a text-size setting, which is how the two
+    // bars came to stick to a viewport they could not both fit.
+    find: '  return height >= STICKY_MIN_REM * resolved;',
+    replace: '  return height >= STICKY_MIN_HEIGHT;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G11',
+    name: 'the root size the rem is resolved at is the one the page is laid out at',
+    file: 'src/main.ts',
+    find: "  root.dataset['pfBars'] = barsStick(window.innerHeight, rootFontSize()) ? 'sticky' : 'static';",
+    replace:
+      "  root.dataset['pfBars'] = barsStick(window.innerHeight, DEFAULT_ROOT_FONT_SIZE) " +
+      "? 'sticky' : 'static';",
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G11',
+    name: 'a focused control is scrolled clear of both stuck bars',
+    file: 'src/ui/components/chrome.css',
+    find: '  scroll-padding-block: var(--pf-bar-top) var(--pf-bar-bottom);',
+    replace: '  scroll-padding-block: 0 0;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G11',
+    name: 'a bar reports the whole of what stands over the page',
+    file: 'src/main.ts',
+    find: '      const size = entry.borderBoxSize[0]?.blockSize ?? 0;',
+    replace: '      const size = entry.contentRect.height;',
+    detectedBy: 'unit',
+  },
+  {
+    item: 'G11',
+    name: 'a focus move asks the platform to honour the padding',
+    file: 'src/main.ts',
+    find: "    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });",
+    replace: '    void target;',
     detectedBy: 'unit',
   },
 ];

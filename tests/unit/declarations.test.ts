@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import * as determinism from '../../scripts/check-determinism.mjs';
+import * as flashRate from '../../scripts/flash-rate.mjs';
 import * as mutation from '../../scripts/mutation-check.mjs';
 import * as fingerprint from '../../scripts/output-fingerprint.mjs';
 import * as record from '../../scripts/check-repository-record.mjs';
@@ -116,6 +117,14 @@ const SUBJECTS: readonly Subject[] = [
     anchor: 'checkCommitRecord',
   },
   {
+    // The list is in the order the walk below finds the declaration files, so
+    // the measurement script sits between the record gate and the harness.
+    label: 'scripts/flash-rate.mjs',
+    declaration: 'scripts/flash-rate.d.mts',
+    namespace: flashRate,
+    anchor: 'rollingMaximum',
+  },
+  {
     label: 'scripts/mutation-check.mjs',
     declaration: 'scripts/mutation-check.d.mts',
     namespace: mutation,
@@ -147,10 +156,11 @@ describe('the hand-written declarations describe the modules they stand for', ()
     // five modules, so the count is pinned and each label is named. The count is
     // the number of hand-written declaration files in the repository: every one
     // of them is compared, which is the whole of the claim.
-    expect(SUBJECTS).toHaveLength(6);
+    expect(SUBJECTS).toHaveLength(7);
     expect(SUBJECTS.map((subject) => subject.label)).toEqual([
       'scripts/check-determinism.mjs',
       'scripts/check-repository-record.mjs',
+      'scripts/flash-rate.mjs',
       'scripts/mutation-check.mjs',
       'scripts/output-fingerprint.mjs',
       'tools/eslint-plugin-core-boundary/index.js',

@@ -440,6 +440,34 @@ const DELIBERATE: readonly MarkdownMention[] = [
     reason: 'the same written file, named as a path segment where it is joined',
   },
   {
+    file: 'scripts/flash-rate.mjs',
+    stem: 'artifacts/reports/flash-rate',
+    reason:
+      'the evidence file item G8 measurement writes itself, under the ' +
+      'directory the ignore file names; present after a run, never tracked',
+  },
+  {
+    file: '.github/workflows/ci.yml',
+    stem: 'artifacts/reports/flash-rate',
+    reason:
+      'the same written file, uploaded as item G8 evidence by the step that ' +
+      'runs the measurement; produced by the run, never tracked',
+  },
+  {
+    file: 'tests/unit/workflow-shape.test.ts',
+    stem: 'artifacts/reports/flash-rate',
+    reason:
+      'the same written file, named in the test that pins the CI step which ' +
+      'uploads it, since a git-ignored artifact outlives its run no other way',
+  },
+  {
+    file: 'tests/unit/flash-rate.test.ts',
+    stem: 'artifacts/reports/flash-rate',
+    reason:
+      'the same written file, named in the test that pins where the ' +
+      'measurement puts it, which is what ACCEPTANCE section 5 states',
+  },
+  {
     file: 'scripts/mutation-check.mjs',
     stem: 'README',
     reason:
@@ -591,7 +619,7 @@ describe('no file points at a document a clean checkout does not receive', () =>
     expect(unused).toEqual([]);
     // And the count, so that a list quietly shortened by one is as loud as a
     // list quietly lengthened by one.
-    expect(DELIBERATE).toHaveLength(15);
+    expect(DELIBERATE).toHaveLength(19);
     for (const mention of DELIBERATE) {
       expect(mention.reason.length, `${mention.file}: ${mention.stem}`)
         .toBeGreaterThan(20);

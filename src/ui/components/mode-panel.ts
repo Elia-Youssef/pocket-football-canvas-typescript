@@ -39,7 +39,7 @@ import {
   setTextIfChanged,
 } from './control';
 import { createPanel } from './panel';
-import type { Panel } from './panel';
+import type { Panel, PanelGroup } from './panel';
 
 /** SPEC section 9's four modes, in the order the section lists them. */
 const MODE_LABELS: Readonly<Record<ModeKind, string>> = {
@@ -108,6 +108,7 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
   let guide = options.guideOn;
 
   function radio(
+    into: PanelGroup,
     group: string,
     marker: string,
     label: string,
@@ -130,7 +131,7 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
         }
       },
     });
-    panel.addControl(choice.root, choice.input);
+    into.addControl(choice.root, choice.input);
     return choice.input;
   }
 
@@ -144,49 +145,67 @@ export function createModePanel(options: ModePanelOptions): ModePanel {
     guide = guideOnByDefault(difficultyOf(current()));
   }
 
-  panel.addText('Mode');
+  const modeGroup = panel.addRadioGroup('mode-group', 'Mode');
   const modes = new Map<ModeKind, HTMLInputElement>();
   for (const value of MODE_ORDER) {
     modes.set(
       value,
-      radio('pf-mode', `mode-${value}`, MODE_LABELS[value], () => {
+      radio(modeGroup, 'pf-mode', `mode-${value}`, MODE_LABELS[value], () => {
         kind = value;
         defaultTheGuide();
       }),
     );
   }
 
-  panel.addText('Match length');
+  const durationGroup = panel.addRadioGroup('duration-group', 'Match length');
   const durations = new Map<number, HTMLInputElement>();
   for (const value of QUICK_DURATIONS) {
     durations.set(
       value,
-      radio('pf-duration', `duration-${String(value)}`, `${formatNumber(value)} seconds`, () => {
-        duration = value;
-      }),
+      radio(
+        durationGroup,
+        'pf-duration',
+        `duration-${String(value)}`,
+        `${formatNumber(value)} seconds`,
+        () => {
+          duration = value;
+        },
+      ),
     );
   }
 
-  panel.addText('Goal target');
+  const targetGroup = panel.addRadioGroup('target-group', 'Goal target');
   const targets = new Map<number, HTMLInputElement>();
   for (const value of FIRST_TO_TARGETS) {
     targets.set(
       value,
-      radio('pf-target', `target-${String(value)}`, `${formatNumber(value)} goals`, () => {
-        target = value;
-      }),
+      radio(
+        targetGroup,
+        'pf-target',
+        `target-${String(value)}`,
+        `${formatNumber(value)} goals`,
+        () => {
+          target = value;
+        },
+      ),
     );
   }
 
-  panel.addText('Difficulty');
+  const difficultyGroup = panel.addRadioGroup('difficulty-group', 'Difficulty');
   const difficulties = new Map<Difficulty, HTMLInputElement>();
   for (const value of DIFFICULTY_ORDER) {
     difficulties.set(
       value,
-      radio('pf-difficulty', `difficulty-${value}`, DIFFICULTY_LABELS[value], () => {
-        difficulty = value;
-        defaultTheGuide();
-      }),
+      radio(
+        difficultyGroup,
+        'pf-difficulty',
+        `difficulty-${value}`,
+        DIFFICULTY_LABELS[value],
+        () => {
+          difficulty = value;
+          defaultTheGuide();
+        },
+      ),
     );
   }
 

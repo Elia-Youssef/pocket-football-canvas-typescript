@@ -59,6 +59,12 @@ export function chromeOptions(overrides: Partial<ChromeOptions> = {}): ChromeOpt
     onHintDismissed: () => undefined,
     onResetData: () => undefined,
     modes: modeWiring(),
+    // The composition root hands the wiring the three elements of the app column
+    // it mounted itself, for item G9's trap. A mount with none of them is a
+    // chrome with nothing but its own panels behind an overlay, which is what a
+    // test that is not about the trap wants; a test that IS about it passes the
+    // elements it planted.
+    background: [],
     ...overrides,
   };
 }

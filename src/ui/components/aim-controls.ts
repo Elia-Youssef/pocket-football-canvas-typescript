@@ -31,12 +31,21 @@
  * rule exists to prevent.
  *
  * THE READOUT IS A CONTROL'S WORTH OF INFORMATION, so it is real text and not
- * a canvas glyph. It carries `aria-live="polite"` and is written at most once
- * every 500 ms with the newest value replacing whatever was pending, which is
- * QUALITY-BAR section 4's announcement rule: a held arrow sweeps 240 degrees a
- * second and would otherwise clobber the region faster than it can be spoken.
- * Power is a percentage rather than a distance, because a drag length means
- * nothing to a player who never dragged (SPEC section 5.1).
+ * a canvas glyph. Power is a percentage rather than a distance, because a drag
+ * length means nothing to a player who never dragged (SPEC section 5.1).
+ *
+ * IT IS NO LONGER A LIVE REGION OF ITS OWN, and the throttle went with the
+ * attribute. This row carried QUALITY-BAR section 4's announcement rule alone
+ * from PF-6, because it held the only live region in the game: `aria-live` on
+ * the readout, and a 500 ms floor with coalescing replaces so that a held arrow
+ * sweeping 240 degrees a second could not clobber the region faster than it
+ * could be spoken. Section 4 asks for ONE queue and both region elements in the
+ * initial HTML, so the accessibility part moved both to `src/ui/live-region.ts`;
+ * a second interval beside that one would be two disciplines for one rule. What
+ * is left here is the line itself, offered through `announcement`, and a visible
+ * readout written on the frame it changes - which is what a sighted player with
+ * low vision wanted all along, since the throttle existed for the region and
+ * never for them.
  */
 
 import type { AimPreview } from '../../core/aiming';
@@ -65,12 +74,6 @@ const PERCENT = 100;
 const ANGLE_STEP = ANGLE_TAP_DEGREES;
 const PERCENT_STEP = POWER_TAP * PERCENT;
 
-/**
- * QUALITY-BAR section 4: at least half a second between polite writes, with
- * the newest value replacing a pending one rather than queueing behind it.
- */
-const ANNOUNCE_INTERVAL = 0.5;
-
 /** Before the first aim of a match there is no angle and no power to state. */
 const NO_AIM_TEXT = 'No aim yet';
 
@@ -85,11 +88,14 @@ export interface AimControls {
   readonly root: HTMLElement;
   /** The named focusable controls in tab order. The census reads this. */
   controls(): readonly HTMLElement[];
+  /** One frame: bring every control in line with the aim of the moment. */
+  sync(preview: AimPreview | null, allowed: boolean): void;
   /**
-   * One frame: bring every control in line with the aim of the moment, and
-   * pay out at most one announcement per interval of real elapsed time.
+   * The aim as a line for the one announcement queue, or `null` where there is
+   * no aim to state. The queue owns the floor and the coalescing; this is only
+   * what is true now, offered every frame like every other chrome reading.
    */
-  sync(elapsed: number, preview: AimPreview | null, allowed: boolean): void;
+  announcement(): string | null;
 }
 
 export function createAimControls(options: AimControlsOptions): AimControls {
@@ -222,29 +228,11 @@ export function createAimControls(options: AimControlsOptions): AimControls {
   const readout = document.createElement('p');
   readout.className = 'pf-aim-readout';
   readout.dataset['pf'] = 'aim-readout';
-  readout.setAttribute('aria-live', 'polite');
   readout.textContent = NO_AIM_TEXT;
   root.appendChild(readout);
 
-  // The announcement queue: one pending line, the newest wins, and the first
-  // change of a still period is written at once rather than after a wait.
-  let announced = NO_AIM_TEXT;
-  let latest = NO_AIM_TEXT;
-  let sinceWrite = ANNOUNCE_INTERVAL;
-
-  function queue(text: string): void {
-    latest = text;
-  }
-
-  function pump(elapsed: number): void {
-    sinceWrite += Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0;
-    if (latest === announced || sinceWrite < ANNOUNCE_INTERVAL) {
-      return;
-    }
-    setTextIfChanged(readout, latest);
-    announced = latest;
-    sinceWrite = 0;
-  }
+  /** The aim in words, or nothing to state. Offered, never announced here. */
+  let line: string | null = null;
 
   return {
     root,
@@ -253,21 +241,24 @@ export function createAimControls(options: AimControlsOptions): AimControls {
       return added;
     },
 
-    sync(elapsed: number, preview: AimPreview | null, allowed: boolean): void {
+    announcement(): string | null {
+      return line;
+    },
+
+    sync(preview: AimPreview | null, allowed: boolean): void {
       for (const control of added) {
         setRefused(control, !allowed);
       }
       if (preview === null) {
-        queue(NO_AIM_TEXT);
+        line = null;
       } else {
         shownDegrees = aimDegrees(preview.aim);
         shownPercent = aimPercent(preview.aim);
-        queue(
-          `Aim ${formatNumber(shownDegrees)} degrees, power ${formatNumber(
-            shownPercent,
-          )} percent`,
-        );
+        line = `Aim ${formatNumber(shownDegrees)} degrees, power ${formatNumber(
+          shownPercent,
+        )} percent`;
       }
+      setTextIfChanged(readout, line ?? NO_AIM_TEXT);
       // WRITTEN EVERY FRAME, with or without an aim. A range input is a real
       // control and a refused one still moves under a finger or an arrow key:
       // its own listener declines, so the aim never changes, and the element
@@ -276,7 +267,6 @@ export function createAimControls(options: AimControlsOptions): AimControls {
       // track from lying about the shot it is going to take.
       setValueIfChanged(angleSlider, String(shownDegrees));
       setValueIfChanged(powerSlider, String(shownPercent));
-      pump(elapsed);
     },
   };
 }

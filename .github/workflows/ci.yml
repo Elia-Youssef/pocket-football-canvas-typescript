@@ -128,6 +128,28 @@ jobs:
         timeout-minutes: 25
         run: npm run test:browser
 
+      # Item G8 is method A: a MEASUREMENT against a stated threshold, which is
+      # only a gate where it runs on every merge. It drives the shipped effects
+      # layer over seeded matches and a scripted worst case, counts the flashes
+      # each region of the pitch drew in any rolling second, and exits non-zero
+      # above the three QUALITY-BAR section 4 allows. It writes its report under
+      # artifacts/, which this repository does not track, so the run uploads that
+      # file as the item's named evidence: an A item whose artifact existed only
+      # in a local working directory would be an A item nobody can read after the
+      # fact. The upload is unconditional, because a FAILING measurement is the
+      # run whose numbers a reader most needs.
+      - name: Flash rate, item G8
+        run: node scripts/flash-rate.mjs
+
+      - name: Upload the flash-rate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flash-rate-report
+          path: artifacts/reports/flash-rate.md
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Deterministic build
         run: npm run verify:build
 

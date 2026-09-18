@@ -33,9 +33,12 @@ export class FakeElement {
   attributeWrites = 0;
   textWrites = 0;
   hidden = false;
+  /** The focus trap's lever, which the chrome writes as a property. */
+  inert = false;
   checked = false;
   value = '';
   type = '';
+  id = '';
   className = '';
 
   constructor(tag: string, owner: FakeDocument) {
@@ -112,7 +115,27 @@ export class FakeElement {
     }
   }
 
+  /**
+   * Focus, refused inside an inert subtree, which is what the platform does.
+   *
+   * MODELLED BECAUSE THE PART TURNS ON IT. Item G9's trap IS native `inert`, and
+   * `inert` is defined to make a subtree unfocusable as well as unclickable, so
+   * a fake that moved focus into an inert panel anyway would agree with every
+   * ordering defect the real thing refuses: the PF-15 close found exactly that
+   * defect (a panel focusing its opener while the opener was still inert, focus
+   * landing on the document body), and no unit test could have seen it. The
+   * property is INHERITED, so the walk goes up: `inert` on an ancestor is what
+   * the chrome writes, and the control itself never carries it.
+   */
   focus(): void {
+    if (this.inert) {
+      return;
+    }
+    for (let at = this.parentElement; at !== null; at = at.parentElement) {
+      if (at.inert) {
+        return;
+      }
+    }
     this.ownerDocument.activeElement = this;
   }
 }

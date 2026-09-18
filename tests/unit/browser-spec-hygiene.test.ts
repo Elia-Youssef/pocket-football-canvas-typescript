@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { overlaps } from '../browser/support/viewports';
 import { PLAY_SURFACE } from '../../src/render/tokens';
 
 /**
@@ -35,8 +36,21 @@ import { PLAY_SURFACE } from '../../src/render/tokens';
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const BROWSER_ROOT = path.join(PROJECT_ROOT, 'tests', 'browser');
 const SUPPORT = path.join(BROWSER_ROOT, 'support', 'game.ts');
+const VIEWPORTS_SUPPORT = path.join(BROWSER_ROOT, 'support', 'viewports.ts');
 
 const supportText = readFileSync(SUPPORT, 'utf8');
+const viewportsText = readFileSync(VIEWPORTS_SUPPORT, 'utf8');
+
+/**
+ * BOTH support modules, because there are two of them since PF-15.
+ *
+ * `support/game.ts` is the match harness and `support/viewports.ts` is item
+ * F1's overlap sweep, extracted so that item G6 could run the same sweep at 200
+ * percent text rather than writing a second one. A spec that redeclared a name
+ * either of them exports shadows the shared thing under the shared name, which
+ * is the defect this file was written about.
+ */
+const SHARED_TEXTS: readonly string[] = [supportText, viewportsText];
 
 /** Comments away first: a name discussed in prose is not a name declared. */
 function withoutComments(text: string): string {
@@ -207,8 +221,8 @@ function clockSites(text: string): ClockSite[] {
 }
 
 describe('the browser suite shares one harness', () => {
-  it('lets no spec redeclare a name the shared module exports', () => {
-    const exported = new Set(namesIn(supportText, EXPORTED));
+  it('lets no spec redeclare a name either shared module exports', () => {
+    const exported = new Set(SHARED_TEXTS.flatMap((text) => namesIn(text, EXPORTED)));
     const offences: string[] = [];
     for (const name of specFiles()) {
       for (const bound of boundNames(specText(name))) {
@@ -227,6 +241,11 @@ describe('the browser suite shares one harness', () => {
     expect([...exported]).toContain('PLAYER_FILL');
     expect([...exported]).toContain('LOGICAL_WIDTH');
     expect([...exported]).toContain('centres');
+    // And the second module really is in the set, so extending the scan was a
+    // change to what it reads rather than to what it says it reads.
+    for (const name of ['VIEWPORTS', 'controlBoxes', 'overlaps', 'DOUBLED_ROOT_FONT_SIZE']) {
+      expect([...exported], name).toContain(name);
+    }
     expect(specFiles().length).toBeGreaterThan(20);
     const seen = specFiles().flatMap((name) => boundNames(specText(name)));
     expect(seen.length).toBeGreaterThan(50);
@@ -237,7 +256,7 @@ describe('the browser suite shares one harness', () => {
     // five below survived the matcher this test used to carry, and the last of
     // them - a `const` inside the file's own describe callback - is the one
     // that shadows the shared import for every test in the file.
-    const exported = new Set(namesIn(supportText, EXPORTED));
+    const exported = new Set(SHARED_TEXTS.flatMap((text) => namesIn(text, EXPORTED)));
     const fires: readonly string[] = [
       'const SETTLE = { timeout: 120_000 };',
       'let SETTLE = { timeout: 120_000 };',
@@ -295,6 +314,143 @@ describe('the browser suite shares one harness', () => {
     expect(fillIn('BALL_FILL')).toEqual([0xfa, 0xfa, 0xf8]);
     expect(bytesOf('#5590CE')).toEqual([0x55, 0x90, 0xce]);
   });
+
+  it('excludes from item G10 s sweep only the two values the chrome really shares', () => {
+    // WHAT THE SWEEP ASKS is whether any chrome rule resolves a colour the
+    // CANVAS alone supplies, so it can only ask it about values the chrome does
+    // not legitimately carry. Two are shared and the list names them: SPEC
+    // section 18 draws the aim arrow's ramp from the chrome's accent, so
+    // `--pf-accent-dark` and `--pf-accent-light` appear on both sides of the
+    // boundary. Every value excluded beyond those two is a value a chrome rule
+    // could hard-code with the sweep still green, which is why the list is held
+    // here rather than in the spec: the spec's own assertions about it run in a
+    // browser and a lengthened list reads as a shorter sweep, never as a
+    // failure.
+    const forced = specText('forced-colors.spec.ts');
+    const declared = /const SHARED_WITH_THE_CHROME: readonly string\[\] = \[([^\]]*)\];/.exec(
+      withoutComments(forced),
+    );
+    expect(declared, 'the sweep declares its exclusion list').not.toBeNull();
+    const excluded = (declared?.[1] ?? '')
+      .split(',')
+      .map((part) => part.trim().replace(/^'|'$/g, ''))
+      .filter((part) => part !== '');
+    expect(excluded).toEqual(['#F5C542', '#7A5A06']);
+    // AND THE REASON IS TRUE OF BOTH, read off the chrome's own declarations
+    // rather than taken from the list's comment. The stylesheet declares the
+    // play surface as well, so the comparison is against the FOUR chrome
+    // families the sweep reads and their per-theme ends, and never against the
+    // whole file, where every pitch value appears by definition.
+    const chrome = readFileSync(path.join(PROJECT_ROOT, 'src', 'ui', 'tokens.css'), 'utf8');
+    const CHROME_VALUE = /--pf-(?:ground|text|text-muted|accent)(?:-dark|-light)?:\s*(#[0-9A-Fa-f]{6});/g;
+    const chromeValues = new Set(
+      [...chrome.matchAll(CHROME_VALUE)].map((found) => (found[1] ?? '').toUpperCase()),
+    );
+    for (const hex of excluded) {
+      expect(chromeValues, `${hex} is a chrome value too`).toContain(hex);
+    }
+    // AND FALSE OF THE REST, which is what makes the pair a pair and not a
+    // habit: the play surface's other values are declared nowhere in the chrome
+    // palette, so excluding one would hide exactly the defect the sweep exists
+    // to find.
+    const surface = new Set(
+      Object.values(PLAY_SURFACE).flatMap((variant) =>
+        Object.values(variant).map((hex) => hex.toUpperCase()),
+      ),
+    );
+    for (const hex of surface) {
+      if (excluded.includes(hex)) {
+        continue;
+      }
+      expect(chromeValues, `${hex} is the canvas's alone`).not.toContain(hex);
+    }
+    // Neither scan is vacuous: the set walked is the renderer's own and carries
+    // `--pf-line`, the chrome set carries more than the shared pair, and the
+    // chrome's near-identical text value is a different colour from that line.
+    expect(surface.size).toBeGreaterThan(12);
+    expect(surface.has('#F2F7F3')).toBe(true);
+    expect(chromeValues.size).toBeGreaterThan(excluded.length);
+    expect(chrome).toContain('--pf-text-dark: #EAF2EC;');
+  });
+});
+
+describe('the shared sweep states the size item G6 measures at', () => {
+  it('pins two hundred percent as a doubling of a stated default', () => {
+    // QUALITY-BAR section 4 asks that chrome text resize to 200 PERCENT, and a
+    // size written as "32px" alone is a number nobody can check. Both halves are
+    // pinned by literal here rather than in the spec that uses them: a constant
+    // compared against itself passes for whatever it becomes, and the browser
+    // suite is where it would pass quietly.
+    expect(viewportsText).toContain('export const DEFAULT_ROOT_FONT_SIZE = 16;');
+    expect(viewportsText).toContain("export const DOUBLED_ROOT_FONT_SIZE = '32px';");
+    const doubled = /export const DOUBLED_ROOT_FONT_SIZE = '(\d+)px';/.exec(viewportsText);
+    const base = /export const DEFAULT_ROOT_FONT_SIZE = (\d+);/.exec(viewportsText);
+    expect(doubled, 'the doubled size is stated as a px string').not.toBeNull();
+    expect(base, 'the default size is stated as a number').not.toBeNull();
+    expect(Number(doubled?.[1])).toBe(Number(base?.[1]) * 2);
+    // 16 is the size every desktop engine ships at, so the pair states a
+    // doubling of the size a player who changed nothing actually has.
+    expect(Number(base?.[1])).toBe(16);
+    expect(Number(doubled?.[1])).toBe(32);
+  });
+
+  it('calls two boxes overlapping when they share area, and not when they touch', () => {
+    // DRIVEN RATHER THAN READ, because this one can be: the sweep's own
+    // predicate decides what items F1 and G6 mean by "never covers one with
+    // another", and a predicate loosened to a slack nothing can reach would
+    // pass every viewport at every text size.
+    const box = (x: number, y: number, width = 40, height = 20): Parameters<typeof overlaps>[0] => ({
+      label: `${String(x)},${String(y)}`,
+      x,
+      y,
+      width,
+      height,
+    });
+    expect(overlaps(box(0, 0), box(20, 10))).toBe(true);
+    expect(overlaps(box(0, 0), box(0, 0))).toBe(true);
+    // A SHARED EDGE IS NOT AN OVERLAP, which is the whole of the half-pixel
+    // slack: two controls side by side in a flex row meet exactly.
+    expect(overlaps(box(0, 0), box(40, 0))).toBe(false);
+    expect(overlaps(box(0, 0), box(0, 20))).toBe(false);
+    // And the slack is half a pixel rather than something a layout could hide
+    // inside: a whole pixel of shared area is still an overlap.
+    expect(overlaps(box(0, 0), box(38.9, 0))).toBe(true);
+    expect(overlaps(box(0, 0), box(39.6, 0))).toBe(false);
+    // Symmetric, because the sweep compares each pair once and in one order.
+    expect(overlaps(box(20, 10), box(0, 0))).toBe(true);
+    expect(overlaps(box(40, 0), box(0, 0))).toBe(false);
+  });
+
+  it('raises a font size rather than scaling a picture of the chrome', () => {
+    // A CSS transform would keep every line break where it was and pass a
+    // clipping test that means nothing, which is why the criterion says text.
+    expect(viewportsText).toContain("style.setProperty('font-size', value)");
+    // COMMENTS AWAY FIRST, because the module's own header explains why neither
+    // of these is used and prose that discusses a rule is not a breach of it.
+    const code = withoutComments(viewportsText);
+    expect(code).not.toContain('transform');
+    expect(code).not.toContain('zoom');
+    // The controls, on text that DOES carry each of them, so a check that
+    // had stopped looking is caught here rather than in six months.
+    expect('element.style.transform = scale(2)').toContain('transform');
+    expect('document.body.style.zoom = 2').toContain('zoom');
+  });
+
+  it('holds the four breakpoint viewports item F1 swept, unchanged', () => {
+    // The sweep moved out of `breakpoints.spec.ts` at PF-15 so item G6 could
+    // reuse it. The four viewports are what F1 closed on, so they are pinned
+    // here: an extraction that quietly changed one of them would have changed
+    // what F1 grades as well as what G6 does.
+    expect(viewportsText).toContain("{ name: 'wide', width: 1280, height: 900 }");
+    expect(viewportsText).toContain("{ name: 'medium', width: 900, height: 700 }");
+    expect(viewportsText).toContain("{ name: 'compact', width: 700, height: 420 }");
+    expect(viewportsText).toContain("{ name: 'portrait', width: 420, height: 800 }");
+    // And both specs consume it rather than one of them keeping a copy.
+    for (const spec of ['breakpoints.spec.ts', 'text-scale.spec.ts']) {
+      expect(specText(spec), spec).toContain("from './support/viewports'");
+    }
+    expect(specText('breakpoints.spec.ts')).not.toContain('const VIEWPORTS');
+  });
 });
 
 describe('the browser suite stops the page clock it installs', () => {
@@ -332,9 +488,16 @@ describe('the browser suite stops the page clock it installs', () => {
     // finding install sites would report a clean suite forever, which is the
     // same output as a clean suite; and an exception that stopped being an
     // exception would sit here unread. Both are pinned by literal.
-    expect(installs).toBe(26);
+    // Thirty-two since PF-15's fix round, in three new files: item G1 drives a
+    // match to full time so its scan has a game-over screen to look at and two
+    // ladder rungs so it has the other two arrangements of that overlay (two
+    // installs in the one test, because taking the next rung starts a new
+    // match), item G9 does the same for the one overlay that opens without an
+    // invoking control, and item G4's armour plays two whole matches to read
+    // the announcements back.
+    expect(installs).toBe(32);
     expect(marked).toBe(0);
-    expect(carriers).toHaveLength(16);
+    expect(carriers).toHaveLength(19);
     expect(carriers).toContain('max-drag.spec.ts');
     expect(carriers).toContain('reduced-motion.spec.ts');
   });

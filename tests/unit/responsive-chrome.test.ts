@@ -557,7 +557,13 @@ describe('PF-14 the responsive chrome', () => {
     });
 
     it('sticks both bars above the threshold and neither below it', () => {
-      const stuck = rulesFor("[data-pf-bars='sticky']");
+      // THREE RULES KEY ON THE STICKY NAME, and only two of them are bars. The
+      // third is WCAG 2.2 SC 2.4.11's scroll padding, which exists precisely
+      // because the two above it stand over the page; it is separated by the
+      // property it declares rather than by where it sits in the file.
+      const keyed = rulesFor("[data-pf-bars='sticky']");
+      expect(keyed).toHaveLength(3);
+      const stuck = keyed.filter((body) => !body.includes('scroll-padding-block'));
       expect(stuck).toHaveLength(2);
       for (const body of stuck) {
         expect(body).toContain('position: sticky');
@@ -586,8 +592,50 @@ describe('PF-14 the responsive chrome', () => {
       // control, so the overlays sit above them.
       expect(declares('.pf-panel:not([hidden])', 'z-index: 2')).toBe(true);
       for (const body of rulesFor("[data-pf-bars='sticky']")) {
+        if (body.includes('scroll-padding-block')) {
+          // The scroll-padding rule keys on the same name and stacks nothing.
+          continue;
+        }
         expect(body).toContain('z-index: 1');
       }
+    });
+
+    it('keeps a focused control clear of the two bars it can scroll under', () => {
+      // WCAG 2.2 SC 2.4.11. The padding is scoped to the sticky case, because
+      // below the threshold the bars scroll away with the page and there is
+      // nothing standing over a focused control to clear.
+      expect(declares("[data-pf-bars='sticky']", 'scroll-padding-block')).toBe(true);
+      expect(
+        declares(
+          "[data-pf-bars='sticky']",
+          'scroll-padding-block: var(--pf-bar-top) var(--pf-bar-bottom)',
+        ),
+      ).toBe(true);
+      // The two lengths are the bars' own measured heights, and the defaults
+      // are what the rule resolves to before the first measurement lands.
+      expect(declares(':root', '--pf-bar-top: 0')).toBe(true);
+      expect(declares(':root', '--pf-bar-bottom: 0')).toBe(true);
+      // And the composition root is what measures them, off the BORDER box,
+      // because a bar's padding is most of a compact one.
+      expect(entryText).toContain("write(entry.target === top ? '--pf-bar-top' : '--pf-bar-bottom'");
+      expect(entryText).toContain('entry.borderBoxSize[0]?.blockSize');
+      expect(entryText).not.toContain('contentRect');
+      // AND SOMETHING ASKS FOR THE SCROLL. Padding declares the region a focused
+      // control has to end up inside; a focus move is what makes the platform
+      // apply it. `nearest` is the one request that moves nothing when the
+      // control is already inside that region, so a pointer press on a visible
+      // button does not jump the page.
+      expect(entryText).toContain("target.scrollIntoView({ block: 'nearest', inline: 'nearest' });");
+      expect(entryText).toContain("document.addEventListener('focusin'");
+      // What is INSIDE the stage is left alone: the play frame is a scroll
+      // container of its own at the larger play-surface sizes and the root
+      // already scrolls it once a frame to follow the play, so asking the
+      // platform as well would be two answers to where the pitch should be
+      // looking. The frame ITSELF is a control and is not left alone: measured
+      // on webkit at 200 percent text on a 320 by 400 viewport, where the page
+      // scrolls, it sat below the fold and focusing it moved nothing.
+      expect(entryText).toContain('stage.contains(target) && !isPlayFrame');
+      expect(entryText).toContain("target.getAttribute('role') === 'application'");
     });
 
     it('reads all four safe-area insets, once, where viewport-fit can answer them', () => {
@@ -660,7 +708,7 @@ describe('PF-14 the responsive chrome', () => {
       // tied whole for the same reason the fit ones are.
       expect(entryText).toContain('breakpointFor(window.innerWidth, window.innerHeight)');
       expect(entryText).toContain(
-        "root.dataset['pfBars'] = barsStick(window.innerHeight) ? 'sticky' : 'static';",
+        "root.dataset['pfBars'] = barsStick(window.innerHeight, rootFontSize()) ? 'sticky' : 'static';",
       );
       // The fit is called with the box the root measured and the size the
       // store handed it. Both arguments are wiring no unit test can mount.

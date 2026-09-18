@@ -19,18 +19,25 @@
  */
 
 /**
- * The two brightness variants of the pitch. SPEC section 18: the dark theme is
- * a floodlit night pitch and the light theme is daylight, and the difference is
- * a brightness variant rather than a second palette. The luminance ORDER of
- * everything on the pitch is the same in both, which is what the section's
- * contrast guarantees are built on.
+ * The three brightness variants of the pitch.
+ *
+ * SPEC section 18: the dark theme is a floodlit night pitch and the light theme
+ * is daylight, and the difference is a brightness variant rather than a second
+ * palette. The luminance ORDER of everything on the pitch is the same in all
+ * three, which is what the section's contrast guarantees are built on.
+ *
+ * THE THIRD IS TIED TO NO THEME. `highcontrast` is the section's high-contrast
+ * play surface, selected by `forced-colors: active` and by nothing else, one set
+ * replacing both brightness variants whichever theme is in force. It is
+ * therefore absent from `BRIGHTNESS_BY_THEME` below: a theme cannot reach it and
+ * the media feature cannot be overridden by one.
  */
-export type Brightness = 'floodlit' | 'daylight';
+export type Brightness = 'floodlit' | 'daylight' | 'highcontrast';
 
-/** The chrome's two themes, which the variants above are tied to. */
+/** The chrome's two themes, which the first two variants above are tied to. */
 export type Theme = 'dark' | 'light';
 
-/** SPEC section 18's tie between the two, in one place. */
+/** SPEC section 18's tie between the theme and the brightness, in one place. */
 export const BRIGHTNESS_BY_THEME = {
   dark: 'floodlit',
   light: 'daylight',
@@ -46,8 +53,10 @@ export const BRIGHTNESS_BY_THEME = {
  * in hue, because hue is what protanopia and deuteranopia collapse.
  *
  * `accent` is the aim arrow's strong end, which the same section ramps to from
- * `line` at the weak end. It is the chrome accent read through the theme rather
- * than a colour of its own.
+ * `line` at the weak end. In the two brightness variants it is the chrome accent
+ * read through the theme rather than a colour of its own; in the high-contrast
+ * variant it cannot be, because under the media query the chrome accent is a
+ * system colour the page cannot predict, so the section states it explicitly.
  */
 export interface PitchPalette {
   readonly stripeA: string;
@@ -90,11 +99,51 @@ export const PLAY_SURFACE = {
     ballPanel: '#1A1A1A',
     accent: '#7A5A06',
   },
+  // SPEC section 18's "High-contrast play surface", approved 2026-09-15 with
+  // its values and both its floors frozen. Four of the ten tokens move and six
+  // keep the shared value; every moved value is the floodlit value with its
+  // three channels scaled by one factor and rounded half up, which is why the
+  // luminance order of the ten is identical to the other two variants. The
+  // eleventh colour is explicit here for the reason the interface above states.
+  highcontrast: {
+    stripeA: '#1E5327',
+    stripeB: '#235E2D',
+    line: '#F2F7F3',
+    rail: '#8E9390',
+    teamPlayer: '#5590CE',
+    teamOpponent: '#3D0D0A',
+    glyphOnPlayer: '#0A1A2B',
+    glyphOnOpponent: '#F2F7F3',
+    ballBody: '#FAFAF8',
+    ballPanel: '#1A1A1A',
+    accent: '#F5C542',
+  },
 } as const satisfies Record<Brightness, PitchPalette>;
 
-/** The palette in force for a theme, which is the only way to pick one. */
+/** The palette a THEME names, which is the only way to pick one of the two. */
 export function pitchFor(theme: Theme): PitchPalette {
   return PLAY_SURFACE[BRIGHTNESS_BY_THEME[theme]];
+}
+
+/**
+ * The palette the play surface draws with right now, which is a different
+ * question and has a different answer.
+ *
+ * FORCED COLOURS WIN OVER THE THEME, for the play surface and for nothing else.
+ * SPEC section 18: canvas pixels are untouched by the media feature, so the
+ * pitch answers it by raising its own contrast, and the one set replaces both
+ * brightness variants whichever theme is in force. Both arguments are required
+ * because both cases ship: a defaulted second argument would be a caller able
+ * to forget the query and draw the floodlit pitch under it.
+ *
+ * IT IS A SECOND FUNCTION RATHER THAN A SECOND ARGUMENT TO THE FIRST, because
+ * the two questions have different askers. The frame asks this one, once a frame
+ * and with the query in hand. The capture hooks for the demonstration session
+ * ask the other, because a capture names the variant it wants rather than
+ * reading a preference off the machine it happens to run on.
+ */
+export function playSurfaceFor(theme: Theme, forcedColors: boolean): PitchPalette {
+  return forcedColors ? PLAY_SURFACE.highcontrast : pitchFor(theme);
 }
 
 /**
