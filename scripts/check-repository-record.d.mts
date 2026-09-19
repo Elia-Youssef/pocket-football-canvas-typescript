@@ -51,6 +51,7 @@ export declare function checkSubject(subject: string): string[];
 export declare function requiresCloses(subject: string): boolean;
 export declare function isDependabotPullRequest(): boolean;
 export declare function isDependabotCommit(commit: CommitRecord): boolean;
+export declare function isDependabotSquashCommit(commit: CommitRecord): boolean;
 export declare function checkBody(
   lines: string[],
   options: { requireCloses: boolean; dependencyUpdate?: boolean },
