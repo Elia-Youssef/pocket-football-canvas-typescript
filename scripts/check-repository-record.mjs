@@ -177,6 +177,7 @@ const DEPENDABOT_AUTHOR = /^dependabot\[bot\] <\d+\+dependabot\[bot\]@users\.nor
 const GITHUB_COMMITTER = /^GitHub <noreply@github\.com>$/;
 const GITHUB_NOREPLY_AUTHOR = /^[^<\n]+ <\d+\+[^@\n]+@users\.noreply\.github\.com>$/;
 const DEPENDABOT_SUBJECT = /^deps: Bump /;
+const DEPENDABOT_COAUTHOR = /^Co-\x61uthored-by: dependabot\[bot\] <\d+\+dependabot\[bot\]@users\.noreply\.github\.com>$/;
 const SQUASH_PULL_REQUEST_SUFFIX = / \(#[1-9][0-9]*\)$/;
 
 // Unknown extensions are text unless the bytes say otherwise. An allowlist
@@ -410,6 +411,25 @@ export function isDependabotCommit({ author, committer, message }) {
   );
 }
 
+/**
+ * GitHub appends this precise co-author trailer when it squash-merges a
+ * single Dependabot commit. The generated wrapper is admitted only when the
+ * remaining message is already a valid Dependabot record and its subject
+ * carries GitHub's pull-request suffix.
+ */
+export function isDependabotSquashCommit({ author, committer, message }) {
+  const lines = message.replace(/\n+$/, '').split('\n');
+  return (
+    SQUASH_PULL_REQUEST_SUFFIX.test(lines[0] ?? '') &&
+    DEPENDABOT_COAUTHOR.test(lines.at(-1) ?? '') &&
+    isDependabotCommit({
+      author,
+      committer,
+      message: lines.slice(0, -1).join('\n'),
+    })
+  );
+}
+
 /** GITHUB section 4, applied to a whole message or a pull request body. */
 export function checkBody(
   lines,
@@ -533,7 +553,9 @@ function checkGithubSquashRecord(record) {
  */
 export function checkCommitRecord({ author, committer, message }) {
   const problems = [];
-  const generatedDependabot = isDependabotCommit({ author, committer, message });
+  const generatedDependabot =
+    isDependabotCommit({ author, committer, message }) ||
+    isDependabotSquashCommit({ author, committer, message });
   const fields = [
     ['author', author],
     ['committer', committer],

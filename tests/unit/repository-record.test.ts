@@ -21,6 +21,7 @@ import {
   createGit,
   createReporter,
   isDependabotCommit,
+  isDependabotSquashCommit,
   isDependabotPullRequest,
   isGameContextLine,
   isReservedBasename,
@@ -279,6 +280,26 @@ describe('PF-0 repository record gate', () => {
         isDependabotCommit({
           ...DEPENDENCY_COMMIT,
           message: DEPENDENCY_COMMIT.message.replace('Signed-off-by:', 'Reviewed-by:'),
+        }),
+      ).toBe(false);
+    });
+
+    it("recognises GitHub's exact single-commit Dependabot squash wrapper", () => {
+      const squash = {
+        ...DEPENDENCY_COMMIT,
+        message:
+          DEPENDENCY_COMMIT.message.replace(
+            'deps: Bump actions/checkout from 7.0.1 to 7.0.2',
+            'deps: Bump actions/checkout from 7.0.1 to 7.0.2 (#34)',
+          ) +
+          '\nCo-\x61uthored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>',
+      };
+      expect(isDependabotSquashCommit(squash)).toBe(true);
+      expect(checkCommitRecord(squash)).toEqual([]);
+      expect(
+        isDependabotSquashCommit({
+          ...squash,
+          message: squash.message.replace('(#34)', ''),
         }),
       ).toBe(false);
     });
